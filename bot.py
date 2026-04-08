@@ -371,6 +371,7 @@ async def on_message(message):
         help_text = (
             "**MT Vehicle Bot Commands:**\n"
             "`/update` - Add/Update a vehicle (requires vehicle_name, rarity, and picture)\n"
+            "`/remove` - Remove a vehicle from the database\n"
             "`/show` - Show a vehicle's picture and rarity\n"
             "`/list_vehicles` - See all vehicles and their status\n"
             "`!inventory` or `!inv` - View your caught vehicles\n"
@@ -612,6 +613,56 @@ async def update_vehicle(interaction: discord.Interaction, vehicle_name: str, ra
     vehicles = load_vehicles()
     
     await interaction.response.send_message(f"✅ **{vehicle_name}** ({rarity.title()}) has been added/updated successfully with the new picture!")
+
+@bot.tree.command(name="remove", description="Remove a vehicle from the database")
+@app_commands.describe(vehicle_name="The name of the vehicle to remove")
+async def remove_vehicle(interaction: discord.Interaction, vehicle_name: str):
+    # Check if vehicle exists
+    if vehicle_name not in vehicles:
+        matching_names = [n for n in vehicles.keys() if n.lower() == vehicle_name.lower()]
+        if matching_names:
+            vehicle_name = matching_names[0]
+        else:
+            await interaction.response.send_message(f"❌ Vehicle **{vehicle_name}** not found.", ephemeral=True)
+            return
+
+    # Delete from index.json
+    index_data = {}
+    if os.path.exists(INDEX_JSON_FILE):
+        with open(INDEX_JSON_FILE, 'r', encoding='utf-8') as f:
+            try:
+                index_data = json.load(f)
+            except:
+                index_data = {}
+    
+    if vehicle_name in index_data:
+        del index_data[vehicle_name]
+    
+    # Also delete image files
+    for ext in ['png', 'jpg', 'jpeg', 'gif', 'webp']:
+        path = os.path.join(IMAGES_DIR, f"{vehicle_name}.{ext}")
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except:
+                pass
+
+    with open(INDEX_JSON_FILE, 'w', encoding='utf-8') as f:
+        json.dump(index_data, f, indent=4)
+    
+    # Refresh memory
+    global vehicles
+    vehicles = load_vehicles()
+    
+    await interaction.response.send_message(f"✅ **{vehicle_name}** has been removed successfully!")
+
+@remove_vehicle.autocomplete('vehicle_name')
+async def remove_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+    names = list(vehicles.keys())
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in names if current.lower() in name.lower()
+    ][:25]
 
 @update_vehicle.autocomplete('vehicle_name')
 async def update_vehicle_autocomplete(interaction: discord.Interaction, current: str):
