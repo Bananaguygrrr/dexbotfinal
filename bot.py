@@ -28,14 +28,12 @@ def print(*args, **kwargs):
 
 # Spawning threshold
 SPAWN_THRESHOLD = 5
-
 # Determine data directory based on file location (root or /data)
 current_dir = os.path.abspath(os.path.dirname(__file__))
 if os.path.basename(current_dir) == 'data':
     DATA_DIR = current_dir
 else:
     DATA_DIR = os.path.join(current_dir, 'data')
-
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
@@ -372,7 +370,7 @@ async def on_message(message):
     if message.content.lower() in ['!help', '!h']:
         help_text = (
             "**MT Vehicle Bot Commands:**\n"
-            "`/updt` - Add/Update a vehicle (requires vehicle_name, rarity, and picture)\n"
+            "`/update` - Add/Update a vehicle (requires vehicle_name, rarity, and picture)\n"
             "`/show` - Show a vehicle's picture and rarity\n"
             "`/list_vehicles` - See all vehicles and their status\n"
             "`!inventory` or `!inv` - View your caught vehicles\n"
@@ -561,12 +559,12 @@ async def inventory_slash(interaction: discord.Interaction):
     embed = create_overview_embed(interaction.user)
     await interaction.response.send_message(embed=embed, view=view)
 
-@bot.tree.command(name="updt", description="Add or update a vehicle image and rarity")
+@bot.tree.command(name="update", description="Add or update a vehicle image and rarity")
 @app_commands.describe(vehicle_name="Name of the vehicle", rarity="The rarity of the vehicle", picture="Vehicle image file")
 @app_commands.choices(rarity=[
     app_commands.Choice(name=r.title(), value=r) for r in RARITY_WEIGHTS.keys()
 ])
-async def updt_vehicle(interaction: discord.Interaction, vehicle_name: str, rarity: str, picture: discord.Attachment):
+async def update_vehicle(interaction: discord.Interaction, vehicle_name: str, rarity: str, picture: discord.Attachment):
     # Check if picture is actually an image
     if not picture.content_type or not picture.content_type.startswith('image/'):
         await interaction.response.send_message("Please upload a valid image file!", ephemeral=True)
@@ -615,8 +613,8 @@ async def updt_vehicle(interaction: discord.Interaction, vehicle_name: str, rari
     
     await interaction.response.send_message(f"✅ **{vehicle_name}** ({rarity.title()}) has been added/updated successfully with the new picture!")
 
-@updt_vehicle.autocomplete('vehicle_name')
-async def updt_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+@update_vehicle.autocomplete('vehicle_name')
+async def update_vehicle_autocomplete(interaction: discord.Interaction, current: str):
     # Show existing names from index.json
     names = list(vehicles.keys())
     return [
@@ -652,7 +650,7 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
     elif image_url and str(image_url).startswith('http'):
         embed.set_image(url=image_url)
     else:
-        embed.description = "❌ This vehicle has no picture yet. Use `/updt` to add one!"
+        embed.description = "❌ This vehicle has no picture yet. Use `/update` to add one!"
 
     if file:
         await interaction.response.send_message(embed=embed, file=file)
@@ -687,7 +685,7 @@ async def list_vehicles(interaction: discord.Interaction, rarity: str = None):
             if len(missing) > 30:
                 list_str += f"\n*...and {len(missing)-30} more*"
             embed.description = f"**Missing {len(missing)} vehicles:**\n{list_str}"
-            embed.set_footer(text="Use /updt to upload these pictures!")
+            embed.set_footer(text="Use /update to upload these pictures!")
         
         await interaction.response.send_message(embed=embed)
         return
@@ -716,7 +714,7 @@ async def list_vehicles(interaction: discord.Interaction, rarity: str = None):
         embed.add_field(name=r, value=f"✅ Ready: {ready}\n❌ Missing: {missing}", inline=True)
     
     embed.description = f"**Total Vehicles:** {len(vehicles)}\n**Ready to Spawn:** {total_ready}\n**Need Pictures:** {total_missing}"
-    embed.set_footer(text="Use /updt to upload missing pictures!")
+    embed.set_footer(text="Use /update to upload missing pictures!")
     
     await interaction.response.send_message(embed=embed)
 
