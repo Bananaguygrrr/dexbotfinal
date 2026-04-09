@@ -1580,11 +1580,7 @@
         "rarity": "Exotic"
     },
     "a50": {
-        "pic_link": "/static/images/a50.png",
+        "pic_link": "/static/images/a50.jpeg",
         "rarity": "Exotic"
-    },
-    "111": {
-        "pic_link": "/static/images/111.jpeg",
-        "rarity": "rare"
     }
 }
