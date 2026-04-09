@@ -1575,12 +1575,12 @@
         "pic_link": "",
         "rarity": "Exotic"
     },
-    "a14-wolf": {
-        "pic_link": "/static/images/a14-wolf.jpeg",
-        "rarity": "Exotic"
-    },
     "a50": {
         "pic_link": "/static/images/a50.jpeg",
+        "rarity": "Exotic"
+    },
+    "a14-wolf": {
+        "pic_link": "/static/images/a14-wolf.png",
         "rarity": "Exotic"
     }
 }
