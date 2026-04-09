@@ -1,8 +1,4 @@
 {
-    "a14-wolf": {
-        "pic_link": "",
-        "rarity": "Exotic"
-    },
     "a50": {
         "pic_link": "",
         "rarity": "Exotic"
@@ -1580,6 +1576,10 @@
         "rarity": "Limited Edition"
     },
     "golden-falken": {
+        "pic_link": "",
+        "rarity": "Exotic"
+    },
+    "a14-wolf": {
         "pic_link": "",
         "rarity": "Exotic"
     }
