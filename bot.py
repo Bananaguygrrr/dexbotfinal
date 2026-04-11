@@ -608,7 +608,7 @@ async def on_ready():
 if __name__ == '__main__':
     if TOKEN:
         retry_delay = 15
-        max_retry_delay = 300
+        max_retry_delay = 3600
         while True:
             try:
                 bot.run(TOKEN)
@@ -618,7 +618,12 @@ if __name__ == '__main__':
                 break
             except discord.HTTPException as e:
                 # Handles temporary API/CDN blocks (e.g., Cloudflare 1015) without crashing the service.
-                print(f"Discord HTTP error on startup: {e}. Retrying in {retry_delay}s...")
+                error_text = str(e)
+                if '1015' in error_text or 'You are being rate limited' in error_text:
+                    retry_delay = max(retry_delay, 900)
+                    print(f"Cloudflare/Discord rate-limit block detected. Retrying in {retry_delay}s...")
+                else:
+                    print(f"Discord HTTP error on startup: {e}. Retrying in {retry_delay}s...")
             except Exception as e:
                 print(f"Unexpected bot startup error: {e}. Retrying in {retry_delay}s...")
 
