@@ -1582,9 +1582,5 @@
     "a14-wolf": {
         "pic_link": "/static/images/a14-wolf.png",
         "rarity": "Exotic"
-    },
-    "111": {
-        "pic_link": "",
-        "rarity": "rare"
     }
 }
