@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import re
 import colorsys
 import time
+from threading import Thread
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # aiohttp is already imported by discord or in specific functions if needed
 
@@ -32,6 +34,38 @@ def print_flush(*args, **kwargs):
 
 
 print = print_flush
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b'bot-ok')
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+    port_value = os.getenv('PORT')
+    if not port_value:
+        return
+    try:
+        port = int(port_value)
+    except ValueError:
+        print(f"Invalid PORT value: {port_value}")
+        return
+
+    def _serve():
+        try:
+            server = HTTPServer(('0.0.0.0', port), _HealthHandler)
+            print(f"Health server listening on port {port}")
+            server.serve_forever()
+        except Exception as e:
+            print(f"Health server error: {e}")
+
+    Thread(target=_serve, daemon=True).start()
 
 # Spawning threshold
 SPAWN_THRESHOLD = 5
@@ -606,6 +640,7 @@ async def on_ready():
 
 
 if __name__ == '__main__':
+    start_health_server()
     if TOKEN:
         retry_delay = 15
         max_retry_delay = 3600
