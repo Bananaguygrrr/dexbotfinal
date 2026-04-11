@@ -8,6 +8,7 @@ import asyncio
 from dotenv import load_dotenv
 import re
 import colorsys
+import time
 
 # aiohttp is already imported by discord or in specific functions if needed
 
@@ -41,6 +42,8 @@ if not os.path.exists(DATA_DIR):
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, 'user_inventories.json')
 IMAGES_DIR = os.path.join(DATA_DIR, 'images')
 INDEX_JSON_FILE = os.path.join(DATA_DIR, 'index.json')
+ROOT_INDEX_JSON_FILE = 'index.json'
+FALLBACK_IMAGE_DIRS = ['images', os.path.join('static', 'images')]
 
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
@@ -135,9 +138,10 @@ def get_random_vehicle(vehicles):
 # Load vehicle data
 def load_vehicles():
     try:
-        if not os.path.exists(INDEX_JSON_FILE):
+        index_path = INDEX_JSON_FILE if os.path.exists(INDEX_JSON_FILE) else ROOT_INDEX_JSON_FILE
+        if not os.path.exists(index_path):
             return {}
-        with open(INDEX_JSON_FILE, 'r', encoding='utf-8') as f:
+        with open(index_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         processed = {}
@@ -153,10 +157,14 @@ def load_vehicles():
 
             # Check for local file (vehicle_name.png, jpg, etc.)
             local_path = None
+            image_search_dirs = [IMAGES_DIR] + FALLBACK_IMAGE_DIRS
             for ext in ['png', 'jpg', 'jpeg', 'gif', 'webp']:
-                test_path = os.path.join(IMAGES_DIR, f"{k}.{ext}")
-                if os.path.exists(test_path):
-                    local_path = test_path
+                for img_dir in image_search_dirs:
+                    test_path = os.path.join(img_dir, f"{k}.{ext}")
+                    if os.path.exists(test_path):
+                        local_path = test_path
+                        break
+                if local_path:
                     break
 
             if local_path:
@@ -599,6 +607,22 @@ async def on_ready():
 
 if __name__ == '__main__':
     if TOKEN:
-        bot.run(TOKEN)
+        retry_delay = 15
+        max_retry_delay = 300
+        while True:
+            try:
+                bot.run(TOKEN)
+                break
+            except discord.LoginFailure as e:
+                print(f"Discord login failed (token issue): {e}")
+                break
+            except discord.HTTPException as e:
+                # Handles temporary API/CDN blocks (e.g., Cloudflare 1015) without crashing the service.
+                print(f"Discord HTTP error on startup: {e}. Retrying in {retry_delay}s...")
+            except Exception as e:
+                print(f"Unexpected bot startup error: {e}. Retrying in {retry_delay}s...")
+
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
     else:
         print("No DISCORD_TOKEN found in .env file.")
