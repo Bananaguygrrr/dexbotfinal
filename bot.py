@@ -34,14 +34,19 @@ def print_flush(*args, **kwargs):
 
 
 print = print_flush
+BOT_ONLINE = False
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b'bot-ok')
+        payload = {
+            "running": True,
+            "online": bool(BOT_ONLINE)
+        }
+        self.wfile.write(json.dumps(payload).encode('utf-8'))
 
     def log_message(self, format, *args):
         return
@@ -628,6 +633,8 @@ async def show_vehicle_autocomplete(interaction: discord.Interaction, current: s
 
 @bot.event
 async def on_ready():
+    global BOT_ONLINE
+    BOT_ONLINE = True
     print(f'Bot is logged in as {bot.user.name}')
     try:
         synced = await bot.tree.sync()
@@ -637,6 +644,12 @@ async def on_ready():
 
     if not rainbow_task.is_running():
         rainbow_task.start()
+
+
+@bot.event
+async def on_disconnect():
+    global BOT_ONLINE
+    BOT_ONLINE = False
 
 
 if __name__ == '__main__':
