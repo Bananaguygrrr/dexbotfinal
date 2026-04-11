@@ -22,10 +22,11 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Ensure output is flushed for the web dashboard
 import sys
+import builtins
 
 
 def print_flush(*args, **kwargs):
-    print(*args, **kwargs)
+    builtins.print(*args, **kwargs)
     sys.stdout.flush()
 
 
