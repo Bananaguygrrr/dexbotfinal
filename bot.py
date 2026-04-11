@@ -1,795 +1,603 @@
-from gevent import monkey
-
-monkey.patch_all()
-
-import os
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
 import json
-import subprocess
-import signal
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, send_from_directory
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_socketio import SocketIO, emit
-from threading import Thread
-import time
-import sys
-import shutil
-import requests
-import base64
+import random
+import os
+import asyncio
 from dotenv import load_dotenv
+import re
+import colorsys
 
+# aiohttp is already imported by discord or in specific functions if needed
+
+# Load environment variables
 load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
 
-# Setup absolute paths for Render and Local environments
-base_dir = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(base_dir, 'data')
+# Bot setup
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix='!', intents=intents)
 
+# Ensure output is flushed for the web dashboard
+import sys
+
+
+def print_flush(*args, **kwargs):
+    print(*args, **kwargs)
+    sys.stdout.flush()
+
+
+print = print_flush
+
+# Spawning threshold
+SPAWN_THRESHOLD = 5
+DATA_DIR = 'data'
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-# Configuration for Persistence
-USER_DATA_FILE = os.path.join(DATA_DIR, 'users.json')
-BOT_SCRIPT_PATH = os.path.join(DATA_DIR, 'bot.py')
-INDEX_JSON_PATH = os.path.join(DATA_DIR, 'index.json')
-ROOT_INDEX_JSON = os.path.join(base_dir, 'index.json')
-UPLOAD_FOLDER = os.path.join(DATA_DIR, 'images')
+USER_INVENTORIES_FILE = os.path.join(DATA_DIR, 'user_inventories.json')
+IMAGES_DIR = os.path.join(DATA_DIR, 'images')
+INDEX_JSON_FILE = os.path.join(DATA_DIR, 'index.json')
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-
-# Ensure users.json exists so the app doesn't crash
-if not os.path.exists(USER_DATA_FILE):
-    with open(USER_DATA_FILE, 'w') as f:
-        json.dump({'test': 'test'}, f)
-
-# Ensure data/index.json exists and is in sync with root if available
-if not os.path.exists(INDEX_JSON_PATH):
-    if os.path.exists(ROOT_INDEX_JSON):
-        shutil.copy(ROOT_INDEX_JSON, INDEX_JSON_PATH)
-    else:
-        with open(INDEX_JSON_PATH, 'w') as f:
-            json.dump({}, f)
-
-app = Flask(__name__,
-            template_folder=os.path.join(base_dir, 'templates'),
-            static_folder=os.path.join(base_dir, 'static'))
-app.config['SECRET_KEY'] = 'secret-key-for-now'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-EXCLUDED_DIRS = {'.venv', '.git', '.idea', '__pycache__'}
-EXCLUDED_FILES = {'.env', 'users.json'}
-EDITOR_FILES_FILE = os.path.join(DATA_DIR, 'editor_files.json')
+if not os.path.exists(IMAGES_DIR):
+    os.makedirs(IMAGES_DIR)
 
 
-# Helper to get all editable files dynamically
-def get_editable_files():
-    files = []
-    for rel_path in load_editor_files():
-        _, abs_path = resolve_workspace_path(rel_path)
-        if abs_path and os.path.exists(abs_path):
-            files.append(rel_path)
-    return sorted(set(files), key=str.lower)
-
-
-def load_editor_files():
-    if not os.path.exists(EDITOR_FILES_FILE):
-        with open(EDITOR_FILES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f)
-        return []
-
-    try:
-        with open(EDITOR_FILES_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            return []
-        clean = []
-        for item in data:
-            normalized = normalize_relative_path(item)
-            if normalized:
-                clean.append(normalized)
-        return clean
-    except Exception:
-        return []
-
-
-def save_editor_files(files):
-    clean = []
-    for item in files:
-        normalized = normalize_relative_path(item)
-        if normalized:
-            clean.append(normalized)
-    with open(EDITOR_FILES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(sorted(set(clean), key=str.lower), f, indent=2)
-
-
-def get_index_data():
-    if not os.path.exists(INDEX_JSON_PATH):
-        return {}
-    try:
-        with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def get_tracked_image_filenames():
-    data = get_index_data()
-    filenames = set()
-    for value in data.values():
-        if not isinstance(value, dict):
-            continue
-        pic_link = value.get('pic_link', '')
-        if isinstance(pic_link, str) and pic_link.startswith('/static/images/'):
-            name = pic_link.split('/')[-1].strip()
-            if name:
-                filenames.add(name)
-    return filenames
-
-
-def normalize_relative_path(filename):
-    if not filename:
-        return None
-    normalized = filename.replace('\\', '/').strip()
-    normalized = normalized.lstrip('/')
-    if not normalized or normalized.startswith('../') or '/..' in normalized:
-        return None
-    return normalized
-
-
-def resolve_workspace_path(filename):
-    normalized = normalize_relative_path(filename)
-    if not normalized:
-        return None, None
-
-    abs_path = os.path.normpath(os.path.join(base_dir, normalized))
-    try:
-        if os.path.commonpath([base_dir, abs_path]) != base_dir:
-            return None, None
-    except ValueError:
-        return None, None
-
-    rel_path = os.path.relpath(abs_path, base_dir).replace('\\', '/')
-    parts = rel_path.split('/')
-    if any(part in EXCLUDED_DIRS for part in parts):
-        return None, None
-
-    basename = os.path.basename(rel_path)
-    if basename in EXCLUDED_FILES:
-        return None, None
-
-    return rel_path, abs_path
-
-
-def is_file_allowed(filename):
-    rel_path, abs_path = resolve_workspace_path(filename)
-    if not rel_path or not abs_path:
-        return False
-    return rel_path in load_editor_files()
-
-
-# GitHub Configuration from Environment Variables
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-GITHUB_REPO = os.getenv('GITHUB_REPO')
-if GITHUB_REPO:
-    # Sanitize: if it's a full URL, extract user/repo
-    if 'github.com/' in GITHUB_REPO:
-        GITHUB_REPO = GITHUB_REPO.split('github.com/')[-1].split('?')[0].split('#')[0].strip('/')
-    # Remove .git suffix if present
-    if GITHUB_REPO.endswith('.git'):
-        GITHUB_REPO = GITHUB_REPO[:-4]
-
-GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
-BOT_STATUS_URL = os.getenv('BOT_STATUS_URL', '').strip()
-BOT_STATUS_TOKEN = os.getenv('BOT_STATUS_TOKEN', '').strip()
-BOT_STATUS_TIMEOUT = float(os.getenv('BOT_STATUS_TIMEOUT', '5'))
-
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-
-# User management
-def load_users():
-    with open(USER_DATA_FILE, 'r') as f:
-        return json.load(f)
-
-
-def save_users(users):
-    with open(USER_DATA_FILE, 'w') as f:
-        json.dump(users, f)
-
-
-class User(UserMixin):
-    def __init__(self, id):
-        self.id = id
-
-
-@login_manager.user_loader
-def load_user(user_id):
-    users = load_users()
-    if user_id in users:
-        return User(user_id)
-    return None
-
-
-# Bot Process Management
-bot_process = None
-bot_thread = None
-
-
-def start_bot():
-    global bot_process
-    if bot_process is not None:
-        return
-    if os.path.exists(BOT_SCRIPT_PATH):
+def load_inventories():
+    if os.path.exists(USER_INVENTORIES_FILE):
         try:
-            bot_process = subprocess.Popen(
-                [sys.executable, BOT_SCRIPT_PATH],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT
-            )
+            with open(USER_INVENTORIES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
         except Exception as e:
-            socketio.emit('bot_log', {'data': f'Error starting local bot: {e}\n'})
+            print(f"Error loading {USER_INVENTORIES_FILE}: {e}")
+            return {}
+    return {}
 
 
-def stop_bot():
-    global bot_process
-    if bot_process is not None:
-        try:
-            if os.name == 'nt':
-                bot_process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                bot_process.terminate()
-            try:
-                bot_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                bot_process.kill()
-            bot_process = None
-            socketio.emit('bot_log', {'data': '--- Local bot process stopped ---\n'})
-        except Exception as e:
-            socketio.emit('bot_log', {'data': f'Error stopping local bot: {e}\n'})
-
-
-def bot_monitor():
-    global bot_process
-    while True:
-        if bot_process:
-            line = bot_process.stdout.readline()
-            if line:
-                socketio.emit('bot_log', {'data': line.decode('utf-8')})
-            if bot_process.poll() is not None:
-                socketio.emit('bot_log', {'data': '--- Bot process terminated ---\n'})
-                bot_process = None
-        time.sleep(0.1)
-
-
-# Start monitor thread
-monitor_thread = Thread(target=bot_monitor, daemon=True)
-monitor_thread.start()
-
-
-@app.route('/static/images/<path:filename>')
-def custom_static(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-
-@app.route('/login', methods=['POST'])
-def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    users = load_users()
-    if username in users and users[username] == password:
-        user = User(username)
-        login_user(user)
-        return jsonify({'status': 'success'})
-    return jsonify({'status': 'error', 'message': 'wrong user/password'}), 401
-
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('index'))
-
-
-@app.route('/update_user', methods=['POST'])
-@login_required
-def update_user():
-    new_username = request.form.get('new_username')
-    new_password = request.form.get('new_password')
-    users = load_users()
-    # Remove old user, add new one (simplified as there is only one user intended)
-    old_username = current_user.id
-    if old_username in users:
-        del users[old_username]
-    users[new_username] = new_password
-    save_users(users)
-    logout_user()
-    return redirect(url_for('index'))
-
-
-@app.route('/get_script')
-@login_required
-def get_script():
-    filename = request.args.get('file', 'bot.py')
-    if not is_file_allowed(filename):
-        return jsonify({'error': 'Unauthorized or invalid file'}), 403
-
-    rel_path, path = resolve_workspace_path(filename)
-    if not rel_path or not path:
-        return jsonify({'error': 'Unauthorized or invalid file'}), 403
-
-    # Prefer workspace path for editing
-    if not os.path.exists(path):
-        # Fallback to data dir if it's there (for legacy/persistence reasons)
-        path = os.path.join(DATA_DIR, rel_path)
-
-    if not os.path.exists(path):
-        return jsonify({'content': f'# File {rel_path} not found.'})
-
-    with open(path, 'r', encoding='utf-8') as f:
-        return jsonify({'content': f.read()})
-
-
-@app.route('/list_files')
-@login_required
-def list_files():
-    return jsonify({'files': get_editable_files()})
-
-
-@app.route('/save_script', methods=['POST'])
-@login_required
-def save_script():
-    content = request.json.get('content')
-    filename = request.json.get('file', 'bot.py')
-    push = request.json.get('push', False)
-
-    if not is_file_allowed(filename):
-        return jsonify({'status': 'Unauthorized or invalid file'}), 403
-
-    rel_path, root_path = resolve_workspace_path(filename)
-    if not rel_path or not root_path:
-        return jsonify({'status': 'Unauthorized or invalid file'}), 403
-
-    # Save to root
-    os.makedirs(os.path.dirname(root_path), exist_ok=True)
-    with open(root_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-
-    # Mirror to data folder for files that need runtime persistence
-    if rel_path in ['bot.py', 'index.json']:
-        local_path = os.path.join(DATA_DIR, rel_path)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        with open(local_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-
-    status_msg = f'File {rel_path} saved.'
-
-    if push:
-        if not GITHUB_TOKEN or not GITHUB_REPO:
-            return jsonify({'status': 'Saved locally, but GITHUB_TOKEN or GITHUB_REPO not set!'})
-
-        try:
-            # 1. Get current file info for SHA
-            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{rel_path}"
-            headers = {
-                "Authorization": f"token {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-
-            r = requests.get(api_url, headers=headers)
-            sha = ""
-            if r.status_code == 200:
-                sha = r.json().get('sha')
-
-            # 2. Update file on GitHub
-            payload = {
-                "message": f"Update {rel_path} from Dashboard",
-                "content": base64.b64encode(content.encode('utf-8')).decode('utf-8'),
-                "branch": GITHUB_BRANCH
-            }
-            if sha:
-                payload["sha"] = sha
-
-            r = requests.put(api_url, headers=headers, json=payload)
-            if r.status_code in [200, 201]:
-                status_msg = f'File {rel_path} saved and pushed to GitHub! Bot service should restart shortly.'
-            else:
-                try:
-                    err_msg = r.json().get('message', r.text)
-                except:
-                    err_msg = r.text
-                status_msg = f'Saved locally, but GitHub error: {err_msg}'
-        except Exception as e:
-            status_msg = f'Saved locally, but error pushing to GitHub: {str(e)}'
-
-    # Local restart logic
-    # Always try to start/restart if bot.py was edited
-    if rel_path == 'bot.py':
-        try:
-            stop_bot()
-            start_bot()
-            status_msg += " Bot (re)started locally."
-        except Exception as e:
-            status_msg += f" Error starting bot locally: {str(e)}"
-
-    return jsonify({'status': status_msg})
-
-
-
-
-@app.route('/push_all_to_github', methods=['POST'])
-@login_required
-def push_all_to_github():
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        return jsonify({'status': 'GITHUB_TOKEN or GITHUB_REPO not set!'})
-
+def save_inventories(inventories):
     try:
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-
-        # 1. Get the latest commit SHA of the branch
-        branch_url = f"https://api.github.com/repos/{GITHUB_REPO}/branches/{GITHUB_BRANCH}"
-        r = requests.get(branch_url, headers=headers)
-        if r.status_code != 200:
-            return jsonify({'status': f'Error getting branch info: {r.text}'})
-
-        last_commit_sha = r.json()['commit']['sha']
-        base_tree_sha = r.json()['commit']['commit']['tree']['sha']
-
-        # 2. Create a new tree
-        tree_entries = []
-
-        # Add editable files
-        editable_files = get_editable_files()
-        for filename in editable_files:
-            local_path = os.path.join(base_dir, filename)
-
-            if os.path.exists(local_path):
-                with open(local_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                tree_entries.append({
-                    "path": filename,
-                    "mode": "100644",
-                    "type": "blob",
-                    "content": content
-                })
-
-        # Add images from index.json only.
-        # This makes GitHub match current dashboard data and removes deleted/orphaned images on push.
-        image_tree_entries = []
-        tracked_images = get_tracked_image_filenames()
-        if os.path.exists(UPLOAD_FOLDER):
-            for img_file in sorted(tracked_images):
-                img_path = os.path.join(UPLOAD_FOLDER, img_file)
-                if os.path.isfile(img_path):
-                    with open(img_path, 'rb') as f:
-                        img_content = base64.b64encode(f.read()).decode('utf-8')
-
-                    # Create blob for image
-                    blob_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/blobs"
-                    blob_payload = {
-                        "content": img_content,
-                        "encoding": "base64"
-                    }
-                    br = requests.post(blob_url, headers=headers, json=blob_payload)
-                    if br.status_code == 201:
-                        blob_sha = br.json()['sha']
-                        image_tree_entries.append({
-                            "path": img_file,
-                            "mode": "100644",
-                            "type": "blob",
-                            "sha": blob_sha
-                        })
-
-        # Always create a dedicated tree for the images directory, even if empty,
-        # so that deletions are reflected on GitHub (the images folder will be replaced).
-        tree_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees"
-        image_tree_payload = {
-            "tree": image_tree_entries
-        }
-        itr = requests.post(tree_url, headers=headers, json=image_tree_payload)
-        if itr.status_code == 201:
-            image_tree_sha = itr.json()['sha']
-            tree_entries.append({
-                "path": "images",
-                "mode": "040000",
-                "type": "tree",
-                "sha": image_tree_sha
-            })
-
-        tree_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees"
-        tree_payload = {
-            "base_tree": base_tree_sha,
-            "tree": tree_entries
-        }
-        r = requests.post(tree_url, headers=headers, json=tree_payload)
-        if r.status_code != 201:
-            return jsonify({'status': f'Error creating tree: {r.text}'})
-
-        new_tree_sha = r.json()['sha']
-
-        # 3. Create a new commit
-        commit_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/commits"
-        commit_payload = {
-            "message": "Update from Dashboard (All files and images)",
-            "tree": new_tree_sha,
-            "parents": [last_commit_sha]
-        }
-        r = requests.post(commit_url, headers=headers, json=commit_payload)
-        if r.status_code != 201:
-            return jsonify({'status': f'Error creating commit: {r.text}'})
-
-        new_commit_sha = r.json()['sha']
-
-        # 4. Update the branch reference
-        ref_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/refs/heads/{GITHUB_BRANCH}"
-        ref_payload = {
-            "sha": new_commit_sha
-        }
-        r = requests.patch(ref_url, headers=headers, json=ref_payload)
-        if r.status_code == 200:
-            return jsonify({'status': 'All changes pushed to GitHub successfully!'})
-        else:
-            return jsonify({'status': f'Error updating branch: {r.text}'})
-
+        with open(USER_INVENTORIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(inventories, f, indent=4)
     except Exception as e:
-        return jsonify({'status': f'Error pushing to GitHub: {str(e)}'})
+        print(f"Error saving {USER_INVENTORIES_FILE}: {e}")
 
 
-@app.route('/bot_status')
-@login_required
-def get_bot_status():
-    # If configured, check bot status from the external Render service.
-    if BOT_STATUS_URL:
+def add_to_inventory(user_id, vehicle_name):
+    inventories = load_inventories()
+    user_id_str = str(user_id)
+    if user_id_str not in inventories:
+        inventories[user_id_str] = []
+    # User might want duplicates, let's keep them as a list
+    inventories[user_id_str].append(vehicle_name)
+    save_inventories(inventories)
+    return True
+
+
+guild_msg_counts = {}
+active_spawns = {}
+
+# Rarity weights as specified
+RARITY_WEIGHTS = {
+    "limited edition": 1,
+    "exotic": 5,
+    "legendary": 10,
+    "epic": 20,
+    "rare": 30,
+    "common": 34
+}
+
+# Rarity colors
+RARITY_COLORS = {
+    "limited edition": 0x8B0000,  # Dark Red
+    "exotic": 0xFF00FF,  # Exotic Magenta
+    "legendary": 0xFFD700,  # Gold
+    "epic": 0x800080,  # Purple
+    "rare": 0x0000FF,  # Blue
+    "common": 0x808080  # Grey
+}
+
+
+def get_random_vehicle(vehicles):
+    """Pick a random vehicle based on rarity percentages, only if it has an image."""
+    if not vehicles:
+        return None
+
+    # Filter to only vehicles that have a local image or valid URL
+    spawnable = {k: v for k, v in vehicles.items() if
+                 v.get('local_path') or (v.get('url') and str(v['url']).startswith('http'))}
+
+    if not spawnable:
+        return None
+
+    # Group spawnable vehicles by rarity
+    by_rarity = {}
+    for name, data in spawnable.items():
+        r = data.get('rarity', 'Common').lower()
+        if r not in by_rarity:
+            by_rarity[r] = []
+        by_rarity[r].append(name)
+
+    # Filter out rarities with no vehicles
+    available_rarities = [r for r in RARITY_WEIGHTS.keys() if r in by_rarity]
+    weights = [RARITY_WEIGHTS[r] for r in available_rarities]
+
+    if not available_rarities:
+        # Fallback to pure random choice from spawnable if no matching rarities found
+        return random.choice(list(spawnable.keys()))
+
+    selected_rarity = random.choices(available_rarities, weights=weights, k=1)[0]
+    return random.choice(by_rarity[selected_rarity])
+
+
+# Load vehicle data
+def load_vehicles():
+    try:
+        if not os.path.exists(INDEX_JSON_FILE):
+            return {}
+        with open(INDEX_JSON_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        processed = {}
+        for k, v in data.items():
+            # Basic data normalization
+            if isinstance(v, dict):
+                v_data = {
+                    "url": v.get('url') or v.get('pic_link'),
+                    "rarity": v.get('rarity', 'Common')
+                }
+            else:
+                v_data = {"url": str(v), "rarity": "Common"}
+
+            # Check for local file (vehicle_name.png, jpg, etc.)
+            local_path = None
+            for ext in ['png', 'jpg', 'jpeg', 'gif', 'webp']:
+                test_path = os.path.join(IMAGES_DIR, f"{k}.{ext}")
+                if os.path.exists(test_path):
+                    local_path = test_path
+                    break
+
+            if local_path:
+                v_data['local_path'] = local_path
+
+            # Keep all entries so they can be listed/updated
+            processed[k] = v_data
+
+        return processed
+    except Exception as e:
+        print(f"Error loading index.json: {e}")
+        return {}
+
+
+vehicles = load_vehicles()
+print(f"Loaded {len(vehicles)} vehicles from index.json")
+
+
+def normalize_name(name):
+    """Normalize name for flexible matching: lowercase and remove non-alphanumeric chars."""
+    if not name:
+        return ""
+    # Lowercase and remove non-alphanumeric
+    s = re.sub(r'[^a-z0-9]', '', name.lower())
+    # Collapse consecutive identical characters: e.g. "marasetti" -> "maraseti"
+    return re.sub(r'(.)\1+', r'\1', s)
+
+
+class CatchModal(discord.ui.Modal, title='Catch the MT vehicle!'):
+    guess = discord.ui.TextInput(
+        label='What is the name of this MT vehicle?',
+        placeholder='Enter your guess here...',
+        required=True,
+        min_length=1,
+        max_length=100
+    )
+
+    def __init__(self, correct_name, vehicle_code, view):
+        super().__init__()
+        self.correct_name = correct_name
+        self.vehicle_code = vehicle_code
+        self.view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.view.caught:
+            await interaction.response.send_message("This MT vehicle has already been caught!", ephemeral=True)
+            return
+
+        user_guess = normalize_name(self.guess.value)
+        target_name = normalize_name(self.correct_name)
+
+        if user_guess == target_name:
+            self.view.caught = True
+            # Save to user inventory
+            add_to_inventory(interaction.user.id, self.correct_name)
+
+            # Update all original messages to remove the button and update text
+            await self.view.update_all_messages(
+                f"Congratulations! {interaction.user.name} caught the {self.correct_name}!")
+
+            display_code = self.vehicle_code.split(',')[0].strip() if isinstance(self.vehicle_code, str) else str(
+                self.vehicle_code)
+            await interaction.response.send_message(
+                f'{interaction.user.mention} You caught **{self.correct_name}**! `{display_code}`', ephemeral=False)
+
+            # Reset message counter and spawn new vehicle immediately
+            if interaction.guild:
+                guild_msg_counts[interaction.guild.id] = 0
+                await spawn_in_guild(interaction.guild)
+
+            self.view.stop()
+        else:
+            await interaction.response.send_message(f'{interaction.user.mention} Wrong name!', ephemeral=False)
+
+
+class CatchView(discord.ui.View):
+    def __init__(self, vehicle_name, vehicle_code, image_url, rarity):
+        super().__init__(timeout=300)  # 5 minutes timeout
+        self.vehicle_name = vehicle_name
+        self.vehicle_code = vehicle_code
+        self.image_url = image_url
+        self.rarity = rarity.lower()
+        self.caught = False
+        self.messages = []
+        self.header = "A wild MT vehicle has appeared!"
+
+        if self.rarity == 'exotic':
+            self.hue = 0.0
+
+    def add_message(self, message):
+        self.messages.append(message)
+
+    async def update_all_messages(self, header=None, color=None):
+        if header:
+            self.header = header
+
+        # Disable the catch button instead of removing it
+        if self.caught or "escaped" in self.header:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+
+        if color is None:
+            color_value = RARITY_COLORS.get(self.rarity, 0x0000FF)  # Default to blue if unknown
+            color = discord.Color(color_value)
+
+        embed = discord.Embed(title=self.header, color=color)
+        embed.set_image(url=self.image_url)
+
+        for msg in self.messages:
+            try:
+                await msg.edit(content=None, embed=embed, view=self)
+            except Exception:
+                pass
+
+    async def on_timeout(self):
+        # Called when the 5-minute window expires
+        if not self.caught:
+            await self.update_all_messages("The wild MT vehicle escaped! ⏳")
+            self.stop()
+
+    @discord.ui.button(label='Catch me!', style=discord.ButtonStyle.primary)
+    async def catch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.caught:
+            await interaction.response.send_message("This MT vehicle has already been caught!", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self))
+
+
+async def spawn_vehicle(vehicles, channel, guild=None, ctx=None):
+    """Helper to spawn a vehicle in a specific channel/guild or ctx."""
+    if not vehicles:
+        if ctx: await ctx.send("No vehicles available.")
+        return False
+
+    # Update active spawn tracking if in a guild
+    target_guild = guild or (ctx.guild if ctx else None)
+    if target_guild:
+        # Despawn previous if it exists
+        if target_guild.id in active_spawns:
+            old_view = active_spawns[target_guild.id]
+            if not old_view.caught:
+                await old_view.update_all_messages("The wild MT vehicle escaped! ⏳")
+                old_view.stop()
+
+    vehicle_name = get_random_vehicle(vehicles)
+    if not vehicle_name:
+        return False
+
+    vehicle_data = vehicles[vehicle_name]
+    local_path = vehicle_data.get('local_path')
+    image_url = vehicle_data.get('url')
+    vehicle_code = vehicle_data.get('code', vehicle_data.get('rarity', 'Common'))
+    rarity = vehicle_data.get('rarity', 'Common')
+
+    # If local file exists, we'll use attachment protocol
+    display_url = image_url
+    file = None
+    if local_path:
+        file = discord.File(local_path, filename="vehicle.png")
+        display_url = "attachment://vehicle.png"
+
+    print(f"Spawning vehicle: {vehicle_name} | Rarity: {rarity} | Local: {local_path is not None}")
+
+    view = CatchView(vehicle_name, vehicle_code, display_url, rarity)
+
+    if target_guild:
+        active_spawns[target_guild.id] = view
+
+    try:
+        permissions = channel.permissions_for(channel.guild.me)
+        if not permissions.embed_links:
+            print(f"Warning: Bot lacks 'Embed Links' permission in {channel.guild.name}#{channel.name}")
+            if ctx: await ctx.send("Bot lacks 'Embed Links' permission.")
+            return False
+
+        color_value = RARITY_COLORS.get(rarity.lower(), 0x00FF00)  # Default to green if unknown for appearance
+        embed = discord.Embed(title="A wild MT vehicle has appeared!", color=discord.Color(color_value))
+        embed.set_image(url=display_url)
+
+        if ctx:
+            sent = await ctx.send(embed=embed, file=file, view=view)
+        else:
+            sent = await channel.send(embed=embed, file=file, view=view)
+
+        view.add_message(sent)
+        return True  # Successfully spawned
+    except Exception as e:
+        print(f"Error sending vehicle message: {e}")
+
+    return False
+
+
+async def spawn_in_guild(guild):
+    """Spawns a vehicle in a specific guild."""
+    global vehicles
+    vehicles = load_vehicles()  # Refresh vehicles to pick up website changes
+
+    # Try to find 'mt-dex' channel, or fallback to the first available text channel
+    channel = discord.utils.get(guild.text_channels, name='mt-dex')
+    if not channel and guild.text_channels:
+        channel = guild.text_channels[0]
+
+    if channel:
+        await spawn_vehicle(vehicles, channel, guild=guild)
+    else:
+        print(f"No suitable channel found in {guild.name}")
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    # Handle !inv / !inventory prefix commands
+    if message.content.lower() in ['!inv', '!inventory']:
+        view = InventoryOverview(message.author.id)
+        embed = create_overview_embed(message.author)
+        await message.channel.send(embed=embed, view=view)
+        return
+
+    # Handle !help prefix command
+    if message.content.lower() in ['!help', '!h']:
+        help_text = (
+            "**MT Vehicle Bot Commands:**\n"
+            "`/show` - Show a vehicle's picture and rarity\n"
+            "`!inventory` or `!inv` - View your caught vehicles\n"
+            "`/inventory` - Slash command version of inventory\n"
+            "`!sync` - Manually sync slash commands (if they are missing)\n\n"
+            "*Vehicles spawn automatically every 5 messages!*"
+        )
+        await message.channel.send(help_text)
+        return
+
+    # Handle !sync prefix command
+    if message.content.lower() == '!sync':
         try:
-            headers = {}
-            if BOT_STATUS_TOKEN:
-                headers['Authorization'] = f'Bearer {BOT_STATUS_TOKEN}'
-
-            response = requests.get(BOT_STATUS_URL, headers=headers, timeout=BOT_STATUS_TIMEOUT)
-            if 200 <= response.status_code < 300:
-                running = True
-                content_type = response.headers.get('Content-Type', '')
-                if 'application/json' in content_type.lower():
-                    payload = response.json()
-                    if isinstance(payload, dict):
-                        # Prefer explicit status keys when provided by the bot service.
-                        if 'running' in payload:
-                            running = bool(payload.get('running'))
-                        elif 'online' in payload:
-                            running = bool(payload.get('online'))
-                        elif 'status' in payload:
-                            running = str(payload.get('status', '')).lower() in {'online', 'running', 'ok', 'healthy'}
-                return jsonify({'running': running, 'source': 'remote'})
-
-            return jsonify({'running': False, 'source': 'remote', 'error': f'HTTP {response.status_code}'})
+            synced = await bot.tree.sync()
+            await message.channel.send(f"Synced {len(synced)} slash command(s) successfully!")
         except Exception as e:
-            return jsonify({'running': False, 'source': 'remote', 'error': str(e)})
+            await message.channel.send(f"Error syncing slash commands: {e}")
+        return
 
-    # Fallback: local process check for single-service setups.
-    global bot_process
-    return jsonify({'running': bot_process is not None, 'source': 'local'})
+    if message.guild:
+        guild_id = message.guild.id
+        # Increment message count for this guild
+        guild_msg_counts[guild_id] = guild_msg_counts.get(guild_id, 0) + 1
 
-
-@app.route('/get_children')
-@login_required
-def get_children():
-    if os.path.exists(INDEX_JSON_PATH):
-        with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
-            return jsonify(json.load(f))
-    return jsonify({})
+        if guild_msg_counts[guild_id] >= SPAWN_THRESHOLD:
+            guild_msg_counts[guild_id] = 0
+            await spawn_in_guild(message.guild)
 
 
-@app.route('/add_image', methods=['POST'])
-@login_required
-def add_image():
-    name = request.form.get('name')
-    rarity = request.form.get('rarity')
-    file = request.files.get('file')
+@tasks.loop(seconds=1)
+async def rainbow_task():
+    """Centralized task to cycle colors for all active exotic vehicles."""
+    update_tasks = []
+    for guild_id in list(active_spawns.keys()):
+        view = active_spawns[guild_id]
+        if not view.is_finished() and not view.caught and view.rarity == 'exotic':
+            if view.messages:
+                hue = getattr(view, 'hue', 0.0)
+                rgb = colorsys.hsv_to_rgb(hue, 1, 1)
+                color = discord.Color.from_rgb(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+                update_tasks.append(view.update_all_messages(color=color))
+                view.hue = (hue + 0.2) % 1.0
 
-    with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    if update_tasks:
+        await asyncio.gather(*update_tasks, return_exceptions=True)
 
-    pic_link = ""
+
+def create_overview_embed(user):
+    inventories = load_inventories()
+    user_inventory = inventories.get(str(user.id), [])
+
+    counts = {r: 0 for r in RARITY_WEIGHTS.keys()}
+    for v_name in user_inventory:
+        if v_name in vehicles:
+            r = vehicles[v_name]['rarity'].lower()
+            if r in counts:
+                counts[r] += 1
+
+    embed = discord.Embed(title=f"{user.name}'s Inventory", color=discord.Color.blue())
+    desc = ""
+    for rarity, count in counts.items():
+        desc += f"**{rarity.title()}:** {count}\n"
+    embed.description = desc or "You haven't caught any vehicles yet!"
+    return embed
+
+
+def get_user_rarity_vehicle_counts(user_id, rarity):
+    inventories = load_inventories()
+    user_inventory = inventories.get(str(user_id), [])
+    counts = {}
+    for v_name in user_inventory:
+        if v_name in vehicles and vehicles[v_name].get('rarity', 'Common').lower() == rarity:
+            counts[v_name] = counts.get(v_name, 0) + 1
+    return counts
+
+
+class RarityButton(discord.ui.Button):
+    def __init__(self, rarity, label, style, disabled):
+        super().__init__(label=label, style=style, disabled=disabled)
+        self.rarity = rarity
+
+    async def callback(self, interaction: discord.Interaction):
+        view = RarityInventoryView(interaction.user.id, self.rarity)
+        embed = view.create_embed()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class InventoryOverview(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+
+        inventories = load_inventories()
+        user_inventory = inventories.get(str(user_id), [])
+
+        counts = {r: 0 for r in RARITY_WEIGHTS.keys()}
+        for v_name in user_inventory:
+            if v_name in vehicles:
+                r = vehicles[v_name]['rarity'].lower()
+                if r in counts:
+                    counts[r] += 1
+
+        # Add buttons for each rarity
+        for rarity in RARITY_WEIGHTS.keys():
+            count = counts[rarity]
+            style = discord.ButtonStyle.secondary
+            if rarity == 'limited edition':
+                style = discord.ButtonStyle.danger
+            elif rarity == 'exotic':
+                style = discord.ButtonStyle.success
+            elif rarity == 'legendary':
+                style = discord.ButtonStyle.primary
+
+            self.add_item(RarityButton(rarity, f"{rarity.title()}", style, count == 0))
+
+
+class RarityInventoryView(discord.ui.View):
+    def __init__(self, user_id, rarity):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.rarity = rarity
+        self.vehicle_counts = get_user_rarity_vehicle_counts(user_id, rarity)
+
+        back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back_button.callback = self.back_callback
+        self.add_item(back_button)
+
+    async def back_callback(self, interaction: discord.Interaction):
+        view = InventoryOverview(interaction.user.id)
+        embed = create_overview_embed(interaction.user)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    def create_embed(self):
+        color_value = RARITY_COLORS.get(self.rarity, 0x0000FF)
+        embed = discord.Embed(title=f"Your {self.rarity.title()} Vehicles", color=discord.Color(color_value))
+        if not self.vehicle_counts:
+            embed.description = "You haven't caught any vehicles of this rarity yet."
+        else:
+            sorted_items = sorted(self.vehicle_counts.items(), key=lambda item: (-item[1], item[0].lower()))
+            lines = [f"- {name} x{count}" for name, count in sorted_items[:30]]
+            total_unique = len(sorted_items)
+            total_caught = sum(self.vehicle_counts.values())
+            embed.description = "\n".join(lines)
+            embed.set_footer(text=f"Unique: {total_unique} | Total caught: {total_caught}")
+            if total_unique > 30:
+                embed.description += f"\n...and {total_unique - 30} more"
+        return embed
+
+
+@bot.tree.command(name="inventory", description="View your vehicle inventory")
+async def inventory_slash(interaction: discord.Interaction):
+    view = InventoryOverview(interaction.user.id)
+    embed = create_overview_embed(interaction.user)
+    await interaction.response.send_message(embed=embed, view=view)
+
+
+@bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
+@app_commands.describe(vehicle_name="The name of the vehicle to show")
+async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
+    # If the exact match doesn't exist, try a case-insensitive match
+    if vehicle_name not in vehicles:
+        matching_names = [n for n in vehicles.keys() if n.lower() == vehicle_name.lower()]
+        if matching_names:
+            vehicle_name = matching_names[0]
+        else:
+            await interaction.response.send_message(f"❌ Vehicle **{vehicle_name}** not found.", ephemeral=True)
+            return
+
+    vehicle_data = vehicles[vehicle_name]
+    rarity = vehicle_data.get('rarity', 'Common')
+    local_path = vehicle_data.get('local_path')
+    image_url = vehicle_data.get('url')
+
+    color_value = RARITY_COLORS.get(rarity.lower(), 0x808080)
+    embed = discord.Embed(title=vehicle_name, color=discord.Color(color_value))
+    embed.add_field(name="Rarity", value=rarity.title(), inline=True)
+
+    file = None
+    if local_path:
+        file = discord.File(local_path, filename="vehicle.png")
+        embed.set_image(url="attachment://vehicle.png")
+    elif image_url and str(image_url).startswith('http'):
+        embed.set_image(url=image_url)
+    else:
+        embed.description = "This vehicle has no picture yet."
+
     if file:
-        ext = file.filename.split('.')[-1].lower() if '.' in file.filename else 'png'
-        filename = f"{name}.{ext}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        pic_link = f"/static/images/{filename}"
-
-    data[name] = {
-        "pic_link": pic_link,
-        "rarity": rarity
-    }
-
-    with open(INDEX_JSON_PATH, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
-
-    # Mirror to root for GitHub sync
-    with open(ROOT_INDEX_JSON, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
-
-    return jsonify({'status': 'Image/Vehicle added successfully'})
+        await interaction.response.send_message(embed=embed, file=file)
+    else:
+        await interaction.response.send_message(embed=embed)
 
 
-@app.route('/delete_image', methods=['POST'])
-@login_required
-def delete_image():
-    name = request.json.get('name')
-    with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    if name in data:
-        info = data[name]
-        # Delete image file if it exists locally
-        if info.get('pic_link') and info['pic_link'].startswith('/static/images/'):
-            filename = info['pic_link'].split('/')[-1]
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except:
-                    pass
-        del data[name]
-        with open(INDEX_JSON_PATH, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
-        # Mirror to root for GitHub sync
-        with open(ROOT_INDEX_JSON, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
-        return jsonify({'status': f'{name} deleted'})
-    return jsonify({'status': 'Not found'}), 404
+@show_vehicle.autocomplete('vehicle_name')
+async def show_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+    # Show existing names from vehicles dict
+    names = list(vehicles.keys())
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in names if current.lower() in name.lower()
+    ][:25]
 
 
-@app.route('/edit_image', methods=['POST'])
-@login_required
-def edit_image():
-    old_name = request.form.get('old_name')
-    new_name = request.form.get('new_name')
-    rarity = request.form.get('rarity')
-    file = request.files.get('file')
+@bot.event
+async def on_ready():
+    print(f'Bot is logged in as {bot.user.name}')
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Error syncing tree: {e}")
 
-    with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    if old_name in data:
-        info = data.pop(old_name)
-        info['rarity'] = rarity
-
-        if file:
-            # Delete old image if it exists locally
-            if info.get('pic_link') and info['pic_link'].startswith('/static/images/'):
-                old_filename = info['pic_link'].split('/')[-1]
-                old_file_path = os.path.join(app.config['UPLOAD_FOLDER'], old_filename)
-                if os.path.exists(old_file_path):
-                    try:
-                        os.remove(old_file_path)
-                    except:
-                        pass
-
-            # Save new image with new name
-            ext = file.filename.split('.')[-1].lower() if '.' in file.filename else 'png'
-            filename = f"{new_name}.{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
-            info['pic_link'] = f"/static/images/{filename}"
-        elif old_name != new_name:
-            # If name changed but no new file, rename existing file if it exists
-            if info.get('pic_link') and info['pic_link'].startswith('/static/images/'):
-                old_filename = info['pic_link'].split('/')[-1]
-                ext = old_filename.split('.')[-1]
-                new_filename = f"{new_name}.{ext}"
-                old_path = os.path.join(app.config['UPLOAD_FOLDER'], old_filename)
-                new_path = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
-                if os.path.exists(old_path):
-                    try:
-                        os.rename(old_path, new_path)
-                        info['pic_link'] = f"/static/images/{new_filename}"
-                    except:
-                        pass
-
-        data[new_name] = info
-        with open(INDEX_JSON_PATH, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
-        # Mirror to root for GitHub sync
-        with open(ROOT_INDEX_JSON, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
-        return jsonify({'status': 'Updated successfully locally. Use "Push All" to sync with GitHub.'})
-    return jsonify({'status': 'Not found'}), 404
-
-
-@app.route('/create_file', methods=['POST'])
-@login_required
-def create_file():
-    filename = request.json.get('filename', '')
-    content = request.json.get('content', '')
-
-    rel_path, abs_path = resolve_workspace_path(filename)
-    if not rel_path or not abs_path:
-        return jsonify({'status': 'Unauthorized or invalid file path.'}), 403
-
-    editor_files = load_editor_files()
-    if rel_path in editor_files:
-        return jsonify({'status': f'File {rel_path} already exists in the editor list.'}), 400
-
-    if os.path.exists(abs_path):
-        # Allow adding existing project files to the editor list.
-        editor_files.append(rel_path)
-        save_editor_files(editor_files)
-        return jsonify({'status': f'File {rel_path} added to editor list.'})
-
-    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-    with open(abs_path, 'w', encoding='utf-8') as f:
-        f.write(content)
-
-    editor_files.append(rel_path)
-    save_editor_files(editor_files)
-
-    return jsonify({'status': f'File {rel_path} created successfully.'})
-
-
-@app.route('/delete_file_server', methods=['POST'])
-@login_required
-def delete_file_server():
-    filename = request.json.get('filename', '')
-
-    if not is_file_allowed(filename):
-        return jsonify({'status': 'Unauthorized or invalid file path.'}), 403
-
-    rel_path, abs_path = resolve_workspace_path(filename)
-    if not rel_path or not abs_path:
-        return jsonify({'status': 'Unauthorized or invalid file path.'}), 403
-
-    if not os.path.exists(abs_path):
-        return jsonify({'status': f'File {rel_path} not found.'}), 404
-
-    os.remove(abs_path)
-
-    editor_files = [f for f in load_editor_files() if f != rel_path]
-    save_editor_files(editor_files)
-
-    return jsonify({'status': f'File {rel_path} deleted successfully.'})
-
-
-@app.route('/rename_file_server', methods=['POST'])
-@login_required
-def rename_file_server():
-    old_filename = request.json.get('old_filename', '')
-    new_filename = request.json.get('new_filename', '')
-
-    if not is_file_allowed(old_filename):
-        return jsonify({'status': 'Unauthorized or invalid file path.'}), 403
-
-    old_rel, old_abs = resolve_workspace_path(old_filename)
-    new_rel, new_abs = resolve_workspace_path(new_filename)
-    if not old_rel or not old_abs or not new_rel or not new_abs:
-        return jsonify({'status': 'Unauthorized or invalid file path.'}), 403
-
-    if not os.path.exists(old_abs):
-        return jsonify({'status': f'File {old_rel} not found.'}), 404
-
-    if os.path.exists(new_abs):
-        return jsonify({'status': f'File {new_rel} already exists.'}), 400
-
-    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-    os.rename(old_abs, new_abs)
-
-    editor_files = load_editor_files()
-    editor_files = [new_rel if f == old_rel else f for f in editor_files]
-    save_editor_files(editor_files)
-
-    return jsonify({'status': f'Renamed {old_rel} to {new_rel}.'})
+    if not rainbow_task.is_running():
+        rainbow_task.start()
 
 
 if __name__ == '__main__':
-    start_bot()
-    port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port)
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        print("No DISCORD_TOKEN found in .env file.")
