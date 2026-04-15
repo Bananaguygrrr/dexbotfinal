@@ -1,9 +1,0 @@
-discord.py
-python-dotenv
-flask
-flask-login
-flask-socketio
-gevent
-gevent-websocket
-gunicorn
-requests
