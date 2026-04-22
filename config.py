@@ -7,10 +7,19 @@ load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 
+# Add Discord user IDs here for admin-only prefix commands.
+ADMIN_USER_IDS = {
+    1316448831596007537,
+    1105451323584938075
+}
+
 SPAWN_THRESHOLD = 100
+FRESH_SPAWN_CHANCE = 0.005
+FRESH_BUTTON_STYLE = "secondary"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.getenv('DATA_DIR', os.path.join(SCRIPT_DIR, 'data'))
+DEFAULT_DATA_DIR = '/var/data' if os.getenv('RENDER') and not os.getenv('DATA_DIR') else os.path.join(SCRIPT_DIR, 'data')
+DATA_DIR = os.getenv('DATA_DIR', DEFAULT_DATA_DIR)
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
