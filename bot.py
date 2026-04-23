@@ -311,11 +311,7 @@ def parse_bool_true_false(token: str) -> Optional[bool]:
 
 
 def has_admin_access(message: discord.Message) -> bool:
-    if message.author.id in ADMIN_USER_IDS:
-        return True
-    if message.guild and getattr(message.author, "guild_permissions", None):
-        return bool(message.author.guild_permissions.manage_guild)
-    return False
+    return message.author.id in ADMIN_USER_IDS
 
 
 def build_help_message() -> str:
@@ -330,11 +326,12 @@ def build_help_message() -> str:
         "`/traderemove vehicle_name amount` - Remove vehicles from a trade\n\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
-        "`!testspawn` - Spawn a test vehicle (Manage Server or bot admin)\n"
-        "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        "`!addinventory @user vehicle_name count fresh:true/false` - Add inventory (Manage Server or bot admin)\n"
-        "`!removeinventory @user vehicle_name count fresh:true/false` - Remove inventory (Manage Server or bot admin)\n\n"
+        "\n"
         "**Bot Admins**\n"
+        "`!testspawn` - Spawn a test vehicle\n"
+        "`!testspawn true|false` - Force the fresh state on a test spawn\n"
+        "`!addinventory @user vehicle_name count fresh:true/false` - Add inventory\n"
+        "`!removeinventory @user vehicle_name count fresh:true/false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.*"
     )
@@ -1833,7 +1830,7 @@ async def on_message(message: discord.Message):
             return
 
         if not has_admin_access(message):
-            await message.channel.send("You need Manage Server permission or admin access to use this command.")
+            await message.channel.send("Only bot admins can use `!testspawn`.")
             return
 
         forced_fresh = None
@@ -1867,7 +1864,7 @@ async def on_message(message: discord.Message):
             return
 
         if not has_admin_access(message):
-            await message.channel.send("You need Manage Server permission or admin access to use this command.")
+            await message.channel.send(f"Only bot admins can use `{command}`.")
             return
 
         if len(parts) < 4:
@@ -1940,10 +1937,8 @@ async def on_message(message: discord.Message):
 
     if command == "!sync":
         is_admin = message.author.id in ADMIN_USER_IDS
-        can_manage_guild = bool(message.guild and message.author.guild_permissions.manage_guild)
-
-        if not (is_admin or can_manage_guild):
-            await message.channel.send("You do not have permission to run !sync.")
+        if not is_admin:
+            await message.channel.send("Only bot admins can use `!sync`.")
             return
 
         try:
