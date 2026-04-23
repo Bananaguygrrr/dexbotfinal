@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import builtins
@@ -56,6 +56,7 @@ DEFAULT_DATA_DIR = "/var/data" if os.getenv("RENDER") and not os.getenv("DATA_DI
 DATA_DIR = os.getenv("DATA_DIR", DEFAULT_DATA_DIR)
 
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
+GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
@@ -116,6 +117,7 @@ pending_trades: Dict[tuple[int, int], int] = {}
 active_trades: Dict[int, "TradeView"] = {}
 
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
@@ -261,6 +263,53 @@ def _coerce_non_negative_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, parsed)
+
+
+def parse_fresh_flag(token: str) -> Optional[bool]:
+    if not token:
+        return None
+
+    normalized = token.strip().lower()
+    if ":" in normalized:
+        key, value = normalized.split(":", 1)
+    elif "=" in normalized:
+        key, value = normalized.split("=", 1)
+    else:
+        return None
+
+    if key != "fresh":
+        return None
+
+    if value in {"true", "1", "yes", "y"}:
+        return True
+    if value in {"false", "0", "no", "n"}:
+        return False
+    return None
+
+
+def has_admin_access(message: discord.Message) -> bool:
+    if message.author.id in ADMIN_USER_IDS:
+        return True
+    if message.guild and getattr(message.author, "guild_permissions", None):
+        return bool(message.author.guild_permissions.manage_guild)
+    return False
+
+
+async def resolve_user_from_token(token: str, guild: Optional[discord.Guild]) -> Optional[discord.abc.User]:
+    user_id_match = DIGIT_ID_RE.search(token or "")
+    if not user_id_match:
+        return None
+
+    user_id = int(user_id_match.group(1))
+    if guild:
+        member = guild.get_member(user_id)
+        if member:
+            return member
+
+    try:
+        return await bot.fetch_user(user_id)
+    except Exception:
+        return None
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = False) -> bool:
@@ -472,6 +521,106 @@ def remove_vehicle_count(user_id: int, vehicle_name: str, count: int, is_fresh: 
     inventories[user_id_str] = user_inventory
     save_inventories(inventories)
     return amount_removed
+
+
+def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
+    global GUILD_CHANNEL_SETTINGS_CACHE
+
+    if GUILD_CHANNEL_SETTINGS_CACHE is not None:
+        return GUILD_CHANNEL_SETTINGS_CACHE
+
+    if not os.path.exists(GUILD_CHANNEL_SETTINGS_FILE):
+        GUILD_CHANNEL_SETTINGS_CACHE = {}
+        return GUILD_CHANNEL_SETTINGS_CACHE
+
+    try:
+        with open(GUILD_CHANNEL_SETTINGS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {GUILD_CHANNEL_SETTINGS_FILE}: {error}")
+        GUILD_CHANNEL_SETTINGS_CACHE = {}
+        return GUILD_CHANNEL_SETTINGS_CACHE
+
+    if not isinstance(raw_data, dict):
+        GUILD_CHANNEL_SETTINGS_CACHE = {}
+        return GUILD_CHANNEL_SETTINGS_CACHE
+
+    normalized: Dict[str, Dict[str, int]] = {}
+    for raw_guild_id, raw_settings in raw_data.items():
+        guild_id = str(raw_guild_id)
+        if not isinstance(raw_settings, dict):
+            continue
+
+        parsed_settings: Dict[str, int] = {}
+        for key in ("dex_channel_id", "trade_channel_id"):
+            value = raw_settings.get(key)
+            try:
+                parsed_value = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed_value > 0:
+                parsed_settings[key] = parsed_value
+
+        if parsed_settings:
+            normalized[guild_id] = parsed_settings
+
+    GUILD_CHANNEL_SETTINGS_CACHE = normalized
+    return GUILD_CHANNEL_SETTINGS_CACHE
+
+
+def save_guild_channel_settings(settings: Dict[str, Dict[str, int]]) -> None:
+    global GUILD_CHANNEL_SETTINGS_CACHE
+
+    try:
+        os.makedirs(os.path.dirname(GUILD_CHANNEL_SETTINGS_FILE), exist_ok=True)
+        with open(GUILD_CHANNEL_SETTINGS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(settings, handle, indent=2, sort_keys=True)
+        GUILD_CHANNEL_SETTINGS_CACHE = settings
+    except Exception as error:
+        print(f"Error saving {GUILD_CHANNEL_SETTINGS_FILE}: {error}")
+
+
+def get_guild_channel_setting(guild_id: int, key: str) -> Optional[int]:
+    settings = load_guild_channel_settings()
+    guild_settings = settings.get(str(guild_id), {})
+    if not isinstance(guild_settings, dict):
+        return None
+
+    value = guild_settings.get(key)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
+    settings = load_guild_channel_settings()
+    guild_key = str(guild_id)
+    guild_settings = settings.get(guild_key, {})
+    if not isinstance(guild_settings, dict):
+        guild_settings = {}
+
+    guild_settings[key] = int(channel_id)
+    settings[guild_key] = guild_settings
+    save_guild_channel_settings(settings)
+
+
+def get_configured_text_channel(guild: discord.Guild, key: str) -> Optional[discord.TextChannel]:
+    channel_id = get_guild_channel_setting(guild.id, key)
+    if not channel_id:
+        return None
+
+    channel = guild.get_channel(channel_id)
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+def get_configured_dex_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    return get_configured_text_channel(guild, "dex_channel_id")
+
+
+def get_configured_trade_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    return get_configured_text_channel(guild, "trade_channel_id")
 
 
 def _resolve_index_path() -> Optional[str]:
@@ -1016,6 +1165,24 @@ class TradeView(discord.ui.View):
         self.stop()
 
 def register_trade_commands(discord_bot: commands.Bot):
+    async def ensure_trade_channel(interaction: discord.Interaction) -> bool:
+        if not interaction.guild:
+            return True
+
+        configured_channel = get_configured_trade_channel(interaction.guild)
+        if configured_channel is None:
+            return True
+
+        if interaction.channel and getattr(interaction.channel, "id", None) == configured_channel.id:
+            return True
+
+        await safe_send(
+            interaction,
+            f"Use {configured_channel.mention} for trade commands in this server.",
+            ephemeral=True,
+        )
+        return False
+
     @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
     @app_commands.describe(user="The user whose inventory you want to view")
     async def inventory_slash(interaction: discord.Interaction, user: Optional[discord.User] = None):
@@ -1027,6 +1194,9 @@ def register_trade_commands(discord_bot: commands.Bot):
     @app_commands.guild_only()
     @app_commands.describe(vehicle_name="The vehicle to add", amount="How many to add")
     async def tradeadd_slash(interaction: discord.Interaction, vehicle_name: str, amount: str):
+        if not await ensure_trade_channel(interaction):
+            return
+
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -1072,6 +1242,11 @@ def register_trade_commands(discord_bot: commands.Bot):
 
     @tradeadd_slash.autocomplete("vehicle_name")
     async def tradeadd_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+        if interaction.guild:
+            configured_channel = get_configured_trade_channel(interaction.guild)
+            if configured_channel and interaction.channel and getattr(interaction.channel, "id", None) != configured_channel.id:
+                return []
+
         available_vehicles = get_trade_available_vehicles(interaction.user.id)
         current_lower = current.lower()
 
@@ -1095,6 +1270,9 @@ def register_trade_commands(discord_bot: commands.Bot):
     @app_commands.guild_only()
     @app_commands.describe(vehicle_name="The vehicle to remove", amount="How many to remove")
     async def traderemove_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
+        if not await ensure_trade_channel(interaction):
+            return
+
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -1137,6 +1315,11 @@ def register_trade_commands(discord_bot: commands.Bot):
 
     @traderemove_slash.autocomplete("vehicle_name")
     async def traderemove_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+        if interaction.guild:
+            configured_channel = get_configured_trade_channel(interaction.guild)
+            if configured_channel and interaction.channel and getattr(interaction.channel, "id", None) != configured_channel.id:
+                return []
+
         trade_view = get_active_trade_for_user(interaction.user.id)
         if not trade_view:
             return []
@@ -1164,6 +1347,9 @@ def register_trade_commands(discord_bot: commands.Bot):
     @app_commands.guild_only()
     @app_commands.describe(user="The user you want to trade with")
     async def trade_slash(interaction: discord.Interaction, user: discord.User):
+        if not await ensure_trade_channel(interaction):
+            return
+
         if not await safe_defer(interaction):
             return
 
@@ -1185,6 +1371,9 @@ def register_trade_commands(discord_bot: commands.Bot):
     @app_commands.guild_only()
     @app_commands.describe(user="The user whose trade request you want to accept")
     async def tradeaccept_slash(interaction: discord.Interaction, user: discord.User):
+        if not await ensure_trade_channel(interaction):
+            return
+
         if not await safe_defer(interaction):
             return
 
@@ -1223,11 +1412,12 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         max_length=100,
     )
 
-    def __init__(self, correct_name: str, vehicle_code: str, view: "CatchView"):
+    def __init__(self, correct_name: str, vehicle_code: str, view: "CatchView", claim_fresh: bool = False):
         super().__init__()
         self.correct_name = correct_name
         self.vehicle_code = vehicle_code
         self.view = view
+        self.claim_fresh = claim_fresh
 
     async def on_submit(self, interaction: discord.Interaction):
         if self.view.caught:
@@ -1239,6 +1429,10 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
             await interaction.response.send_message(f"{interaction.user.mention} wrong name.", ephemeral=False)
             return
 
+        if self.claim_fresh and not self.view.is_fresh:
+            await interaction.response.send_message("This spawn is not Fresh.", ephemeral=True)
+            return
+
         self.view.caught = True
         display_code = (
             self.vehicle_code.split(",")[0].strip()
@@ -1247,14 +1441,15 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         )
 
         caught_label = self.correct_name.replace("-", "")
-        if self.view.is_fresh:
+        awarded_fresh = self.claim_fresh and self.view.is_fresh
+        if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
         await interaction.response.send_message(
             f"{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
             ephemeral=False,
         )
-        add_to_inventory(interaction.user.id, self.correct_name, is_fresh=self.view.is_fresh)
+        add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
 
         await self.view.update_all_messages(
             f"Captured by {interaction.user.name}: {caught_label}",
@@ -1273,8 +1468,20 @@ class CatchView(discord.ui.View):
         self.is_fresh = is_fresh
         self.caught = False
         self.messages: list[discord.Message] = []
-        self.header = "A wild MT vehicle has appeared"
+        self.header = "A wild Fresh MT vehicle has appeared" if self.is_fresh else "A wild MT vehicle has appeared"
         self.hue = 0.0 if self.rarity == "exotic" else None
+        self._configure_fresh_button_state()
+
+    def _configure_fresh_button_state(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) and item.label == "Catch Fresh":
+                item.disabled = not self.is_fresh
+                if not self.is_fresh:
+                    item.style = discord.ButtonStyle.secondary
+                    item.label = "Fresh Locked"
+                else:
+                    item.style = discord.ButtonStyle.success
+                return
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
@@ -1316,13 +1523,36 @@ class CatchView(discord.ui.View):
         if self.caught:
             await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
             return
-        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self))
+        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self, claim_fresh=False))
+
+    @discord.ui.button(label="Catch Fresh", style=discord.ButtonStyle.success)
+    async def catch_fresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.caught:
+            await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
+            return
+        if not self.is_fresh:
+            await interaction.response.send_message("This spawn is not Fresh.", ephemeral=True)
+            return
+        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self, claim_fresh=True))
 
 def _pick_spawn_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
     if not guild.text_channels:
         return None
 
     guild_me = guild.me or guild.get_member(bot.user.id if bot.user else 0)
+    configured_channel = get_configured_dex_channel(guild)
+    if configured_channel:
+        if guild_me is None:
+            return configured_channel
+        configured_perms = configured_channel.permissions_for(guild_me)
+        if configured_perms.send_messages and configured_perms.embed_links:
+            return configured_channel
+        print(
+            f"Configured dex channel {configured_channel.name} in {guild.name} is missing "
+            f"Send Messages or Embed Links permission."
+        )
+        return None
+
     channels = sorted(guild.text_channels, key=lambda channel: channel.position)
 
     preferred = [channel for channel in channels if channel.name.lower() == "mt-dex"]
@@ -1344,6 +1574,7 @@ async def spawn_vehicle(
     *,
     guild: Optional[discord.Guild] = None,
     ctx: Optional[commands.Context] = None,
+    force_is_fresh: Optional[bool] = None,
 ) -> bool:
     if not vehicles:
         if ctx:
@@ -1367,7 +1598,10 @@ async def spawn_vehicle(
     image_url = vehicle_data.get("url")
     vehicle_code = vehicle_data.get("code") or vehicle_data.get("rarity", "common")
     rarity = str(vehicle_data.get("rarity", "common"))
-    is_fresh = random.random() < FRESH_SPAWN_CHANCE
+    if force_is_fresh is None:
+        is_fresh = random.random() < FRESH_SPAWN_CHANCE
+    else:
+        is_fresh = bool(force_is_fresh)
 
     display_url = image_url if is_http_url(image_url) else None
     file = None
@@ -1403,12 +1637,8 @@ async def spawn_vehicle(
                         await ctx.send("Bot is missing Embed Links permission.")
                     return False
 
-        title = "A wild MT vehicle has appeared"
-        if is_fresh:
-            title = "A wild Fresh MT vehicle has appeared"
-
         embed = discord.Embed(
-            title=title,
+            title=view.header,
             color=discord.Color(RARITY_COLORS.get(rarity.lower(), 0x00FF00)),
         )
         embed.set_image(url=display_url)
@@ -1489,7 +1719,7 @@ async def set_ready_presence():
     try:
         await bot.change_presence(
             status=discord.Status.online,
-            activity=discord.Game(name="!help | /show"),
+            activity=discord.Game(name="!help"),
         )
         print("Presence set to online.")
     except Exception as error:
@@ -1572,25 +1802,70 @@ async def show_vehicle_autocomplete(interaction: discord.Interaction, current: s
     ][:25]
 
 
-@bot.tree.command(name="testspawn", description="Developer command to force a vehicle spawn")
+@bot.tree.command(name="dexchannel", description="Set the channel used for dex spawns in this server")
 @app_commands.guild_only()
-async def testspawn_slash(interaction: discord.Interaction):
-    if not interaction.guild or not interaction.channel:
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(channel="Channel where vehicles should spawn")
+async def dexchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.guild:
         await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
         return
 
     if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "You need Manage Server permission to use this command.", ephemeral=True)
+        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
+    if guild_me:
+        perms = channel.permissions_for(guild_me)
+        missing = []
+        if not perms.send_messages:
+            missing.append("Send Messages")
+        if not perms.embed_links:
+            missing.append("Embed Links")
+        if missing:
+            await safe_send(
+                interaction,
+                f"I need {', '.join(missing)} permission in {channel.mention} before it can be set as dex channel.",
+                ephemeral=True,
+            )
+            return
 
-    vehicles = refresh_vehicles()
-    spawned = await spawn_vehicle(vehicles, interaction.channel, guild=interaction.guild)
-    if spawned:
-        await interaction.followup.send("Test spawn sent successfully.", ephemeral=True)
-    else:
-        await interaction.followup.send("Test spawn failed. Check channel permissions and vehicle data.", ephemeral=True)
+    set_guild_channel_setting(interaction.guild.id, "dex_channel_id", channel.id)
+    await safe_send(interaction, f"Dex channel set to {channel.mention}.", ephemeral=True)
+
+
+@bot.tree.command(name="tradechannel", description="Set the channel used for trade commands in this server")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(channel="Channel where trade commands should be used")
+async def tradechannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+
+    if not interaction.permissions.manage_guild:
+        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
+        return
+
+    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
+    if guild_me:
+        perms = channel.permissions_for(guild_me)
+        missing = []
+        if not perms.send_messages:
+            missing.append("Send Messages")
+        if not perms.embed_links:
+            missing.append("Embed Links")
+        if missing:
+            await safe_send(
+                interaction,
+                f"I need {', '.join(missing)} permission in {channel.mention} before it can be set as trade channel.",
+                ephemeral=True,
+            )
+            return
+
+    set_guild_channel_setting(interaction.guild.id, "trade_channel_id", channel.id)
+    await safe_send(interaction, f"Trade channel set to {channel.mention}.", ephemeral=True)
 
 
 @bot.tree.error
@@ -1610,16 +1885,124 @@ async def on_message(message: discord.Message):
     parts = message.content.split()
     command = parts[0].lower() if parts else ""
 
+    if command == "!testspawn":
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
+            return
+
+        if not has_admin_access(message):
+            await message.channel.send("You need Manage Server permission or admin access to use this command.")
+            return
+
+        forced_fresh = None
+        if len(parts) > 1:
+            parsed_fresh = parse_fresh_flag(parts[1])
+            if parsed_fresh is None:
+                await message.channel.send("Usage: `!testspawn` or `!testspawn fresh:true/false`")
+                return
+            forced_fresh = parsed_fresh
+
+        vehicles = refresh_vehicles()
+        spawned = await spawn_vehicle(vehicles, message.channel, guild=message.guild, force_is_fresh=forced_fresh)
+        if spawned:
+            if forced_fresh is None:
+                await message.channel.send("Test spawn sent successfully.")
+            else:
+                await message.channel.send(
+                    f"Test spawn sent successfully (fresh forced: {'true' if forced_fresh else 'false'})."
+                )
+        else:
+            await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
+        return
+
+    if command in {"!addinventory", "!removeinventory"}:
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
+            return
+
+        if not has_admin_access(message):
+            await message.channel.send("You need Manage Server permission or admin access to use this command.")
+            return
+
+        if len(parts) < 4:
+            await message.channel.send(
+                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
+                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
+            )
+            return
+
+        target_user = await resolve_user_from_token(parts[1], message.guild)
+        if target_user is None:
+            await message.channel.send("Could not resolve the target user. Mention a user or provide a user ID.")
+            return
+
+        arg_tail = parts[2:]
+        is_fresh = False
+        parsed_fresh = parse_fresh_flag(arg_tail[-1])
+        if parsed_fresh is not None:
+            is_fresh = parsed_fresh
+            arg_tail = arg_tail[:-1]
+
+        if len(arg_tail) < 2:
+            await message.channel.send(
+                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
+                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
+            )
+            return
+
+        amount = parse_count(arg_tail[-1])
+        if amount is None or amount <= 0:
+            await message.channel.send("Invalid count. Use a positive number (for example: `1`, `50`, `2k`).")
+            return
+
+        vehicle_query = " ".join(arg_tail[:-1]).strip()
+        if not vehicle_query:
+            await message.channel.send("Vehicle name is required.")
+            return
+
+        vehicles = get_vehicle_map()
+        matched_vehicle = vehicle_query if vehicle_query in vehicles else find_best_vehicle_match(vehicles.keys(), vehicle_query)
+        if not matched_vehicle:
+            await message.channel.send(f"Vehicle not found: `{vehicle_query}`")
+            return
+
+        display_name = display_vehicle_name(make_inventory_key(matched_vehicle, is_fresh))
+        if command == "!addinventory":
+            success = add_vehicle_count(target_user.id, matched_vehicle, amount, is_fresh=is_fresh)
+            if not success:
+                await message.channel.send("Failed to add inventory entry.")
+                return
+
+            await message.channel.send(
+                f"Added **{format_count(amount)}** x **{display_name}** to {target_user.mention}'s inventory."
+            )
+            return
+
+        removed_amount = remove_vehicle_count(target_user.id, matched_vehicle, amount, is_fresh=is_fresh)
+        if removed_amount <= 0:
+            await message.channel.send(f"No items removed. {target_user.mention} does not have `{display_name}`.")
+            return
+
+        await message.channel.send(
+            f"Removed **{format_count(removed_amount)}** x **{display_name}** from {target_user.mention}'s inventory."
+        )
+        return
+
     if command in {"!help", "!h"}:
         help_text = (
             "**MT Vehicle Bot Commands:**\n"
             "`/show` - Show a vehicle's picture and rarity\n"
             "`/inventory` - View a vehicle inventory\n"
+            "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
+            "`/tradechannel #channel` - Set this server's trade channel (Manage Server)\n"
+            "`!testspawn` - Spawn a test vehicle (admin/manage server)\n"
+            "`!testspawn fresh:true/false` - Force fresh on test spawn\n"
+            "`!addinventory @user vehicle_name count fresh:true/false` - Add inventory (admin/manage server)\n"
+            "`!removeinventory @user vehicle_name count fresh:true/false` - Remove inventory (admin/manage server)\n"
             "`/trade` - Send a trade request to another user\n"
             "`/tradeaccept` - Accept a trade request\n"
             "`/tradeadd` - Add vehicles to a trade\n"
             "`/traderemove` - Remove vehicles from a trade\n"
-            "`/testspawn` - Force a test spawn\n"
             "`!sync` - Manually sync slash commands\n\n"
             f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.*"
         )
