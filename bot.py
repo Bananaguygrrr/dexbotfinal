@@ -287,6 +287,15 @@ def parse_fresh_flag(token: str) -> Optional[bool]:
     return None
 
 
+def parse_bool_true_false(token: str) -> Optional[bool]:
+    normalized = (token or "").strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
 def has_admin_access(message: discord.Message) -> bool:
     if message.author.id in ADMIN_USER_IDS:
         return True
@@ -1412,12 +1421,11 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         max_length=100,
     )
 
-    def __init__(self, correct_name: str, vehicle_code: str, view: "CatchView", claim_fresh: bool = False):
+    def __init__(self, correct_name: str, vehicle_code: str, view: "CatchView"):
         super().__init__()
         self.correct_name = correct_name
         self.vehicle_code = vehicle_code
         self.view = view
-        self.claim_fresh = claim_fresh
 
     async def on_submit(self, interaction: discord.Interaction):
         if self.view.caught:
@@ -1429,10 +1437,6 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
             await interaction.response.send_message(f"{interaction.user.mention} wrong name.", ephemeral=False)
             return
 
-        if self.claim_fresh and not self.view.is_fresh:
-            await interaction.response.send_message("This spawn is not Fresh.", ephemeral=True)
-            return
-
         self.view.caught = True
         display_code = (
             self.vehicle_code.split(",")[0].strip()
@@ -1441,7 +1445,7 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         )
 
         caught_label = self.correct_name.replace("-", "")
-        awarded_fresh = self.claim_fresh and self.view.is_fresh
+        awarded_fresh = self.view.is_fresh
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
@@ -1470,18 +1474,6 @@ class CatchView(discord.ui.View):
         self.messages: list[discord.Message] = []
         self.header = "A wild Fresh MT vehicle has appeared" if self.is_fresh else "A wild MT vehicle has appeared"
         self.hue = 0.0 if self.rarity == "exotic" else None
-        self._configure_fresh_button_state()
-
-    def _configure_fresh_button_state(self):
-        for item in self.children:
-            if isinstance(item, discord.ui.Button) and item.label == "Catch Fresh":
-                item.disabled = not self.is_fresh
-                if not self.is_fresh:
-                    item.style = discord.ButtonStyle.secondary
-                    item.label = "Fresh Locked"
-                else:
-                    item.style = discord.ButtonStyle.success
-                return
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
@@ -1523,17 +1515,7 @@ class CatchView(discord.ui.View):
         if self.caught:
             await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
             return
-        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self, claim_fresh=False))
-
-    @discord.ui.button(label="Catch Fresh", style=discord.ButtonStyle.success)
-    async def catch_fresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.caught:
-            await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
-            return
-        if not self.is_fresh:
-            await interaction.response.send_message("This spawn is not Fresh.", ephemeral=True)
-            return
-        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self, claim_fresh=True))
+        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self))
 
 def _pick_spawn_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
     if not guild.text_channels:
@@ -1895,10 +1877,14 @@ async def on_message(message: discord.Message):
             return
 
         forced_fresh = None
-        if len(parts) > 1:
-            parsed_fresh = parse_fresh_flag(parts[1])
+        if len(parts) > 2:
+            await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
+            return
+
+        if len(parts) == 2:
+            parsed_fresh = parse_bool_true_false(parts[1])
             if parsed_fresh is None:
-                await message.channel.send("Usage: `!testspawn` or `!testspawn fresh:true/false`")
+                await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
                 return
             forced_fresh = parsed_fresh
 
@@ -1989,24 +1975,29 @@ async def on_message(message: discord.Message):
         return
 
     if command in {"!help", "!h"}:
-        help_text = (
-            "**MT Vehicle Bot Commands:**\n"
-            "`/show` - Show a vehicle's picture and rarity\n"
-            "`/inventory` - View a vehicle inventory\n"
-            "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
-            "`/tradechannel #channel` - Set this server's trade channel (Manage Server)\n"
-            "`!testspawn` - Spawn a test vehicle (admin/manage server)\n"
-            "`!testspawn fresh:true/false` - Force fresh on test spawn\n"
-            "`!addinventory @user vehicle_name count fresh:true/false` - Add inventory (admin/manage server)\n"
-            "`!removeinventory @user vehicle_name count fresh:true/false` - Remove inventory (admin/manage server)\n"
-            "`/trade` - Send a trade request to another user\n"
-            "`/tradeaccept` - Accept a trade request\n"
-            "`/tradeadd` - Add vehicles to a trade\n"
-            "`/traderemove` - Remove vehicles from a trade\n"
-            "`!sync` - Manually sync slash commands\n\n"
-            f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.*"
+        help_embed = discord.Embed(
+            title="MT Vehicle Bot Commands",
+            description=(
+                "```"
+                "/show - Show a vehicle's picture and rarity\n"
+                "/inventory - View a vehicle inventory\n"
+                "/dexchannel #channel - Set this server's spawn channel (Manage Server)\n"
+                "/tradechannel #channel - Set this server's trade channel (Manage Server)\n"
+                "/trade - Send a trade request to another user\n"
+                "/tradeaccept - Accept a trade request\n"
+                "/tradeadd - Add vehicles to a trade\n"
+                "/traderemove - Remove vehicles from a trade\n"
+                "!testspawn - Spawn a test vehicle (admin/manage server)\n"
+                "!testspawn true|false - Force testspawn fresh state\n"
+                "!addinventory @user vehicle_name count fresh:true/false - Add inventory (admin/manage server)\n"
+                "!removeinventory @user vehicle_name count fresh:true/false - Remove inventory (admin/manage server)\n"
+                "!sync - Manually sync slash commands"
+                "```"
+            ),
+            color=discord.Color.blurple(),
         )
-        await message.channel.send(help_text)
+        help_embed.set_footer(text=f"Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.")
+        await message.channel.send(embed=help_embed)
         return
 
     if command == "!sync":
