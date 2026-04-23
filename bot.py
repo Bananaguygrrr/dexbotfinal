@@ -1,2109 +1,1586 @@
-from __future__ import annotations
-
-import asyncio
-import builtins
-import colorsys
-import json
-import os
-import random
-import re
-import sys
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
-from typing import Any, Dict, Iterable, Optional
-
-import discord
-from discord import app_commands
-from discord.errors import HTTPException, NotFound
-from discord.ext import commands, tasks
-from dotenv import load_dotenv
-
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
-
-try:
-    import msvcrt
-except ImportError:
-    msvcrt = None
-
-
-def print_flush(*args, **kwargs):
-    builtins.print(*args, **kwargs)
-    sys.stdout.flush()
-
-
-print = print_flush
-
-
-load_dotenv()
-
-TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-
-# Add Discord user IDs here for admin-only prefix commands.
-ADMIN_USER_IDS = {
-    1316448831596007537,
-    1105451323584938075,
+{
+    "a14-wolf": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635995403554826/a14-wolf.png?ex=69dfb06b&is=69de5eeb&hm=c67432fef4acff7e67609419bd864e273cc1da55bcada31860f012d40f14169f&",
+        "rarity": "exotic"
+    },
+    "aa-abram": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "aa-akrep": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "aa-tank": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "aav": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "abram-tank": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "abram-x": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "ac119": {
+        "pic_link": "",
+        "rarity": "epic"
+    },
+    "ac130": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "aircraft-carrier": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "akrep": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "alicorn": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "alvis-stormer": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "annihilator": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635996342817059/annihilator.png?ex=69dfb06b&is=69de5eeb&hm=b85d274616ce527338b4b9ba53cb6d2009c583b078ad54691ece6cae043f4079&",
+        "rarity": "Legendary"
+    },
+    "anti-nuke-jeep": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635997408297000/anti-nuke-jeep.png?ex=69dfb06c&is=69de5eec&hm=cedd5e1eeea6e6eea65bc5d3433b3c734911ad5aaa71310fec4dc4c2e193bbb0&",
+        "rarity": "Legendary"
+    },
+    "apache": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "apc": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "apocalypse": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635998037573785/apocalypse.png?ex=69dfb06c&is=69de5eec&hm=68cfcc3a26ce3ee0f4fbcf8587212f1015449554caff391757fa28bedafef4d0&",
+        "rarity": "Legendary"
+    },
+    "armored-hoverbike": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "armored-jeep": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "armored-snow-mobile": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "armored-vehicle": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "armoured-apc": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "armoured-corvette": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "artillery": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "astrum": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635998507073717/astrum.png?ex=69dfb06c&is=69de5eec&hm=27c0bdd6a9054997032d0b13e0acc02bc6061fc6eb012bf3e1b532a067b5aeaf&",
+        "rarity": "Legendary"
+    },
+    "at-akrep": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635993893605436/at-akrep.png?ex=69dfb06b&is=69de5eeb&hm=e5f6f7b29719e1cd3a0fdd580c1ba62880fa1effa36a97ca09682c558998f5d8&",
+        "rarity": "Legendary"
+    },
+    "at6": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "atc-silkfire": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "atomic-me323": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635994279477529/atomic-me323.png?ex=69dfb06b&is=69de5eeb&hm=84bd0f7030c7dcce46399df34d3071518d4a8ce87921dfa7a228d1d9754ec0ba&",
+        "rarity": "Limited Edition"
+    },
+    "attack-helicopter": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "b1": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b1-liberty": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b17": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "b2-liberty": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b2-sleigh": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b2-spirit": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b21-raider": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635994669551647/b21-raider.png?ex=69dfb06b&is=69de5eeb&hm=4301ea335e10dd5b12d7f01ce4f2ada973d2f5dc0ee978fea70c8a8e3047775e&",
+        "rarity": "Exotic"
+    },
+    "b29": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "b36": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "b52": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "battle-cruiser": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "battle-tank": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "battleship": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "bf109": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "biplane": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "blackbird": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "blackhawk": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "blue-f22": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boat": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "bombardino": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "bomber": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-annihilator": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637853085827183/boss-annihilator.png?ex=69dfb226&is=69de60a6&hm=434697539deadeef6520f3010cc5c8a8eade2361521342e17de6045ba74d7427&",
+        "rarity": "Exotic"
+    },
+    "boss-blackbird": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-buggy": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "boss-f117": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-ghostwind": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637853379301376/boss-ghostwind.png?ex=69dfb226&is=69de60a6&hm=d5c965a18c0ecb6e049ea641953892b42b6d2205cfae4d79f95caff476a8c050&",
+        "rarity": "Exotic"
+    },
+    "boss-j20": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-ka29": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637853656383589/boss-ka29.png?ex=69dfb226&is=69de60a6&hm=124d7c71053d99648f12e920427e656f824b8cd16a92929a0a0b101da86d4949&",
+        "rarity": "Exotic"
+    },
+    "boss-mi28": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "boss-nc": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-sea-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637854088265758/boss-sea-tank.png?ex=69dfb226&is=69de60a6&hm=b3ca27ac3a539815307094f3840819210bcbc9fe9e4d4e0aaf437a4729fcec9e&",
+        "rarity": "Exotic"
+    },
+    "boss-stormer": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "boss-su57": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "boss-viper": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637854390128640/boss-viper.png?ex=69dfb226&is=69de60a6&hm=d193ee1f9bfb3556f38bf1b2406cc2040ac1f6ba7655849e2607c1e9099b876b&",
+        "rarity": "Exotic"
+    },
+    "boss-warshrike": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637854675599400/boss-warshrike.png?ex=69dfb227&is=69de60a7&hm=1a75a525ba8cad37c281f541498a3c01d8f5995563936e98ca8e9344b4f424eb&",
+        "rarity": "Exotic"
+    },
+    "boss-yal-1": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637854952292372/boss-yal-1.png?ex=69dfb227&is=69de60a7&hm=c2d6dff8a07832ad281cb4ef8bd5dc300e026d7198be9dfc727c305d0b1aa61e&",
+        "rarity": "Exotic"
+    },
+    "bradley": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "bv238": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "c17": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "c17-liberty": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "calzone-cannon-)": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "cannebera": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "cfa44": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637852112748736/cfa44.png?ex=69dfb226&is=69de60a6&hm=54c9ce725658a0b0ba67de09f2a83e80cd803146a8a33cb801032ff2ab78382a&",
+        "rarity": "Exotic"
+    },
+    "challanger": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "chinook": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "chrystler": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "cobra": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "comanche": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "corsair": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "corsair-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637852427194448/corsair-x.png?ex=69dfb226&is=69de60a6&hm=31a1b3c9326826ba38a42d4be2294aa65c79f549f579bc7f26cd789b5b9ea6d7&",
+        "rarity": "Exotic"
+    },
+    "darkstar": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "darkstar-mk2": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "darkstar-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493637852808871977/darkstar-x.png?ex=69dfb226&is=69de60a6&hm=dacac3586ae7c7b76f8ac9f265fa2ee806aef64a8a484b37078cfb17e0d1be5b&",
+        "rarity": "Limited Edition"
+    },
+    "defiant": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "defiant-x": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "demolisher": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "destroyer": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "dive-bomber": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "douglas-a20": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "drill": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "driller": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "drone-carrier": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493641850232246395/image.png?ex=69dfb5df&is=69de645f&hm=7b1386e717819ad3d98d9c67708c2712c00515b3faaae05a2de537d0ca25e11b&",
+        "rarity": "Exotic"
+    },
+    "dune-buggy": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "elite-lancer": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "elite-sturmtank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638027807948811/elite-sturmtank.png?ex=69dfb250&is=69de60d0&hm=2bc9ed45cd96c5ae306bc0f68cbde0e137fb4d6a318b70c28744cd170306fea2&",
+        "rarity": "Exotic"
+    },
+    "elite-zeplin-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638028650876968/elite-zeplin-x.png?ex=69dfb250&is=69de60d0&hm=b97f12405458fe073f661e3ed62ce296158b6b4d9e08dcfe0c0fd4497dc4a57c&",
+        "rarity": "Exotic"
+    },
+    "emp-f35": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "exofighter": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f111": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f14": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "f15": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f16": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f16-falcon": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f18-hornet": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638029091405935/f18-hornet.png?ex=69dfb250&is=69de60d0&hm=6f69ba67d64ac7798c1314de27722f790897713fed2bd35c46f8c0886d7cf07f&",
+        "rarity": "Limited Edition"
+    },
+    "f22": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "f24": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638029750046740/f24.png?ex=69dfb250&is=69de60d0&hm=dcae3f33cc449d233e1c3d01f55a9334a05c3b4f018872cb78d6a5f751017225&",
+        "rarity": "Exotic"
+    },
+    "f4": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "f5": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "falken": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "festive-bf109": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "fighter-biplane": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "fighter-jet": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "flak-halftrack": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "foch": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "frost-zeplin": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "fx1": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "ghostwind": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-ac-119": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-ac130": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "gold-b2": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-b36": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-bismark": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638030559416401/gold-bismark.png?ex=69dfb250&is=69de60d0&hm=2a3664b7f042619e6abe289dcd7da8c714bbbdb0c502994f705c9f7a7781c38a&",
+        "rarity": "Limited Edition"
+    },
+    "gold-f22": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "gold-f35": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-izumo": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638026168111245/gold-izumo.png?ex=69dfb24f&is=69de60cf&hm=6ade51cc467a6b1d04be296003ddc737bfedf5153d576e43db87597d6b23bd09&",
+        "rarity": "Limited Edition"
+    },
+    "gold-ka52": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-m10": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-mig29": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-pyro-tank": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-tks20": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-typhoon": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638027522609284/gold-typhoon.png?ex=69dfb250&is=69de60d0&hm=cf0fdfd6f57c4d7690384e44a2102b40633a7bf4c9254b768dcbd82fa139a11b&",
+        "rarity": "Legendary"
+    },
+    "golden-inteceptor": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gold-mi-35": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638027052974161/gold-mi-35.png?ex=69dfb250&is=69de60d0&hm=0296d8323abf86493e9e7463f1035bf8d614a6665a6512e31a1b55c650da05b2&",
+        "rarity": "Legendary"
+    },
+    "golden-pl01": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "graple-atv": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "greyhaund": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gripen": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "gun-boat": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "hacker-truck": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638486626930870/hacker-truck.png?ex=69dfb2bd&is=69de613d&hm=1f43c376373510c7b833903362301935869f32fe8e00f683ebc5fd3f45f42426&",
+        "rarity": "Exotic"
+    },
+    "hacker-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638487357001928/hacker-x.png?ex=69dfb2bd&is=69de613d&hm=e2ea1e7a9a02e78e476359c2176ef08f6e193b7189d9350054236a2bbaafdea4&",
+        "rarity": "Limited Edition"
+    },
+    "halftrack": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "harrier": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "haunted-jet": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "haunted-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638487927291904/haunted-tank.png?ex=69dfb2bd&is=69de613d&hm=c43b24046a92a7cc6aa853dbcff5330eb4bf6fd05a62ffcdab4735a12e5fbcdf&",
+        "rarity": "Limited Edition"
+    },
+    "helicopter": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "hellstorm": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "himars": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "hovercraft": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "humvee": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "hunter-spitfire": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "hx3": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "imperial-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638488292065420/imperial-tank.png?ex=69dfb2be&is=69de613e&hm=e13656b3b62055c66f5ac3af50909cb9f7e80b9652eeffae720b4f58273b74f3&",
+        "rarity": "Exotic"
+    },
+    "infinity-blackbird": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "infinity-car": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638488900370462/infinity-car.png?ex=69dfb2be&is=69de613e&hm=42cce6757660d4886a3cd406d4cd0a084f9819261f551cda9b9d98abfd35a49d&",
+        "rarity": "Legendary"
+    },
+    "inteceptor": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "invictus": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "ironhawk": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "jagdpanther": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "jetski": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "js-atago": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638489390977095/js-atago.png?ex=69dfb2be&is=69de613e&hm=1acab553df7fb96e29868d88dbf8548e4fb9737d44cce96c7d3664c78d62bef7&",
+        "rarity": "Legendary"
+    },
+    "k9-demon": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "katyusha": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "keiler": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "kuznetsov": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "laser-truck": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "le-a10": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638489965592657/le-a10.png?ex=69dfb2be&is=69de613e&hm=5618e5e89d093afdbe10135e3ffa1053403bd26af3084dbcfca92ce87c7297ee&",
+        "rarity": "Limited Edition"
+    },
+    "le-battle-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638484987084912/le-battle-tank.png?ex=69dfb2bd&is=69de613d&hm=a6fa0e54e06a10d334388005d89fa7d5f02420045b8230ee15f1f032e65d4ab2&",
+        "rarity": "Limited Edition"
+    },
+    "bismark": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635995017675034/bismark.png?ex=69dfb06b&is=69de5eeb&hm=71ce15166a690b5c68e3bfbb48ea867d6c76aa95f970724cd34e43e9b8f0fa9b&",
+        "rarity": "Exotic"
+    },
+    "le-blackbird": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638485461176492/le-blackbird.png?ex=69dfb2bd&is=69de613d&hm=401c5ce982713b83a18957775064a5de431c1feb7b6f10c4a8079422b290b333&",
+        "rarity": "Limited Edition"
+    },
+    "super-cobra": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639514042929192/super-cobra.png?ex=69dfb3b2&is=69de6232&hm=3be9741be181f9ed61d63c1091eff5b74973e77af4d7886502e774022d77a2ca&",
+        "rarity": "Limited Edition"
+    },
+    "le-rocketplane": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640098942550168/le-rocketplane.png?ex=69dfb43e&is=69de62be&hm=8105fb7808298b9609ec380e0ff3744b8e92bbd6a2779d5b74add821bd1c6561&",
+        "rarity": "Limited Edition"
+    },
+    "le-yal-1": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640099361984603/le-yal-1.png?ex=69dfb43e&is=69de62be&hm=6fe6c53ae799029cf901b3644475255c9396d3a6c4ab78f2a79e28d8e20f9544&",
+        "rarity": "Exotic"
+    },
+    "leonardo": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638485997916230/leonardo.png?ex=69dfb2bd&is=69de613d&hm=2961ba8e5d04450556ba0a0f9167d6ab58be1309d415e8aa759f80a519cc6a4d&",
+        "rarity": "Exotic"
+    },
+    "leopard-2a7": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "leopard-tank": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "liberty-foch": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "love-buggy": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "lovebird": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "m10-booker": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "manti-core": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "maraseti": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638963183878254/maraseti.png?ex=69dfb32f&is=69de61af&hm=f439dec3a5f0b1724b217e4f9b238629f72596e9db5c3f6f6adc1636adae30e9&",
+        "rarity": "Exotic"
+    },
+    "master-hellstorm": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638963725074603/master-hellstorm.png?ex=69dfb32f&is=69de61af&hm=36d1c04bf92b6f4b56e138de6a0f29095c93a1abe3e45336c8779cf33a24bc8c&",
+        "rarity": "Exotic"
+    },
+    "master-overlord": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638964211617942/master-overlord.png?ex=69dfb32f&is=69de61af&hm=2d8280a1693386f9465e895064af83b90e27e0853412518faa59f0306cb98b65&",
+        "rarity": "Exotic"
+    },
+    "master-reaper": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638964651884805/master-reaper.png?ex=69dfb32f&is=69de61af&hm=f4b31e35ad9d64c1c36209931522d16c85c87c178ddc9b568ddafb319f363f42&",
+        "rarity": "Exotic"
+    },
+    "master-warmaul": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638965029507226/master-warmaul.png?ex=69dfb32f&is=69de61af&hm=5a9fdb1bb1ddf88cea2826263337f4f9484c53116e3afe191d4ad7147635a6d5&",
+        "rarity": "Exotic"
+    },
+    "maus": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "me-262": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "me323": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638960990257243/me323.png?ex=69dfb32e&is=69de61ae&hm=6848f401c822d23c569f4f0b2bfa83e5db3342c55b9530da5d28267a8e57186f&",
+        "rarity": "Exotic"
+    },
+    "mech-walker": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638961422139654/mech-walker.png?ex=69dfb32e&is=69de61ae&hm=9624dabeeab06dce63eac403fae24ce03c39b67e4db4863cdfff924aecf6f461&",
+        "rarity": "Exotic"
+    },
+    "medic-truck": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "merkava": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "mh47": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "mi-24": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "mi35": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "mig31": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "minigun-edjer": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "miron": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "missile-boat": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "missile-truck": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "mortar-truck": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638961833312369/mortar-truck.png?ex=69dfb32e&is=69de61ae&hm=49fb15f6c2b523421bd2f2ad3b0e2292c94c1b7df0579c2489fa34bbdd69475a&",
+        "rarity": "Exotic"
+    },
+    "mothership": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638962198221011/mothership.png?ex=69dfb32f&is=69de61af&hm=0f0ca5d621ce26d15615db46c14ae0ebaf283bcc7bf3d9c09c01765dbda842e5&",
+        "rarity": "Exotic"
+    },
+    "motorbike": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "mq4c": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "mzkt": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "nc": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "ngad": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "nimitz": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "normal-izumo": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "nova": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "nova-blitz": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638962819104778/nova-blitz.png?ex=69dfb32f&is=69de61af&hm=8c0c441851c7d07ca1e29305c6793dd51bf2ab0cb09c22b25f020ad618def140&",
+        "rarity": "Legendary"
+    },
+    "nuke-b36": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639072189648926/nuke-b36.png?ex=69dfb349&is=69de61c9&hm=9d863ac0abf982b161bfd53f70d75972c33555e428a977d3bde1732a1f678b16&",
+        "rarity": "Exotic"
+    },
+    "nuke-chrystler": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639072491503767/nuke-chrystler.png?ex=69dfb349&is=69de61c9&hm=1b94c3b7a50b8f85e086e668a0db4b2d8d55feb305a3e7a3d5d08c5728ffba17&",
+        "rarity": "Exotic"
+    },
+    "nuke-f35": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639072797949972/nuke-f35.png?ex=69dfb349&is=69de61c9&hm=acfa7bf74e8dd07180750aa4c9b39cae1b91cae6db3c12b19ce333bb447943cf&",
+        "rarity": "Exotic"
+    },
+    "nuke-mortar-truck": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639073137561614/nuke-mortar-truck.png?ex=69dfb349&is=69de61c9&hm=d83aac99d09e69e0c96d900f49cee5b0c910ab9c9d248955d9986718e5c4b144&",
+        "rarity": "Limited Edition"
+    },
+    "nuke-project-665": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639073661718528/nuke-project-665.png?ex=69dfb349&is=69de61c9&hm=fb4e237dbfefcfe1a36a1aeafb166e48d1484f6cc9e4db872316386c863c1805&",
+        "rarity": "Limited Edition"
+    },
+    "nuke-railgun-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639073980743680/nuke-railgun-tank.png?ex=69dfb349&is=69de61c9&hm=881d9e1bb9a9807e52a35764c54509506a51c2114bce4191c7f480bebc15d414&",
+        "rarity": "Exotic"
+    },
+    "nuke-sub": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639074488127666/nuke-sub.png?ex=69dfb349&is=69de61c9&hm=be864f49bce9142709e5217e0ed1cc14f91e9bf721fc778ce7aeb354fe1831ee&",
+        "rarity": "Exotic"
+    },
+    "nuke-xb70": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639070725967892/nuke-xb70.png?ex=69dfb348&is=69de61c8&hm=6a82da26ea771c46feebf3ddabde65181e545d2bfe0d10e0f6ca06e71a6e463f&",
+        "rarity": "Exotic"
+    },
+    "nuke-zeplin": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639071216566443/nuke-zeplin.png?ex=69dfb349&is=69de61c9&hm=d2c35b3ff2ef270c2587010c8e59405ff8d3ed8d2f88c35d199c65ead988f7fe&",
+        "rarity": "Exotic"
+    },
+    "old-hovercraft": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "pantsir": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "p1000-ratte": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639071573213214/p1000-ratte.png?ex=69dfb349&is=69de61c9&hm=4fe75fd4fceaac83d06a924be683704de8c968c4bd10a4d3d07331b7f12bccee&",
+        "rarity": "Limited Edition"
+    },
+    "patria": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "patriot": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "patriot-boat": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "patriot-truck": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "pelican": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640100003840130/pelican.png?ex=69dfb43e&is=69de62be&hm=714b29b2192aa1577c982a41c2455e8208436dedd8d0505f4e2bf514bbeaf2cc&",
+        "rarity": "Legendary"
+    },
+    "phanter": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "phantom-jet": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "phl-03": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "pl01": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "platinum-f16": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "platinum-mech": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640100536385728/platinum-mech.png?ex=69dfb43e&is=69de62be&hm=ee73af8db07d030730fefaa069733229ac2df766fd8e815d627c869116ead56b&",
+        "rarity": "Limited Edition"
+    },
+    "platinum-sb12": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639190154449126/platinum-sb12.png?ex=69dfb365&is=69de61e5&hm=22baa586dd8d0c5fe28e21309af98c940a1256a48abce0fc2019ffbc0afac507&",
+        "rarity": "Limited Edition"
+    },
+    "platinum-skyhammer": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639190598914068/platinum-skyhammer.png?ex=69dfb365&is=69de61e5&hm=fa8797ae32e453127c2c4ab1422087e54b7ac391ff6ba7c1e1ce6757694e0fe6&",
+        "rarity": "Limited Edition"
+    },
+    "police-ahrlac": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639191232385095/police-ahrlac.png?ex=69dfb365&is=69de61e5&hm=e3da188b0720cffa72f2c78ff9a2cf2959ebf218de7b06c1794c73f66deb2d67&",
+        "rarity": "Exotic"
+    },
+    "police-apc": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "police-heli": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639192083955803/police-heli.png?ex=69dfb365&is=69de61e5&hm=fe9f9a4efa24c7e6e202753b19e2edaaa231cc35f213b8e252e6771d6d34eb03&",
+        "rarity": "Legendary"
+    },
+    "police-jeep": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "project-665": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639193086394469/project-665.png?ex=69dfb366&is=69de61e6&hm=58ea7a4a89f523fe7b5cd0203ceb84d1e1898d7101c05ded2fab132698fbafcb&",
+        "rarity": "Exotic"
+    },
+    "prowler": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "puma": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "pyro-tank": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "qn506": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "rad-katyusha": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639193572802590/rad-katyusha.png?ex=69dfb366&is=69de61e6&hm=ed5866815fd905e8426bb157a66d8b59abba3b3ff031dde78a9714f241775842&",
+        "rarity": "Exotic"
+    },
+    "rafale": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "railgun-destroyer": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "railgun-tank": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "railgun-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639194210471966/railgun-x.png?ex=69dfb366&is=69de61e6&hm=213195cad0843cc7b082ee176e60d269ed43869a4af2a878b47098b9ca298f72&",
+        "rarity": "Limited Edition"
+    },
+    "raptor": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "razor": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639194768183497/razor.png?ex=69dfb366&is=69de61e6&hm=c507b5b1065982ae101007aa43a5cb3d219119e1e67a0160f27ad102bf945502&",
+        "rarity": "Exotic"
+    },
+    "recon-helicopter": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "rg-1": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "rocket-tank": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "rocket-truck": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "rt01": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "s-tank-barrage": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "s-tank-gatling": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639267363324014/s-tank-gatling.png?ex=69dfb377&is=69de61f7&hm=9b671a4b326e54a714ba7bc2e16523a1f7f95e6149964bb052435fa20d06bb38&",
+        "rarity": "Legendary"
+    },
+    "s-tank-railgun": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639267824566282/s-tank-railgun.png?ex=69dfb377&is=69de61f7&hm=6a6a34f1c1bc440e2c1cf2ab7beb213ecff90a696851f4ab73a9f4e1e253f3f7&",
+        "rarity": "Exotic"
+    },
+    "s.a.m-truck": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "s.w.a.r.m": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639189013725256/s.w.a.r.m.png?ex=69dfb365&is=69de61e5&hm=2bec91b36a30655e1951b4e407acb3697c2755b87f99e116a8ee7298c242b871&",
+        "rarity": "Exotic"
+    },
+    "sachsen-frigate": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "sand-hyena": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "santa-maus": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639189676294226/santa-maus.png?ex=69dfb365&is=69de61e5&hm=48c3c1e8161ca05f76153977264da2083a6d393ed341f5b162603918c67fef46&",
+        "rarity": "Legendary"
+    },
+    "scorpion": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "sea-tank": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "seabreacher": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639270194221217/seabreacher.png?ex=69dfb378&is=69de61f8&hm=12ed9ecefc8294ce9de8749e8b746aa116f6bece50bbae182d29281d335c9cdc&",
+        "rarity": "Exotic"
+    },
+    "seabreacher-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639270756515900/seabreacher-x.png?ex=69dfb378&is=69de61f8&hm=6f3a8e4aa3c301fcb7cbf9647103b3f9ccdd288a77e228c781f725e6a1fa49bb&",
+        "rarity": "Limited Edition"
+    },
+    "seahawk": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "shocker": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "shopping-card": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "silver-howl": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "sky-reaper": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639271628673152/sky-reaper.png?ex=69dfb378&is=69de61f8&hm=864434bc2d3e41c339bea7af6f3464bec70837326212f4d7898feaff29463c4f&",
+        "rarity": "Legendary"
+    },
+    "skyfox": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "skyhammer": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639271104380928/skyhammer.png?ex=69dfb378&is=69de61f8&hm=5016cbc0d5385d1062d4a56aa9f30ebd35cbb0a156192d40b0abc738f6acd869&",
+        "rarity": "Exotic"
+    },
+    "skynex": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "spitfire": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "ssbn": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "stallion": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "stealt-f14": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "stealth-boat": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "stealth-f35": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "stomper": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639268256583921/stomper.png?ex=69dfb378&is=69de61f8&hm=90377d212b4b7b6a14c780166ed90be599dfb2ba5e447471e8148df1dd0ee8bc&",
+        "rarity": "Legendary"
+    },
+    "strela": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "strike-mech": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639268650713308/strike-mech.png?ex=69dfb378&is=69de61f8&hm=6fcd4b3c22434d4229866421750fe66bee5b2c221bd0ba19240d05e5bd6047f9&",
+        "rarity": "Exotic"
+    },
+    "striker": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "sturmtank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639269321932921/sturmtank.png?ex=69dfb378&is=69de61f8&hm=824ce0ecaae26add01b309e0a1bd5094b2ca5842f5a43b865b1c2c0d7e564d7f&",
+        "rarity": "Legendary"
+    },
+    "su25": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "su34": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "su47": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "su57": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "submarine": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "sukhoi-su25": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "sukhoi-su57": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639269640568852/sukhoi-su57.png?ex=69dfb378&is=69de61f8&hm=0d29f41a3eff9300e8335218e93a3c23c509b1b6278c5e5e0d1e64819848fc27&",
+        "rarity": "Limited Edition"
+    },
+    "super-a14": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493642132311773367/image.png?ex=69dfb622&is=69de64a2&hm=8c94bac1fa9f12509a19793714db6a7a37825fa39b2167582d11342a901a20eb&",
+        "rarity": "Limited Edition"
+    },
+    "super-a50": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640100850962492/super-a50.png?ex=69dfb43e&is=69de62be&hm=1b97f96a582e7c917f68d2bc92b2894400de3b0a335a446f4520634b4627e25b&",
+        "rarity": "Limited Edition"
+    },
+    "super-ahrlac": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-akrep": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-anti-nuke-jeep": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640101182439517/super-anti-nuke-jeep.png?ex=69dfb43e&is=69de62be&hm=c1ea051945e50a85c463122f3797cffc2a860bf2d486973428b0e163c69c59ca&",
+        "rarity": "Exotic"
+    },
+    "super-apc": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-b21": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639513065525378/super-b21.png?ex=69dfb3b2&is=69de6232&hm=df3d08d570d9b43278c7ede5b666245dd2114a5aa1589b0173e1786bed97f8c7&",
+        "rarity": "Limited Edition"
+    },
+    "super-b52": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639513480626378/super-b52.png?ex=69dfb3b2&is=69de6232&hm=7da7fd30f9d1578002311c9d49267fc1e4d7c015033aa02053be7791442d1277&",
+        "rarity": "Exotic"
+    },
+    "super-chrystler": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-darkstar": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-drone-carrier": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639514382532618/super-drone-carrier.png?ex=69dfb3b2&is=69de6232&hm=5de3f63c18d36c21da9f82195c6589829d0a46c769d1c15ffb79bd70a406d92b&",
+        "rarity": "Limited Edition"
+    },
+    "super-edjer": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-exofighter": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639515036717066/super-exofighter.png?ex=69dfb3b2&is=69de6232&hm=2199481e9387236aec4ce89ea7a6cc534766b233a33ccce393e54800e3f685eb&",
+        "rarity": "Exotic"
+    },
+    "super-f111": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639515900739604/super-f111.png?ex=69dfb3b3&is=69de6233&hm=2b0cea0842f363a9433ac8d40b9bee20037bf7cfebbbfdb47432a2c9960d9a3c&",
+        "rarity": "Exotic"
+    },
+    "super-f14": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-f15": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-f24": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639515485638809/super-f24.png?ex=69dfb3b2&is=69de6232&hm=3cf5b678f480591aeafa0426884def976c3fb4757fc272a1e3ad1d62b1f76a92&",
+        "rarity": "Limited Edition"
+    },
+    "super-halftrack": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-harrier": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639516232355850/super-harrier.png?ex=69dfb3b3&is=69de6233&hm=d426c2482ade894d4fd7f602bf7e7c80141763227f8d722025ac98ff06c29567&",
+        "rarity": "Exotic"
+    },
+    "super-hovercraft": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639512407015675/super-hovercraft.png?ex=69dfb3b2&is=69de6232&hm=9eb198a93e7a4b8589260ee7741519d0473869a4a92559fa3226bf93fcce3c10&",
+        "rarity": "Legendary"
+    },
+    "super-imperialtank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639512708878537/super-imperialtank.png?ex=69dfb3b2&is=69de6232&hm=63cd8399519913f939eb9df7e40079b5cb2439b55ff98fcdb61d7802c9617035&",
+        "rarity": "Limited Edition"
+    },
+    "super-ironhawk": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639692766412830/super-ironhawk.png?ex=69dfb3dd&is=69de625d&hm=9b763f608c386cb5cfd64e0699bebad6e0b53587bcceb32367624efd2ea8ec2f&",
+        "rarity": "Exotic"
+    },
+    "super-keiler": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639693080723538/super-keiler.png?ex=69dfb3dd&is=69de625d&hm=8f636b7e1f77b368f6536373f7f13a7784a99799a926e853bf498dd94830be72&",
+        "rarity": "Exotic"
+    },
+    "super-laser-truck": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "super-leonardo": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639693437370499/super-leonardo.png?ex=69dfb3dd&is=69de625d&hm=6359521988eccf547ee1423f488aa65c2f39b58ef38ee238ca70d7da56f20628&",
+        "rarity": "Limited Edition"
+    },
+    "super-m50": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639693722714214/super-m50.png?ex=69dfb3dd&is=69de625d&hm=51f030821231363d35609d9fd6fe564fe672d3e1104d1ebcc6bc5767c8a77973&",
+        "rarity": "Exotic"
+    },
+    "super-maraseti": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639694007664755/super-maraseti.png?ex=69dfb3dd&is=69de625d&hm=40d62d015ea368601626bc4a553198978d27caa4dc25c0eead6216bcfff2f57f&",
+        "rarity": "Limited Edition"
+    },
+    "super-mech": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639694309785771/super-mech.png?ex=69dfb3dd&is=69de625d&hm=9f641c24ec4921e9c2700dedc1a0bc66d7f1393da08bda5b8cb1349e1ac06835&",
+        "rarity": "Limited Edition"
+    },
+    "super-mech-walker": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639685132779610/super-mech-walker.png?ex=69dfb3db&is=69de625b&hm=24f9ad676fbd9da7b8026cd0ab2586bfa45a05dda0c15bd163e8b413ead54710&",
+        "rarity": "Limited Edition"
+    },
+    "super-mig31": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639685526782132/super-mig31.png?ex=69dfb3db&is=69de625b&hm=a5e412355f275b232efde70b2eb0b34c97fa7eb388db5172a349330ee2cc5f34&",
+        "rarity": "Exotic"
+    },
+    "super-missouri": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639691868704779/super-missouri.png?ex=69dfb3dd&is=69de625d&hm=cbf3649a7de25a41c7569e609c762f5e6d1b8012135a0a6a0f4d978c574ecfc6&",
+        "rarity": "Limited Edition"
+    },
+    "super-nova": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639692380274688/super-nova.png?ex=69dfb3dd&is=69de625d&hm=1f2c373d3cd876747be38ea3401903fac4142602c150a5ff800d41a542ab9152&",
+        "rarity": "Exotic"
+    },
+    "super-panther": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-patria": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-prowler": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640101689954444/super-prowler.png?ex=69dfb43e&is=69de62be&hm=c0259ca1c0e18cb179c6d128d120f63e55742d80a855f0c455a1604a1e6c8a9e&",
+        "rarity": "Exotic"
+    },
+    "super-raptor": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640102034018334/super-raptor.png?ex=69dfb43e&is=69de62be&hm=545f8741bb253c7924b20a3a4ff5cfb2bc4b70b8a847f251b10f7ddc391027d8&",
+        "rarity": "Legendary"
+    },
+    "super-razor": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639797380481226/super-razor.png?ex=69dfb3f6&is=69de6276&hm=417ee26df975eda665f702c39be04df75035ea3c1eb46dfb982d1ec13727c41c&",
+        "rarity": "Limited Edition"
+    },
+    "super-s.w.a.r.m": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639797741322321/super-s.w.a.r.m.png?ex=69dfb3f6&is=69de6276&hm=b3974fc39dd06fcf91ee899008ce82034559d9a6ae644783fce5034c1148d9f8&",
+        "rarity": "Limited Edition"
+    },
+    "super-scorpion": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639798223798354/super-scorpion.png?ex=69dfb3f6&is=69de6276&hm=9d359753a4370f4cf7e56386b9b71c95010a999ff80dbd80489a342b8ca78f42&",
+        "rarity": "Exotic"
+    },
+    "super-skyfox": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639798492102706/super-skyfox.png?ex=69dfb3f6&is=69de6276&hm=c43f5974517ebec8a1847b19774afb3618b791fdc5754aae2999626b0fa66c0f&",
+        "rarity": "Exotic"
+    },
+    "super-striker": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639799133962442/super-striker.png?ex=69dfb3f6&is=69de6276&hm=bece93d2cdd95aa98dd97e16c2296042ff78f8fffe15aeecf8e4dfecb72f0910&",
+        "rarity": "Legendary"
+    },
+    "super-sub": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "super-tesla-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639799561523330/super-tesla-tank.png?ex=69dfb3f6&is=69de6276&hm=09c1a968c924f94a0ca4b63e65affaf66dc4af6d55f692cae0bd928ac68971b7&",
+        "rarity": "Limited Edition"
+    },
+    "super-tos1": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639795656757478/super-tos1.png?ex=69dfb3f5&is=69de6275&hm=c04b6725071fe4454b5f22961d0c8473f169680b134b27c65cee80b97d297aa2&",
+        "rarity": "Legendary"
+    },
+    "super-tucano": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-tupolev": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639796076183742/super-tupolev.png?ex=69dfb3f5&is=69de6275&hm=6b014ce0dc2aba7bd6e3c850c1d0e1031ad6805fd13505cb6173129e3522c499&",
+        "rarity": "Limited Edition"
+    },
+    "super-u2": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639796671778891/super-u2.png?ex=69dfb3f6&is=69de6276&hm=a8322de326a56132289a8dfe2dad3aebb670aef19cc94f06c23d8e01b543b144&",
+        "rarity": "Exotic"
+    },
+    "super-vespa-tap": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639797011513365/super-vespa-tap.png?ex=69dfb3f6&is=69de6276&hm=df47a2194eb20156c42ae96bc61cccc0ed9e1b62554b7b4d5cd0bb0f2f723859&",
+        "rarity": "Exotic"
+    },
+    "super-volk": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-warship": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639990402617344/super-warship.png?ex=69dfb424&is=69de62a4&hm=8d4ae50e75242ab633ced59e4e6f12d8c30e3546c9cb3522cb9ee504745a4d4b&",
+        "rarity": "Exotic"
+    },
+    "super-x59": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639990834499655/super-x59.png?ex=69dfb424&is=69de62a4&hm=e9a7cdb8d50348472f2e60c79d18507cea39abf0941218466284bb1a033cf140&",
+        "rarity": "Exotic"
+    },
+    "super-yf-1": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639991279226951/super-yf-1.png?ex=69dfb424&is=69de62a4&hm=8d7721cd835bb4a37170d2dd165f1afd2d1069d5a63b65f7422a52093f56cb09&",
+        "rarity": "Exotic"
+    },
+    "super-yf-23": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "super-zhi": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639991966826526/super-zhi.png?ex=69dfb424&is=69de62a4&hm=08730783226de779f7ca373586e16b5ed14a88ad352e853c2d68d5739c5bb5d3&",
+        "rarity": "Limited Edition"
+    },
+    "surrogat": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "t90": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "t90m": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "tank": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "tank-boat": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "terrabyte": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "tesla-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639992373940304/tesla-tank.png?ex=69dfb424&is=69de62a4&hm=a9c69db3349d2982f17af7c14d547f3381c7c5aae60e8067631e8c9741d00d4b&",
+        "rarity": "Exotic"
+    },
+    "tixplane": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "tks20": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "toy-b17": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "tralalero": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "tu22": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "tupolev": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639992872931378/tupolev.png?ex=69dfb424&is=69de62a4&hm=cee24ca5d6de323cc3402092b6877e75db23885a287bf735f90227ce3c85d537&",
+        "rarity": "Exotic"
+    },
+    "turret-chinook": {
+        "pic_link": "",
+        "rarity": "common"
+    },
+    "turret-helicopter": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "turret-truck": {
+        "pic_link": "",
+        "rarity": "Common"
+    },
+    "tv-tank": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "typhoon": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "typhoon-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639993456070787/typhoon-x.png?ex=69dfb424&is=69de62a4&hm=dd563b4613e7bbd3cb6e879be974502b2c4585581fdd68e7247aacbee0acc16f&",
+        "rarity": "Exotic"
+    },
+    "u2": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "ufo": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "uss-independence": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "uss-missouri": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639988993327104/uss-missouri.png?ex=69dfb423&is=69de62a3&hm=c45b18d483b34e58c3447d3f8b459af837c35d430548c40908aff09e3626367e&",
+        "rarity": "Exotic"
+    },
+    "v22": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "vespa-tap": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "volk": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "vulcan": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "war-shrike": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "warmaul": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639989605564466/warmaul.png?ex=69dfb424&is=69de62a4&hm=dec66763f6958822fc3f9e3ac6a502b4740b9d6876effd0e0da294d6a1bd6cd5&",
+        "rarity": "Legendary"
+    },
+    "warplane": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "warship": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639989915811911/warship.png?ex=69dfb424&is=69de62a4&hm=bf43a9a364998bb6e3dae2cf3e66f6051fb737ea83a59178f1334500951ada1d&",
+        "rarity": "Legendary"
+    },
+    "weiner-wagon": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "werewolf-tank": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640102612566126/werewolf-tank.png?ex=69dfb43e&is=69de62be&hm=a08dea713225b7eea96197978672a060ef29c525f14444c5f3671b635a76cb70&",
+        "rarity": "Limited Edition"
+    },
+    "wrapped-c17": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "wulf": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "x59": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "xb70": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "yamato": {
+        "pic_link": "",
+        "rarity": "Epic"
+    },
+    "yf23": {
+        "pic_link": "",
+        "rarity": "Rare"
+    },
+    "zeplin-x": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "zhi-19e": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640103107756313/zhi-19e.png?ex=69dfb43f&is=69de62bf&hm=6f78089a25c895021aebe78c211cc7a5cdfdb5747cf88064cce7bd8a6011643c&",
+        "rarity": "Exotic"
+    },
+    "zombie-ac130": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "zubr": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "zumwalt": {
+        "pic_link": "",
+        "rarity": "Legendary"
+    },
+    "zumwalt-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640923513360447/zumwalt-x.png?ex=69dfb502&is=69de6382&hm=e81a0d7d11a74f5a9d0e76a79728794162a9f5f5f9dbd7cf8ae38390e257240a&",
+        "rarity": "Limited Edition"
+    },
+    "golden-falken": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638030962196521/golden-falken.png?ex=69dfb251&is=69de60d1&hm=fd7d66262b60c87f49a8cdcaaa310e2ba0ede522ae3b9cc1775bd963a65bb3ce&",
+        "rarity": "Exotic"
+    },
+    "a50": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635995848020201/a50.png?ex=69dfb06b&is=69de5eeb&hm=4b09e6bf1a19ab9292f2b960150027d23be71f7ceb01978da344743e3a96959e&",
+        "rarity": "Exotic"
+    }
 }
-
-SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_THRESHOLD", "100")))
-FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATA_DIR = "/var/data" if os.getenv("RENDER") and not os.getenv("DATA_DIR") else os.path.join(SCRIPT_DIR, "data")
-DATA_DIR = os.getenv("DATA_DIR", DEFAULT_DATA_DIR)
-
-USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
-GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
-IMAGES_DIR = os.path.join(DATA_DIR, "images")
-INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
-ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
-FALLBACK_IMAGE_DIRS = (
-    os.path.join(SCRIPT_DIR, "images"),
-    os.path.join(SCRIPT_DIR, "data", "images"),
-)
-IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp")
-
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(IMAGES_DIR, exist_ok=True)
-
-RARITY_ORDER = (
-    "limited edition",
-    "exotic",
-    "legendary",
-    "epic",
-    "rare",
-    "common",
-)
-
-RARITY_WEIGHTS = {
-    "limited edition": 0.3,
-    "exotic": 3,
-    "legendary": 10,
-    "epic": 20,
-    "rare": 30,
-    "common": 37,
-}
-
-RARITY_COLORS = {
-    "limited edition": 0x8B0000,
-    "exotic": 0xFF00FF,
-    "legendary": 0xFFD700,
-    "epic": 0x800080,
-    "rare": 0x0000FF,
-    "common": 0x808080,
-}
-
-RARITY_BUTTON_STYLE = {
-    "limited edition": discord.ButtonStyle.danger,
-    "exotic": discord.ButtonStyle.success,
-    "legendary": discord.ButtonStyle.primary,
-}
-
-
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-BOT_ONLINE = False
-BOT_STARTED_AT = int(time.time())
-INSTANCE_LOCK_HANDLE = None
-
-guild_msg_counts: Dict[int, int] = {}
-active_spawns: Dict[int, "CatchView"] = {}
-pending_trades: Dict[tuple[int, int], int] = {}
-active_trades: Dict[int, "TradeView"] = {}
-
-INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
-GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
-VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
-VEHICLES_CACHE_MTIME: Optional[float] = None
-VEHICLES_CACHE_PATH: Optional[str] = None
-
-
-FRESH_INVENTORY_SUFFIX = "|fresh"
-NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
-REPEATED_CHAR_RE = re.compile(r"(.)\1+")
-DIGIT_ID_RE = re.compile(r"(\d+)")
-
-COUNT_SUFFIXES = (
-    "",
-    "k",
-    "m",
-    "b",
-    "t",
-    "q",
-    "Q",
-    "s",
-    "S",
-    "o",
-    "n",
-    "d",
-    "U",
-    "D",
-    "T",
-    "Qt",
-    "Qd",
-    "Sx",
-    "Sp",
-    "Oc",
-    "No",
-    "Vg",
-)
-COUNT_MULTIPLIER_MAP = {
-    suffix: 1000 ** index
-    for index, suffix in enumerate(COUNT_SUFFIXES)
-    if suffix
-}
-COUNT_SUFFIXES_SORTED = sorted(COUNT_MULTIPLIER_MAP.keys(), key=len, reverse=True)
-SHORT_COUNT_SUFFIX_MAP = {
-    "k": 1_000,
-    "m": 1_000_000,
-    "b": 1_000_000_000,
-    "t": 1_000_000_000_000,
-}
-
-
-def make_inventory_key(name: str, is_fresh: bool = False) -> str:
-    if not name:
-        return ""
-    key = str(name).strip()
-    if not key:
-        return ""
-    return f"{key}{FRESH_INVENTORY_SUFFIX}" if is_fresh else key
-
-
-def split_inventory_key(key: str) -> tuple[str, bool]:
-    if not key:
-        return "", False
-    normalized_key = str(key).strip()
-    if normalized_key.endswith(FRESH_INVENTORY_SUFFIX):
-        return normalized_key[: -len(FRESH_INVENTORY_SUFFIX)], True
-    return normalized_key, False
-
-
-def normalize_name(name: str) -> str:
-    if not name:
-        return ""
-    cleaned = NON_ALNUM_RE.sub("", str(name).lower())
-    return REPEATED_CHAR_RE.sub(r"\1", cleaned)
-
-
-def display_vehicle_name(name_or_key: str) -> str:
-    base_name, is_fresh = split_inventory_key(name_or_key)
-    label = base_name.replace("-", "")
-    return f"{label} [Fresh]" if is_fresh else label
-
-
-def is_http_url(value: Any) -> bool:
-    if not value:
-        return False
-    string_value = str(value).strip().lower()
-    return string_value.startswith("http://") or string_value.startswith("https://")
-
-
-def format_count(num: Any) -> str:
-    if not isinstance(num, (int, float)):
-        try:
-            num = float(num)
-        except Exception:
-            return str(num)
-
-    if abs(num) < 1000:
-        return str(int(num)) if num == int(num) else str(num)
-
-    magnitude = 0
-    while abs(num) >= 1000 and magnitude < len(COUNT_SUFFIXES) - 1:
-        magnitude += 1
-        num /= 1000.0
-
-    if magnitude >= len(COUNT_SUFFIXES) - 1 and abs(num) >= 1000:
-        return f"{num:.2e}"
-
-    result = f"{num:.2f}".rstrip("0").rstrip(".")
-    return f"{result}{COUNT_SUFFIXES[magnitude]}"
-
-
-def parse_count(text: Any) -> Optional[int]:
-    if not text:
-        return None
-
-    raw = str(text).strip().replace(",", "")
-    if not raw:
-        return None
-
-    for suffix in COUNT_SUFFIXES_SORTED:
-        if raw.endswith(suffix):
-            try:
-                num_part = raw[: -len(suffix)].strip()
-                if not num_part:
-                    return int(COUNT_MULTIPLIER_MAP[suffix])
-                return int(float(num_part) * COUNT_MULTIPLIER_MAP[suffix])
-            except (TypeError, ValueError):
-                continue
-
-    try:
-        last_char = raw[-1].lower()
-        if last_char in SHORT_COUNT_SUFFIX_MAP:
-            num_part = raw[:-1].strip()
-            multiplier = SHORT_COUNT_SUFFIX_MAP[last_char]
-            if not num_part:
-                return int(multiplier)
-            return int(float(num_part) * multiplier)
-        return int(float(raw))
-    except (TypeError, ValueError, IndexError):
-        return None
-
-
-def _coerce_non_negative_int(value: Any) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, parsed)
-
-
-def parse_fresh_flag(token: str) -> Optional[bool]:
-    if not token:
-        return None
-
-    normalized = token.strip().lower()
-    if ":" in normalized:
-        key, value = normalized.split(":", 1)
-    elif "=" in normalized:
-        key, value = normalized.split("=", 1)
-    else:
-        return None
-
-    if key != "fresh":
-        return None
-
-    if value in {"true", "1", "yes", "y"}:
-        return True
-    if value in {"false", "0", "no", "n"}:
-        return False
-    return None
-
-
-def parse_bool_true_false(token: str) -> Optional[bool]:
-    normalized = (token or "").strip().lower()
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    return None
-
-
-def has_admin_access(message: discord.Message) -> bool:
-    if message.author.id in ADMIN_USER_IDS:
-        return True
-    if message.guild and getattr(message.author, "guild_permissions", None):
-        return bool(message.author.guild_permissions.manage_guild)
-    return False
-
-
-async def resolve_user_from_token(token: str, guild: Optional[discord.Guild]) -> Optional[discord.abc.User]:
-    user_id_match = DIGIT_ID_RE.search(token or "")
-    if not user_id_match:
-        return None
-
-    user_id = int(user_id_match.group(1))
-    if guild:
-        member = guild.get_member(user_id)
-        if member:
-            return member
-
-    try:
-        return await bot.fetch_user(user_id)
-    except Exception:
-        return None
-
-
-async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = False) -> bool:
-    try:
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=ephemeral)
-        return True
-    except (NotFound, HTTPException) as error:
-        command_name = interaction.command.name if interaction.command else "unknown"
-        print(f"Failed to defer interaction for /{command_name}: {error}")
-        return False
-
-
-async def safe_send(
-    interaction: discord.Interaction,
-    content: Optional[str] = None,
-    *,
-    ephemeral: bool = False,
-    embed: Optional[discord.Embed] = None,
-    view: Optional[discord.ui.View] = None,
-    wait: bool = False,
-):
-    try:
-        kwargs: Dict[str, Any] = {"ephemeral": ephemeral}
-        if content is not None:
-            kwargs["content"] = content
-        if embed is not None:
-            kwargs["embed"] = embed
-        if view is not None:
-            kwargs["view"] = view
-
-        if interaction.response.is_done():
-            if wait:
-                kwargs["wait"] = True
-            return await interaction.followup.send(**kwargs)
-
-        if "content" not in kwargs and "embed" not in kwargs:
-            kwargs["content"] = ""
-        return await interaction.response.send_message(**kwargs)
-    except (NotFound, HTTPException) as error:
-        command_name = interaction.command.name if interaction.command else "unknown"
-        print(f"Failed to send interaction response for /{command_name}: {error}")
-        return None
-
-def _lock_file_handle(lock_file):
-    if msvcrt is not None:
-        lock_file.seek(0)
-        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-        return
-
-    if fcntl is not None:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return
-
-    raise OSError("No supported file locking implementation is available on this platform.")
-
-
-def acquire_instance_lock() -> bool:
-    global INSTANCE_LOCK_HANDLE
-
-    lock_path = os.path.join(DATA_DIR, "bot.lock")
-    try:
-        lock_file = open(lock_path, "a+", encoding="utf-8")
-        _lock_file_handle(lock_file)
-        lock_file.seek(0)
-        lock_file.truncate()
-        lock_file.write(str(os.getpid()))
-        lock_file.flush()
-        INSTANCE_LOCK_HANDLE = lock_file
-        return True
-    except OSError:
-        print("Another bot instance is already running for this data directory. Stop it before starting a new one.")
-        return False
-
-
-def _normalize_inventory_block(items: Any) -> tuple[Dict[str, int], bool]:
-    migrated = False
-    normalized_items: Dict[str, int] = {}
-
-    if isinstance(items, list):
-        for item in items:
-            key = make_inventory_key(item, False)
-            if key:
-                normalized_items[key] = normalized_items.get(key, 0) + 1
-        return normalized_items, True
-
-    if not isinstance(items, dict):
-        return {}, True
-
-    for raw_item_name, raw_item_count in items.items():
-        base_name, is_fresh = split_inventory_key(str(raw_item_name))
-        inventory_key = make_inventory_key(base_name, is_fresh)
-        item_count = _coerce_non_negative_int(raw_item_count)
-
-        if not inventory_key or item_count <= 0:
-            migrated = True
-            continue
-
-        normalized_items[inventory_key] = normalized_items.get(inventory_key, 0) + item_count
-
-        if inventory_key != str(raw_item_name) or item_count != raw_item_count:
-            migrated = True
-
-    if normalized_items != items:
-        migrated = True
-
-    return normalized_items, migrated
-
-
-def load_inventories() -> Dict[str, Dict[str, int]]:
-    global INVENTORIES_CACHE
-
-    if INVENTORIES_CACHE is not None:
-        return INVENTORIES_CACHE
-
-    if not os.path.exists(USER_INVENTORIES_FILE):
-        INVENTORIES_CACHE = {}
-        save_inventories(INVENTORIES_CACHE)
-        return INVENTORIES_CACHE
-
-    try:
-        with open(USER_INVENTORIES_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {USER_INVENTORIES_FILE}: {error}")
-        INVENTORIES_CACHE = {}
-        return INVENTORIES_CACHE
-
-    if not isinstance(raw_data, dict):
-        INVENTORIES_CACHE = {}
-        save_inventories(INVENTORIES_CACHE)
-        return INVENTORIES_CACHE
-
-    normalized_data: Dict[str, Dict[str, int]] = {}
-    migrated = False
-
-    for raw_user_id, items in raw_data.items():
-        user_id_str = str(raw_user_id)
-        user_inventory, block_migrated = _normalize_inventory_block(items)
-        normalized_data[user_id_str] = user_inventory
-        if block_migrated or user_id_str != raw_user_id:
-            migrated = True
-
-    INVENTORIES_CACHE = normalized_data
-    if migrated:
-        save_inventories(INVENTORIES_CACHE)
-
-    return INVENTORIES_CACHE
-
-
-def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
-    global INVENTORIES_CACHE
-
-    try:
-        os.makedirs(os.path.dirname(USER_INVENTORIES_FILE), exist_ok=True)
-        with open(USER_INVENTORIES_FILE, "w", encoding="utf-8") as handle:
-            json.dump(inventories, handle, indent=2, sort_keys=True)
-        INVENTORIES_CACHE = inventories
-    except Exception as error:
-        print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
-
-
-def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
-    return add_vehicle_count(user_id, vehicle_name, 1, is_fresh=is_fresh)
-
-
-def add_vehicle_count(user_id: int, vehicle_name: str, count: int, is_fresh: bool = False) -> bool:
-    if count <= 0:
-        return False
-
-    inventories = load_inventories()
-    user_id_str = str(user_id)
-    user_inventory = inventories.get(user_id_str, {})
-    if not isinstance(user_inventory, dict):
-        user_inventory = {}
-
-    inventory_key = make_inventory_key(vehicle_name, is_fresh)
-    if not inventory_key:
-        return False
-
-    user_inventory[inventory_key] = user_inventory.get(inventory_key, 0) + count
-    inventories[user_id_str] = user_inventory
-    save_inventories(inventories)
-    return True
-
-
-def remove_vehicle_count(user_id: int, vehicle_name: str, count: int, is_fresh: bool = False) -> int:
-    if count <= 0:
-        return 0
-
-    inventories = load_inventories()
-    user_id_str = str(user_id)
-    user_inventory = inventories.get(user_id_str, {})
-    if not isinstance(user_inventory, dict):
-        return 0
-
-    inventory_key = make_inventory_key(vehicle_name, is_fresh)
-    current_count = user_inventory.get(inventory_key, 0)
-    amount_removed = min(current_count, count)
-    if amount_removed <= 0:
-        return 0
-
-    remaining = current_count - amount_removed
-    if remaining > 0:
-        user_inventory[inventory_key] = remaining
-    else:
-        user_inventory.pop(inventory_key, None)
-
-    inventories[user_id_str] = user_inventory
-    save_inventories(inventories)
-    return amount_removed
-
-
-def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
-    global GUILD_CHANNEL_SETTINGS_CACHE
-
-    if GUILD_CHANNEL_SETTINGS_CACHE is not None:
-        return GUILD_CHANNEL_SETTINGS_CACHE
-
-    if not os.path.exists(GUILD_CHANNEL_SETTINGS_FILE):
-        GUILD_CHANNEL_SETTINGS_CACHE = {}
-        return GUILD_CHANNEL_SETTINGS_CACHE
-
-    try:
-        with open(GUILD_CHANNEL_SETTINGS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {GUILD_CHANNEL_SETTINGS_FILE}: {error}")
-        GUILD_CHANNEL_SETTINGS_CACHE = {}
-        return GUILD_CHANNEL_SETTINGS_CACHE
-
-    if not isinstance(raw_data, dict):
-        GUILD_CHANNEL_SETTINGS_CACHE = {}
-        return GUILD_CHANNEL_SETTINGS_CACHE
-
-    normalized: Dict[str, Dict[str, int]] = {}
-    for raw_guild_id, raw_settings in raw_data.items():
-        guild_id = str(raw_guild_id)
-        if not isinstance(raw_settings, dict):
-            continue
-
-        parsed_settings: Dict[str, int] = {}
-        for key in ("dex_channel_id", "trade_channel_id"):
-            value = raw_settings.get(key)
-            try:
-                parsed_value = int(value)
-            except (TypeError, ValueError):
-                continue
-            if parsed_value > 0:
-                parsed_settings[key] = parsed_value
-
-        if parsed_settings:
-            normalized[guild_id] = parsed_settings
-
-    GUILD_CHANNEL_SETTINGS_CACHE = normalized
-    return GUILD_CHANNEL_SETTINGS_CACHE
-
-
-def save_guild_channel_settings(settings: Dict[str, Dict[str, int]]) -> None:
-    global GUILD_CHANNEL_SETTINGS_CACHE
-
-    try:
-        os.makedirs(os.path.dirname(GUILD_CHANNEL_SETTINGS_FILE), exist_ok=True)
-        with open(GUILD_CHANNEL_SETTINGS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(settings, handle, indent=2, sort_keys=True)
-        GUILD_CHANNEL_SETTINGS_CACHE = settings
-    except Exception as error:
-        print(f"Error saving {GUILD_CHANNEL_SETTINGS_FILE}: {error}")
-
-
-def get_guild_channel_setting(guild_id: int, key: str) -> Optional[int]:
-    settings = load_guild_channel_settings()
-    guild_settings = settings.get(str(guild_id), {})
-    if not isinstance(guild_settings, dict):
-        return None
-
-    value = guild_settings.get(key)
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
-
-
-def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
-    settings = load_guild_channel_settings()
-    guild_key = str(guild_id)
-    guild_settings = settings.get(guild_key, {})
-    if not isinstance(guild_settings, dict):
-        guild_settings = {}
-
-    guild_settings[key] = int(channel_id)
-    settings[guild_key] = guild_settings
-    save_guild_channel_settings(settings)
-
-
-def get_configured_text_channel(guild: discord.Guild, key: str) -> Optional[discord.TextChannel]:
-    channel_id = get_guild_channel_setting(guild.id, key)
-    if not channel_id:
-        return None
-
-    channel = guild.get_channel(channel_id)
-    return channel if isinstance(channel, discord.TextChannel) else None
-
-
-def get_configured_dex_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    return get_configured_text_channel(guild, "dex_channel_id")
-
-
-def get_configured_trade_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    return get_configured_text_channel(guild, "trade_channel_id")
-
-
-def _resolve_index_path() -> Optional[str]:
-    if os.path.exists(INDEX_JSON_FILE):
-        return INDEX_JSON_FILE
-    if os.path.exists(ROOT_INDEX_JSON_FILE):
-        return ROOT_INDEX_JSON_FILE
-    return None
-
-
-def _resolve_local_image(vehicle_name: str) -> Optional[str]:
-    seen_dirs = set()
-    for image_dir in (IMAGES_DIR, *FALLBACK_IMAGE_DIRS):
-        if image_dir in seen_dirs:
-            continue
-        seen_dirs.add(image_dir)
-        for extension in IMAGE_EXTENSIONS:
-            test_path = os.path.join(image_dir, f"{vehicle_name}.{extension}")
-            if os.path.isfile(test_path):
-                return test_path
-    return None
-
-
-def load_vehicles() -> Dict[str, Dict[str, Any]]:
-    global VEHICLES_CACHE, VEHICLES_CACHE_MTIME, VEHICLES_CACHE_PATH
-
-    index_path = _resolve_index_path()
-    if not index_path:
-        return {}
-
-    try:
-        current_mtime = os.path.getmtime(index_path)
-    except OSError:
-        return {}
-
-    if VEHICLES_CACHE_PATH == index_path and VEHICLES_CACHE_MTIME == current_mtime and VEHICLES_CACHE:
-        return VEHICLES_CACHE
-
-    try:
-        with open(index_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading index.json ({index_path}): {error}")
-        return {}
-
-    if not isinstance(data, dict):
-        VEHICLES_CACHE = {}
-        VEHICLES_CACHE_PATH = index_path
-        VEHICLES_CACHE_MTIME = current_mtime
-        return VEHICLES_CACHE
-
-    processed: Dict[str, Dict[str, Any]] = {}
-
-    for raw_name, raw_value in data.items():
-        vehicle_name = str(raw_name).strip()
-        if not vehicle_name:
-            continue
-
-        image_url = ""
-        rarity = "common"
-        code = None
-
-        if isinstance(raw_value, dict):
-            image_url = str(raw_value.get("pic_link") or raw_value.get("url") or "").strip()
-            rarity_value = str(raw_value.get("rarity", "Common")).strip().lower()
-            rarity = rarity_value if rarity_value in RARITY_WEIGHTS else "common"
-            if raw_value.get("code") is not None:
-                code = str(raw_value.get("code"))
-        else:
-            image_url = str(raw_value).strip()
-
-        vehicle_data: Dict[str, Any] = {
-            "url": image_url,
-            "rarity": rarity,
-        }
-        if code:
-            vehicle_data["code"] = code
-
-        local_path = _resolve_local_image(vehicle_name)
-        if local_path:
-            vehicle_data["local_path"] = local_path
-
-        processed[vehicle_name] = vehicle_data
-
-    VEHICLES_CACHE = processed
-    VEHICLES_CACHE_PATH = index_path
-    VEHICLES_CACHE_MTIME = current_mtime
-    return VEHICLES_CACHE
-
-
-def refresh_vehicles() -> Dict[str, Dict[str, Any]]:
-    global VEHICLES_CACHE_PATH, VEHICLES_CACHE_MTIME
-    VEHICLES_CACHE_PATH = None
-    VEHICLES_CACHE_MTIME = None
-    return load_vehicles()
-
-
-def get_vehicle_map() -> Dict[str, Dict[str, Any]]:
-    return load_vehicles()
-
-
-def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
-    return bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
-
-
-def get_random_vehicle(vehicles: Dict[str, Dict[str, Any]]) -> Optional[str]:
-    if not vehicles:
-        return None
-
-    by_rarity: Dict[str, list[str]] = {}
-    for vehicle_name, vehicle_data in vehicles.items():
-        if not _vehicle_is_spawnable(vehicle_data):
-            continue
-        rarity = str(vehicle_data.get("rarity", "common")).lower()
-        by_rarity.setdefault(rarity, []).append(vehicle_name)
-
-    if not by_rarity:
-        return None
-
-    available_rarities = [rarity for rarity in RARITY_ORDER if rarity in by_rarity]
-    if not available_rarities:
-        available_rarities = sorted(by_rarity.keys())
-
-    weights = [RARITY_WEIGHTS.get(rarity, 1) for rarity in available_rarities]
-    selected_rarity = random.choices(available_rarities, weights=weights, k=1)[0]
-    return random.choice(by_rarity[selected_rarity])
-
-
-def find_best_vehicle_match(vehicle_names: Iterable[str], query: str) -> Optional[str]:
-    normalized_query = normalize_name(query)
-    if not normalized_query:
-        return None
-
-    scored_matches = []
-    for name in vehicle_names:
-        normalized_candidate = normalize_name(name)
-        if not normalized_candidate:
-            continue
-
-        if normalized_candidate == normalized_query:
-            return name
-
-        if normalized_candidate.startswith(normalized_query):
-            scored_matches.append((0, len(name), name.lower(), name))
-        elif normalized_query in normalized_candidate:
-            scored_matches.append((1, len(name), name.lower(), name))
-
-    if not scored_matches:
-        return None
-
-    scored_matches.sort()
-    return scored_matches[0][3]
-
-
-def _user_rarity_counts(user_inventory: Dict[str, int], vehicles: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
-    counts = {rarity: 0 for rarity in RARITY_ORDER}
-    for vehicle_key, count in user_inventory.items():
-        if count <= 0:
-            continue
-        vehicle_name, _ = split_inventory_key(vehicle_key)
-        vehicle_data = vehicles.get(vehicle_name)
-        if not vehicle_data:
-            continue
-        rarity = str(vehicle_data.get("rarity", "common")).lower()
-        if rarity in counts:
-            counts[rarity] += count
-    return counts
-
-
-def create_overview_embed(user: discord.abc.User) -> discord.Embed:
-    inventories = load_inventories()
-    user_inventory = inventories.get(str(user.id), {})
-    vehicles = get_vehicle_map()
-
-    counts = _user_rarity_counts(user_inventory, vehicles)
-    total = sum(counts.values())
-
-    embed = discord.Embed(title=f"{user.name}'s Inventory", color=discord.Color.blue())
-    if total <= 0:
-        embed.description = "You have not caught any vehicles yet."
-        return embed
-
-    lines = [f"**{rarity.title()}:** {format_count(counts[rarity])}" for rarity in RARITY_ORDER]
-    embed.description = "\n".join(lines)
-    embed.set_footer(text=f"Total vehicles: {format_count(total)}")
-    return embed
-
-
-def get_user_rarity_vehicle_counts(user_id: int, rarity: str) -> Dict[str, int]:
-    rarity = rarity.lower()
-    inventories = load_inventories()
-    user_inventory = inventories.get(str(user_id), {})
-    vehicles = get_vehicle_map()
-
-    counts: Dict[str, int] = {}
-    for vehicle_key, count in user_inventory.items():
-        if count <= 0:
-            continue
-        vehicle_name, _ = split_inventory_key(vehicle_key)
-        vehicle_data = vehicles.get(vehicle_name)
-        if not vehicle_data:
-            continue
-        if str(vehicle_data.get("rarity", "common")).lower() == rarity:
-            counts[vehicle_key] = count
-
-    return counts
-
-class RarityButton(discord.ui.Button):
-    def __init__(
-        self,
-        target_user: discord.abc.User,
-        rarity: str,
-        style: discord.ButtonStyle,
-        disabled: bool,
-        owner: discord.abc.User,
-    ):
-        super().__init__(label=rarity.title(), style=style, disabled=disabled)
-        self.target_user = target_user
-        self.rarity = rarity
-        self.owner = owner
-
-    async def callback(self, interaction: discord.Interaction):
-        view = RarityInventoryView(self.target_user, self.rarity, self.owner)
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-
-class InventoryOverview(discord.ui.View):
-    def __init__(self, target_user: discord.abc.User, owner: discord.abc.User):
-        super().__init__(timeout=120)
-        self.target_user = target_user
-        self.owner = owner
-
-        inventories = load_inventories()
-        user_inventory = inventories.get(str(target_user.id), {})
-        vehicles = get_vehicle_map()
-        counts = _user_rarity_counts(user_inventory, vehicles)
-
-        for rarity in RARITY_ORDER:
-            style = RARITY_BUTTON_STYLE.get(rarity, discord.ButtonStyle.secondary)
-            count = counts.get(rarity, 0)
-            self.add_item(RarityButton(target_user, rarity, style, count == 0, owner))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner.id:
-            await interaction.response.send_message(
-                "Only the person who used the command can use these buttons.",
-                ephemeral=True,
-            )
-            return False
-        return True
-
-
-class RarityInventoryView(discord.ui.View):
-    def __init__(self, target_user: discord.abc.User, rarity: str, owner: discord.abc.User):
-        super().__init__(timeout=120)
-        self.target_user = target_user
-        self.rarity = rarity
-        self.owner = owner
-        self.vehicle_counts = get_user_rarity_vehicle_counts(target_user.id, rarity)
-
-        back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
-        back_button.callback = self.back_callback
-        self.add_item(back_button)
-
-    async def back_callback(self, interaction: discord.Interaction):
-        view = InventoryOverview(self.target_user, self.owner)
-        await interaction.response.edit_message(embed=create_overview_embed(self.target_user), view=view)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner.id:
-            await interaction.response.send_message(
-                "Only the person who used the command can use these buttons.",
-                ephemeral=True,
-            )
-            return False
-        return True
-
-    def create_embed(self) -> discord.Embed:
-        color_value = RARITY_COLORS.get(self.rarity, 0x0000FF)
-        embed = discord.Embed(
-            title=f"{self.target_user.name}'s {self.rarity.title()} Vehicles",
-            color=discord.Color(color_value),
-        )
-
-        if not self.vehicle_counts:
-            embed.description = "No vehicles of this rarity yet."
-            return embed
-
-        sorted_items = sorted(
-            self.vehicle_counts.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
-
-        lines = [
-            f"- {format_count(count)} | {display_vehicle_name(vehicle_key)}"
-            for vehicle_key, count in sorted_items[:30]
-        ]
-
-        total_unique = len(sorted_items)
-        total_caught = sum(self.vehicle_counts.values())
-        embed.description = "\n".join(lines)
-        embed.set_footer(text=f"Unique: {total_unique} | Total caught: {format_count(total_caught)}")
-
-        if total_unique > 30:
-            embed.description += f"\n...and {total_unique - 30} more"
-
-        return embed
-
-
-def get_active_trade_for_user(user_id: int) -> Optional["TradeView"]:
-    trade_view = active_trades.get(user_id)
-    if not trade_view or trade_view.cancelled or trade_view.completed:
-        return None
-    return trade_view
-
-
-def get_trade_offer_for_user(trade_view: "TradeView", user_id: int) -> Optional[Dict[str, int]]:
-    if user_id == trade_view.user_a.id:
-        return trade_view.offer_a
-    if user_id == trade_view.user_b.id:
-        return trade_view.offer_b
-    return None
-
-
-def get_trade_available_vehicles(user_id: int) -> Dict[str, int]:
-    trade_view = get_active_trade_for_user(user_id)
-    if not trade_view:
-        return {}
-
-    inventories = load_inventories()
-    user_inventory = inventories.get(str(user_id), {})
-    current_offer = get_trade_offer_for_user(trade_view, user_id) or {}
-
-    available: Dict[str, int] = {}
-    for vehicle_name, owned_count in user_inventory.items():
-        remaining = owned_count - current_offer.get(vehicle_name, 0)
-        if remaining > 0:
-            available[vehicle_name] = remaining
-    return available
-
-
-class TradeView(discord.ui.View):
-    def __init__(self, user_a: discord.User, user_b: discord.User):
-        super().__init__(timeout=600)
-        self.user_a = user_a
-        self.user_b = user_b
-        self.offer_a: Dict[str, int] = {}
-        self.offer_b: Dict[str, int] = {}
-        self.ready_a = False
-        self.ready_b = False
-        self.cancelled = False
-        self.completed = False
-        self.cancelled_by: Optional[str] = None
-        self.message: Optional[discord.Message] = None
-        self.countdown_task: Optional[asyncio.Task] = None
-        self.countdown_remaining = 0
-
-    def _format_offer_block(self, offer: Dict[str, int]) -> str:
-        if not offer:
-            return "*No vehicles added yet*"
-
-        sorted_items = sorted(
-            offer.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
-
-        lines = [
-            f"- {format_count(count)} | {display_vehicle_name(name)}"
-            for name, count in sorted_items[:20]
-        ]
-        if len(sorted_items) > 20:
-            lines.append(f"...and {len(sorted_items) - 20} more")
-        return "\n".join(lines)
-
-    def create_embed(self) -> discord.Embed:
-        embed = discord.Embed(title="Vehicle Trade", color=discord.Color.gold())
-
-        embed.add_field(
-            name=f"{self.user_a.name}'s Offer",
-            value=self._format_offer_block(self.offer_a),
-            inline=True,
-        )
-        embed.add_field(
-            name=f"{self.user_b.name}'s Offer",
-            value=self._format_offer_block(self.offer_b),
-            inline=True,
-        )
-
-        status_a = "READY" if self.ready_a else "Not Ready"
-        status_b = "READY" if self.ready_b else "Not Ready"
-        status_text = f"**{self.user_a.name}:** {status_a}\n**{self.user_b.name}:** {status_b}"
-
-        if self.countdown_remaining > 0:
-            status_text += f"\n\nCompleting in {self.countdown_remaining}s"
-
-        embed.add_field(name="Status", value=status_text, inline=False)
-
-        if self.cancelled:
-            embed.title = "Trade Cancelled"
-            if self.cancelled_by:
-                embed.description = f"Reason: {self.cancelled_by}"
-            embed.color = discord.Color.red()
-        elif self.completed:
-            embed.title = "Trade Completed"
-            embed.color = discord.Color.green()
-
-        return embed
-
-    async def update_message(self):
-        if self.cancelled or self.completed:
-            if self.countdown_task and not self.countdown_task.done():
-                self.countdown_task.cancel()
-                self.countdown_task = None
-                self.countdown_remaining = 0
-
-            for item in self.children:
-                item.disabled = True
-
-            if active_trades.get(self.user_a.id) == self:
-                del active_trades[self.user_a.id]
-            if active_trades.get(self.user_b.id) == self:
-                del active_trades[self.user_b.id]
-
-        if self.message is None:
-            return
-
-        try:
-            await self.message.edit(embed=self.create_embed(), view=self)
-        except Exception as error:
-            print(f"Error updating trade message: {error}")
-
-    @discord.ui.button(label="Ready", style=discord.ButtonStyle.success)
-    async def ready_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.user_a.id:
-            self.ready_a = not self.ready_a
-        elif interaction.user.id == self.user_b.id:
-            self.ready_b = not self.ready_b
-        else:
-            await interaction.response.send_message("You are not part of this trade.", ephemeral=True)
-            return
-
-        if self.ready_a and self.ready_b:
-            if not self.countdown_task or self.countdown_task.done():
-                self.countdown_task = asyncio.create_task(self.countdown_loop())
-        else:
-            if self.countdown_task and not self.countdown_task.done():
-                self.countdown_task.cancel()
-                self.countdown_task = None
-            self.countdown_remaining = 0
-
-        await interaction.response.defer()
-        await self.update_message()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in [self.user_a.id, self.user_b.id]:
-            await interaction.response.send_message("You are not part of this trade.", ephemeral=True)
-            return
-
-        self.cancelled = True
-        self.cancelled_by = f"Cancelled by {interaction.user.name}"
-        await interaction.response.defer()
-        await self.update_message()
-        self.stop()
-
-    async def countdown_loop(self):
-        try:
-            self.countdown_remaining = 5
-            while self.countdown_remaining > 0:
-                await self.update_message()
-                await asyncio.sleep(1)
-                self.countdown_remaining -= 1
-
-            if self.ready_a and self.ready_b and not self.cancelled and not self.completed and self.message:
-                await self.complete_trade(None)
-        except asyncio.CancelledError:
-            return
-        finally:
-            self.countdown_remaining = 0
-            if not self.completed and not self.cancelled:
-                await self.update_message()
-
-    def reset_countdown(self):
-        if self.countdown_task and not self.countdown_task.done():
-            self.countdown_remaining = 5
-
-    async def cancel_trade(self):
-        if not self.cancelled and not self.completed:
-            self.cancelled = True
-            self.cancelled_by = "New trade started"
-            await self.update_message()
-            self.stop()
-
-    async def on_timeout(self):
-        if not self.cancelled and not self.completed:
-            self.cancelled = True
-            self.cancelled_by = "Trade timed out"
-            await self.update_message()
-            self.stop()
-
-    async def complete_trade(self, interaction: Optional[discord.Interaction]):
-        inventories = load_inventories()
-        inv_a = inventories.get(str(self.user_a.id), {})
-        inv_b = inventories.get(str(self.user_b.id), {})
-
-        for name, count in self.offer_a.items():
-            if inv_a.get(name, 0) < count:
-                channel = interaction.channel if interaction else self.message.channel
-                await channel.send(f"Trade failed: {self.user_a.name} no longer has enough {display_vehicle_name(name)}.")
-                self.cancelled = True
-                self.cancelled_by = f"{self.user_a.name} missing items"
-                await self.update_message()
-                return
-
-        for name, count in self.offer_b.items():
-            if inv_b.get(name, 0) < count:
-                channel = interaction.channel if interaction else self.message.channel
-                await channel.send(f"Trade failed: {self.user_b.name} no longer has enough {display_vehicle_name(name)}.")
-                self.cancelled = True
-                self.cancelled_by = f"{self.user_b.name} missing items"
-                await self.update_message()
-                return
-
-        for name, count in self.offer_a.items():
-            inv_a[name] -= count
-            if inv_a[name] <= 0:
-                del inv_a[name]
-            inv_b[name] = inv_b.get(name, 0) + count
-
-        for name, count in self.offer_b.items():
-            inv_b[name] -= count
-            if inv_b[name] <= 0:
-                del inv_b[name]
-            inv_a[name] = inv_a.get(name, 0) + count
-
-        inventories[str(self.user_a.id)] = inv_a
-        inventories[str(self.user_b.id)] = inv_b
-        save_inventories(inventories)
-
-        self.completed = True
-        await self.update_message()
-        self.stop()
-
-def register_trade_commands(discord_bot: commands.Bot):
-    async def ensure_trade_channel(interaction: discord.Interaction) -> bool:
-        if not interaction.guild:
-            return True
-
-        configured_channel = get_configured_trade_channel(interaction.guild)
-        if configured_channel is None:
-            return True
-
-        if interaction.channel and getattr(interaction.channel, "id", None) == configured_channel.id:
-            return True
-
-        await safe_send(
-            interaction,
-            f"Use {configured_channel.mention} for trade commands in this server.",
-            ephemeral=True,
-        )
-        return False
-
-    @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
-    @app_commands.describe(user="The user whose inventory you want to view")
-    async def inventory_slash(interaction: discord.Interaction, user: Optional[discord.User] = None):
-        target_user = user or interaction.user
-        view = InventoryOverview(target_user, interaction.user)
-        await interaction.response.send_message(embed=create_overview_embed(target_user), view=view)
-
-    @discord_bot.tree.command(name="tradeadd", description="Add a vehicle to your active trade offer")
-    @app_commands.guild_only()
-    @app_commands.describe(vehicle_name="The vehicle to add", amount="How many to add")
-    async def tradeadd_slash(interaction: discord.Interaction, vehicle_name: str, amount: str):
-        if not await ensure_trade_channel(interaction):
-            return
-
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-
-        trade_view = get_active_trade_for_user(interaction.user.id)
-        if not trade_view:
-            await safe_send(interaction, "You do not have an active trade right now.", ephemeral=True)
-            return
-
-        if interaction.user.id not in [trade_view.user_a.id, trade_view.user_b.id]:
-            await safe_send(interaction, "You are not part of this trade.", ephemeral=True)
-            return
-
-        parsed_amount = parse_count(amount)
-        if parsed_amount is None or parsed_amount <= 0:
-            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-            return
-
-        available_vehicles = get_trade_available_vehicles(interaction.user.id)
-        matched_vehicle = vehicle_name if vehicle_name in available_vehicles else find_best_vehicle_match(available_vehicles.keys(), vehicle_name)
-        if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your inventory.", ephemeral=True)
-            return
-
-        available = available_vehicles[matched_vehicle]
-        if parsed_amount > available:
-            await safe_send(
-                interaction,
-                f"You do not have enough {display_vehicle_name(matched_vehicle)}. Available: {format_count(available)}",
-                ephemeral=True,
-            )
-            return
-
-        current_offer = get_trade_offer_for_user(trade_view, interaction.user.id)
-        current_offer[matched_vehicle] = current_offer.get(matched_vehicle, 0) + parsed_amount
-
-        trade_view.reset_countdown()
-        await trade_view.update_message()
-        await safe_send(
-            interaction,
-            f"Added {format_count(parsed_amount)} | {display_vehicle_name(matched_vehicle)} to your offer.",
-            ephemeral=True,
-        )
-
-    @tradeadd_slash.autocomplete("vehicle_name")
-    async def tradeadd_vehicle_autocomplete(interaction: discord.Interaction, current: str):
-        if interaction.guild:
-            configured_channel = get_configured_trade_channel(interaction.guild)
-            if configured_channel and interaction.channel and getattr(interaction.channel, "id", None) != configured_channel.id:
-                return []
-
-        available_vehicles = get_trade_available_vehicles(interaction.user.id)
-        current_lower = current.lower()
-
-        sorted_items = sorted(
-            available_vehicles.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
-
-        return [
-            app_commands.Choice(
-                name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
-                value=name,
-            )
-            for name, count in sorted_items
-            if not current_lower
-            or current_lower in name.lower()
-            or current_lower in display_vehicle_name(name).lower()
-        ][:25]
-
-    @discord_bot.tree.command(name="traderemove", description="Remove a vehicle from your active trade offer")
-    @app_commands.guild_only()
-    @app_commands.describe(vehicle_name="The vehicle to remove", amount="How many to remove")
-    async def traderemove_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
-        if not await ensure_trade_channel(interaction):
-            return
-
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-
-        trade_view = get_active_trade_for_user(interaction.user.id)
-        if not trade_view:
-            await safe_send(interaction, "You do not have an active trade right now.", ephemeral=True)
-            return
-
-        if interaction.user.id not in [trade_view.user_a.id, trade_view.user_b.id]:
-            await safe_send(interaction, "You are not part of this trade.", ephemeral=True)
-            return
-
-        current_offer = get_trade_offer_for_user(trade_view, interaction.user.id)
-        if not current_offer:
-            await safe_send(interaction, "Your offer is empty.", ephemeral=True)
-            return
-
-        parsed_amount = parse_count(amount)
-        if parsed_amount is None or parsed_amount <= 0:
-            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-            return
-
-        matched_vehicle = vehicle_name if vehicle_name in current_offer else find_best_vehicle_match(current_offer.keys(), vehicle_name)
-        if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your current offer.", ephemeral=True)
-            return
-
-        amount_to_remove = min(parsed_amount, current_offer[matched_vehicle])
-        current_offer[matched_vehicle] -= amount_to_remove
-        if current_offer[matched_vehicle] <= 0:
-            del current_offer[matched_vehicle]
-
-        trade_view.reset_countdown()
-        await trade_view.update_message()
-        await safe_send(
-            interaction,
-            f"Removed {format_count(amount_to_remove)} | {display_vehicle_name(matched_vehicle)} from your offer.",
-            ephemeral=True,
-        )
-
-    @traderemove_slash.autocomplete("vehicle_name")
-    async def traderemove_vehicle_autocomplete(interaction: discord.Interaction, current: str):
-        if interaction.guild:
-            configured_channel = get_configured_trade_channel(interaction.guild)
-            if configured_channel and interaction.channel and getattr(interaction.channel, "id", None) != configured_channel.id:
-                return []
-
-        trade_view = get_active_trade_for_user(interaction.user.id)
-        if not trade_view:
-            return []
-
-        current_offer = get_trade_offer_for_user(trade_view, interaction.user.id) or {}
-        current_lower = current.lower()
-
-        sorted_items = sorted(
-            current_offer.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
-
-        return [
-            app_commands.Choice(
-                name=f"{display_vehicle_name(name)} ({format_count(count)} in offer)",
-                value=name,
-            )
-            for name, count in sorted_items
-            if not current_lower
-            or current_lower in name.lower()
-            or current_lower in display_vehicle_name(name).lower()
-        ][:25]
-
-    @discord_bot.tree.command(name="trade", description="Send a trade request to another user")
-    @app_commands.guild_only()
-    @app_commands.describe(user="The user you want to trade with")
-    async def trade_slash(interaction: discord.Interaction, user: discord.User):
-        if not await ensure_trade_channel(interaction):
-            return
-
-        if not await safe_defer(interaction):
-            return
-
-        if user.id == interaction.user.id:
-            await safe_send(interaction, "You cannot trade with yourself.", ephemeral=True)
-            return
-
-        if user.bot:
-            await safe_send(interaction, "You cannot trade with bots.", ephemeral=True)
-            return
-
-        pending_trades[(interaction.guild.id, user.id)] = interaction.user.id
-        await safe_send(
-            interaction,
-            f"{user.mention}, {interaction.user.mention} sent you a trade request. Use `/tradeaccept {interaction.user.name}` to start.",
-        )
-
-    @discord_bot.tree.command(name="tradeaccept", description="Accept a trade request")
-    @app_commands.guild_only()
-    @app_commands.describe(user="The user whose trade request you want to accept")
-    async def tradeaccept_slash(interaction: discord.Interaction, user: discord.User):
-        if not await ensure_trade_channel(interaction):
-            return
-
-        if not await safe_defer(interaction):
-            return
-
-        guild_id = interaction.guild.id
-        pending_key = (guild_id, interaction.user.id)
-
-        if pending_key in pending_trades and pending_trades[pending_key] == user.id:
-            if user.id in active_trades:
-                await active_trades[user.id].cancel_trade()
-            if interaction.user.id in active_trades:
-                await active_trades[interaction.user.id].cancel_trade()
-
-            del pending_trades[pending_key]
-
-            view = TradeView(user, interaction.user)
-            active_trades[user.id] = view
-            active_trades[interaction.user.id] = view
-            view.message = await safe_send(
-                interaction,
-                f"Trade started between {user.mention} and {interaction.user.mention}.",
-                embed=view.create_embed(),
-                view=view,
-                wait=True,
-            )
-            return
-
-        await safe_send(interaction, f"You do not have a pending trade request from {user.name}.", ephemeral=True)
-
-
-class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
-    guess = discord.ui.TextInput(
-        label="What is the name of this MT vehicle?",
-        placeholder="Enter your guess here",
-        required=True,
-        min_length=1,
-        max_length=100,
-    )
-
-    def __init__(self, correct_name: str, vehicle_code: str, view: "CatchView"):
-        super().__init__()
-        self.correct_name = correct_name
-        self.vehicle_code = vehicle_code
-        self.view = view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if self.view.caught:
-            await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
-            return
-
-        guessed_name = normalize_name(str(self.guess.value))
-        if guessed_name != normalize_name(self.correct_name):
-            await interaction.response.send_message(f"{interaction.user.mention} wrong name.", ephemeral=False)
-            return
-
-        self.view.caught = True
-        display_code = (
-            self.vehicle_code.split(",")[0].strip()
-            if isinstance(self.vehicle_code, str)
-            else str(self.vehicle_code)
-        )
-
-        caught_label = self.correct_name.replace("-", "")
-        awarded_fresh = self.view.is_fresh
-        if awarded_fresh:
-            caught_label = f"{caught_label} [Fresh]"
-
-        await interaction.response.send_message(
-            f"{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
-            ephemeral=False,
-        )
-        add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
-
-        await self.view.update_all_messages(
-            f"Captured by {interaction.user.name}: {caught_label}",
-            concluded=True,
-        )
-        self.view.stop()
-
-
-class CatchView(discord.ui.View):
-    def __init__(self, vehicle_name: str, vehicle_code: str, image_url: str, rarity: str, is_fresh: bool = False):
-        super().__init__(timeout=SPAWN_THRESHOLD * 60)
-        self.vehicle_name = vehicle_name
-        self.vehicle_code = vehicle_code
-        self.image_url = image_url
-        self.rarity = rarity.lower()
-        self.is_fresh = is_fresh
-        self.caught = False
-        self.messages: list[discord.Message] = []
-        self.header = "A wild Fresh MT vehicle has appeared" if self.is_fresh else "A wild MT vehicle has appeared"
-        self.hue = 0.0 if self.rarity == "exotic" else None
-
-    def add_message(self, message: discord.Message):
-        self.messages.append(message)
-
-    async def update_all_messages(
-        self,
-        header: Optional[str] = None,
-        color: Optional[discord.Color] = None,
-        *,
-        concluded: bool = False,
-    ):
-        if header:
-            self.header = header
-
-        if self.caught or concluded:
-            for item in self.children:
-                if isinstance(item, discord.ui.Button):
-                    item.disabled = True
-
-        if color is None:
-            color = discord.Color(RARITY_COLORS.get(self.rarity, 0x0000FF))
-
-        embed = discord.Embed(title=self.header, color=color)
-        embed.set_image(url=self.image_url)
-
-        for message in self.messages:
-            try:
-                await message.edit(content=None, embed=embed, view=self)
-            except Exception:
-                continue
-
-    async def on_timeout(self):
-        if not self.caught:
-            await self.update_all_messages("The wild MT vehicle escaped", concluded=True)
-            self.stop()
-
-    @discord.ui.button(label="Catch", style=discord.ButtonStyle.primary)
-    async def catch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.caught:
-            await interaction.response.send_message("This MT vehicle has already been caught.", ephemeral=True)
-            return
-        await interaction.response.send_modal(CatchModal(self.vehicle_name, self.vehicle_code, self))
-
-def _pick_spawn_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    if not guild.text_channels:
-        return None
-
-    guild_me = guild.me or guild.get_member(bot.user.id if bot.user else 0)
-    configured_channel = get_configured_dex_channel(guild)
-    if configured_channel:
-        if guild_me is None:
-            return configured_channel
-        configured_perms = configured_channel.permissions_for(guild_me)
-        if configured_perms.send_messages and configured_perms.embed_links:
-            return configured_channel
-        print(
-            f"Configured dex channel {configured_channel.name} in {guild.name} is missing "
-            f"Send Messages or Embed Links permission."
-        )
-        return None
-
-    channels = sorted(guild.text_channels, key=lambda channel: channel.position)
-
-    preferred = [channel for channel in channels if channel.name.lower() == "mt-dex"]
-    candidates = preferred + [channel for channel in channels if channel not in preferred]
-
-    for channel in candidates:
-        if guild_me is None:
-            return channel
-        perms = channel.permissions_for(guild_me)
-        if perms.send_messages and perms.embed_links:
-            return channel
-
-    return None
-
-
-async def spawn_vehicle(
-    vehicles: Dict[str, Dict[str, Any]],
-    channel: discord.abc.Messageable,
-    *,
-    guild: Optional[discord.Guild] = None,
-    ctx: Optional[commands.Context] = None,
-    force_is_fresh: Optional[bool] = None,
-) -> bool:
-    if not vehicles:
-        if ctx:
-            await ctx.send("No vehicles available.")
-        return False
-
-    target_guild = guild or (ctx.guild if ctx else None)
-
-    if target_guild and target_guild.id in active_spawns:
-        old_view = active_spawns[target_guild.id]
-        if not old_view.caught and not old_view.is_finished():
-            await old_view.update_all_messages("The wild MT vehicle escaped", concluded=True)
-            old_view.stop()
-
-    vehicle_name = get_random_vehicle(vehicles)
-    if not vehicle_name:
-        return False
-
-    vehicle_data = vehicles[vehicle_name]
-    local_path = vehicle_data.get("local_path")
-    image_url = vehicle_data.get("url")
-    vehicle_code = vehicle_data.get("code") or vehicle_data.get("rarity", "common")
-    rarity = str(vehicle_data.get("rarity", "common"))
-    if force_is_fresh is None:
-        is_fresh = random.random() < FRESH_SPAWN_CHANCE
-    else:
-        is_fresh = bool(force_is_fresh)
-
-    display_url = image_url if is_http_url(image_url) else None
-    file = None
-
-    if not display_url and local_path:
-        try:
-            file = discord.File(local_path, filename="vehicle.png")
-            display_url = "attachment://vehicle.png"
-        except Exception as error:
-            print(f"Error opening local image for {vehicle_name}: {error}")
-
-    if not display_url:
-        print(f"Skipping vehicle without usable image: {vehicle_name}")
-        return False
-
-    print(
-        f"Spawning vehicle: {vehicle_name} | rarity={rarity} | fresh={is_fresh} | "
-        f"remote={bool(is_http_url(image_url))} | local={bool(local_path)}"
-    )
-
-    view = CatchView(vehicle_name, str(vehicle_code), display_url, rarity, is_fresh=is_fresh)
-    if target_guild:
-        active_spawns[target_guild.id] = view
-
-    try:
-        if isinstance(channel, discord.TextChannel):
-            guild_me = channel.guild.me or channel.guild.get_member(bot.user.id if bot.user else 0)
-            if guild_me:
-                permissions = channel.permissions_for(guild_me)
-                if not permissions.embed_links:
-                    print(f"Missing Embed Links permission in {channel.guild.name}#{channel.name}")
-                    if ctx:
-                        await ctx.send("Bot is missing Embed Links permission.")
-                    return False
-
-        embed = discord.Embed(
-            title=view.header,
-            color=discord.Color(RARITY_COLORS.get(rarity.lower(), 0x00FF00)),
-        )
-        embed.set_image(url=display_url)
-
-        sender = ctx.send if ctx else channel.send
-        sent = await sender(embed=embed, file=file, view=view)
-        view.add_message(sent)
-        return True
-    except Exception as error:
-        print(f"Error sending vehicle message: {error}")
-        return False
-
-
-async def spawn_in_guild(guild: discord.Guild):
-    vehicles = refresh_vehicles()
-    channel = _pick_spawn_channel(guild)
-
-    if channel:
-        await spawn_vehicle(vehicles, channel, guild=guild)
-    else:
-        print(f"No suitable channel found in {guild.name}")
-
-
-@tasks.loop(seconds=1)
-async def rainbow_task():
-    update_tasks = []
-
-    for guild_id in list(active_spawns.keys()):
-        view = active_spawns[guild_id]
-        if view.is_finished() or view.caught or view.rarity != "exotic" or not view.messages:
-            continue
-
-        hue = view.hue if view.hue is not None else 0.0
-        rgb = colorsys.hsv_to_rgb(hue, 1, 1)
-        color = discord.Color.from_rgb(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
-        update_tasks.append(view.update_all_messages(color=color))
-        view.hue = (hue + 0.2) % 1.0
-
-    if update_tasks:
-        await asyncio.gather(*update_tasks, return_exceptions=True)
-
-
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        payload = {"running": True, "online": bool(BOT_ONLINE)}
-        self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-    def log_message(self, format, *args):
-        return
-
-
-def start_health_server():
-    port_value = os.getenv("PORT")
-    if not port_value:
-        return
-
-    try:
-        port = int(port_value)
-    except ValueError:
-        print(f"Invalid PORT value: {port_value}")
-        return
-
-    def _serve():
-        try:
-            server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-            print(f"Health server listening on port {port}")
-            server.serve_forever()
-        except Exception as error:
-            print(f"Health server error: {error}")
-
-    Thread(target=_serve, daemon=True).start()
-
-
-async def set_ready_presence():
-    try:
-        await bot.change_presence(
-            status=discord.Status.online,
-            activity=discord.Game(name="!help"),
-        )
-        print("Presence set to online.")
-    except Exception as error:
-        print(f"Failed to set presence: {error}")
-
-
-async def sync_all_commands():
-    synced = await bot.tree.sync()
-    print(f"Globally synced {len(synced)} command(s)")
-
-    for guild in bot.guilds:
-        try:
-            bot.tree.copy_global_to(guild=guild)
-            guild_synced = await bot.tree.sync(guild=guild)
-            print(f"Guild synced {len(guild_synced)} command(s) in {guild.name}")
-        except Exception as guild_error:
-            print(f"Error syncing guild {guild.name}: {guild_error}")
-
-    print(f"Sync complete. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages.")
-    return synced
-
-
-register_trade_commands(bot)
-
-
-@bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
-@app_commands.describe(vehicle_name="The name of the vehicle to show")
-async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
-    vehicles = get_vehicle_map()
-    matched_vehicle = vehicle_name if vehicle_name in vehicles else find_best_vehicle_match(vehicles.keys(), vehicle_name)
-
-    if not matched_vehicle:
-        await interaction.response.send_message(
-            f"Vehicle **{vehicle_name.replace('-', '')}** not found.",
-            ephemeral=True,
-        )
-        return
-
-    vehicle_data = vehicles[matched_vehicle]
-    rarity = str(vehicle_data.get("rarity", "common")).lower()
-    local_path = vehicle_data.get("local_path")
-    image_url = vehicle_data.get("url")
-
-    embed = discord.Embed(
-        title=matched_vehicle.replace("-", ""),
-        color=discord.Color(RARITY_COLORS.get(rarity, 0x808080)),
-    )
-    embed.add_field(name="Rarity", value=rarity.title(), inline=True)
-
-    if is_http_url(image_url):
-        embed.set_image(url=str(image_url).strip())
-        await interaction.response.send_message(embed=embed)
-        return
-
-    if local_path:
-        try:
-            file = discord.File(local_path, filename="vehicle.png")
-            embed.set_image(url="attachment://vehicle.png")
-            await interaction.response.send_message(embed=embed, file=file)
-            return
-        except Exception as error:
-            print(f"Error loading local image for /show {matched_vehicle}: {error}")
-
-    embed.description = "This vehicle has no picture yet."
-    await interaction.response.send_message(embed=embed)
-
-
-@show_vehicle.autocomplete("vehicle_name")
-async def show_vehicle_autocomplete(interaction: discord.Interaction, current: str):
-    vehicles = get_vehicle_map()
-    current_lower = current.lower()
-    vehicle_names = sorted(vehicles.keys())
-
-    return [
-        app_commands.Choice(name=name.replace("-", ""), value=name)
-        for name in vehicle_names
-        if not current_lower
-        or current_lower in name.lower()
-        or current_lower in name.lower().replace("-", "")
-    ][:25]
-
-
-@bot.tree.command(name="dexchannel", description="Set the channel used for dex spawns in this server")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel="Channel where vehicles should spawn")
-async def dexchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-
-    if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
-        return
-
-    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
-    if guild_me:
-        perms = channel.permissions_for(guild_me)
-        missing = []
-        if not perms.send_messages:
-            missing.append("Send Messages")
-        if not perms.embed_links:
-            missing.append("Embed Links")
-        if missing:
-            await safe_send(
-                interaction,
-                f"I need {', '.join(missing)} permission in {channel.mention} before it can be set as dex channel.",
-                ephemeral=True,
-            )
-            return
-
-    set_guild_channel_setting(interaction.guild.id, "dex_channel_id", channel.id)
-    await safe_send(interaction, f"Dex channel set to {channel.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="tradechannel", description="Set the channel used for trade commands in this server")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel="Channel where trade commands should be used")
-async def tradechannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-
-    if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
-        return
-
-    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
-    if guild_me:
-        perms = channel.permissions_for(guild_me)
-        missing = []
-        if not perms.send_messages:
-            missing.append("Send Messages")
-        if not perms.embed_links:
-            missing.append("Embed Links")
-        if missing:
-            await safe_send(
-                interaction,
-                f"I need {', '.join(missing)} permission in {channel.mention} before it can be set as trade channel.",
-                ephemeral=True,
-            )
-            return
-
-    set_guild_channel_setting(interaction.guild.id, "trade_channel_id", channel.id)
-    await safe_send(interaction, f"Trade channel set to {channel.mention}.", ephemeral=True)
-
-
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    command_name = interaction.command.name if interaction.command else "unknown"
-    print(f"App command error in /{command_name}: {error}")
-
-    original_error = getattr(error, "original", error)
-    if isinstance(original_error, (discord.NotFound, discord.HTTPException)):
-        print("Interaction response failed. Ensure only one bot instance is running with this token.")
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    parts = message.content.split()
-    command = parts[0].lower() if parts else ""
-
-    if command == "!testspawn":
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
-            return
-
-        if not has_admin_access(message):
-            await message.channel.send("You need Manage Server permission or admin access to use this command.")
-            return
-
-        forced_fresh = None
-        if len(parts) > 2:
-            await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
-            return
-
-        if len(parts) == 2:
-            parsed_fresh = parse_bool_true_false(parts[1])
-            if parsed_fresh is None:
-                await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
-                return
-            forced_fresh = parsed_fresh
-
-        vehicles = refresh_vehicles()
-        spawned = await spawn_vehicle(vehicles, message.channel, guild=message.guild, force_is_fresh=forced_fresh)
-        if spawned:
-            if forced_fresh is None:
-                await message.channel.send("Test spawn sent successfully.")
-            else:
-                await message.channel.send(
-                    f"Test spawn sent successfully (fresh forced: {'true' if forced_fresh else 'false'})."
-                )
-        else:
-            await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
-        return
-
-    if command in {"!addinventory", "!removeinventory"}:
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
-            return
-
-        if not has_admin_access(message):
-            await message.channel.send("You need Manage Server permission or admin access to use this command.")
-            return
-
-        if len(parts) < 4:
-            await message.channel.send(
-                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
-                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
-            )
-            return
-
-        target_user = await resolve_user_from_token(parts[1], message.guild)
-        if target_user is None:
-            await message.channel.send("Could not resolve the target user. Mention a user or provide a user ID.")
-            return
-
-        arg_tail = parts[2:]
-        is_fresh = False
-        parsed_fresh = parse_fresh_flag(arg_tail[-1])
-        if parsed_fresh is not None:
-            is_fresh = parsed_fresh
-            arg_tail = arg_tail[:-1]
-
-        if len(arg_tail) < 2:
-            await message.channel.send(
-                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
-                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
-            )
-            return
-
-        amount = parse_count(arg_tail[-1])
-        if amount is None or amount <= 0:
-            await message.channel.send("Invalid count. Use a positive number (for example: `1`, `50`, `2k`).")
-            return
-
-        vehicle_query = " ".join(arg_tail[:-1]).strip()
-        if not vehicle_query:
-            await message.channel.send("Vehicle name is required.")
-            return
-
-        vehicles = get_vehicle_map()
-        matched_vehicle = vehicle_query if vehicle_query in vehicles else find_best_vehicle_match(vehicles.keys(), vehicle_query)
-        if not matched_vehicle:
-            await message.channel.send(f"Vehicle not found: `{vehicle_query}`")
-            return
-
-        display_name = display_vehicle_name(make_inventory_key(matched_vehicle, is_fresh))
-        if command == "!addinventory":
-            success = add_vehicle_count(target_user.id, matched_vehicle, amount, is_fresh=is_fresh)
-            if not success:
-                await message.channel.send("Failed to add inventory entry.")
-                return
-
-            await message.channel.send(
-                f"Added **{format_count(amount)}** x **{display_name}** to {target_user.mention}'s inventory."
-            )
-            return
-
-        removed_amount = remove_vehicle_count(target_user.id, matched_vehicle, amount, is_fresh=is_fresh)
-        if removed_amount <= 0:
-            await message.channel.send(f"No items removed. {target_user.mention} does not have `{display_name}`.")
-            return
-
-        await message.channel.send(
-            f"Removed **{format_count(removed_amount)}** x **{display_name}** from {target_user.mention}'s inventory."
-        )
-        return
-
-    if command in {"!help", "!h"}:
-        help_embed = discord.Embed(
-            title="MT Vehicle Bot Commands",
-            description=(
-                "```"
-                "/show - Show a vehicle's picture and rarity\n"
-                "/inventory - View a vehicle inventory\n"
-                "/dexchannel #channel - Set this server's spawn channel (Manage Server)\n"
-                "/tradechannel #channel - Set this server's trade channel (Manage Server)\n"
-                "/trade - Send a trade request to another user\n"
-                "/tradeaccept - Accept a trade request\n"
-                "/tradeadd - Add vehicles to a trade\n"
-                "/traderemove - Remove vehicles from a trade\n"
-                "!testspawn - Spawn a test vehicle (admin/manage server)\n"
-                "!testspawn true|false - Force testspawn fresh state\n"
-                "!addinventory @user vehicle_name count fresh:true/false - Add inventory (admin/manage server)\n"
-                "!removeinventory @user vehicle_name count fresh:true/false - Remove inventory (admin/manage server)\n"
-                "!sync - Manually sync slash commands"
-                "```"
-            ),
-            color=discord.Color.blurple(),
-        )
-        help_embed.set_footer(text=f"Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.")
-        await message.channel.send(embed=help_embed)
-        return
-
-    if command == "!sync":
-        is_admin = message.author.id in ADMIN_USER_IDS
-        can_manage_guild = bool(message.guild and message.author.guild_permissions.manage_guild)
-
-        if not (is_admin or can_manage_guild):
-            await message.channel.send("You do not have permission to run !sync.")
-            return
-
-        try:
-            if message.guild:
-                bot.tree.copy_global_to(guild=message.guild)
-                synced = await bot.tree.sync(guild=message.guild)
-                scope = "Guild"
-            else:
-                synced = await sync_all_commands()
-                scope = "Global"
-
-            synced_names = sorted(f"/{command.name}" for command in synced)
-            await message.channel.send(
-                f"{scope} synced {len(synced)} slash command(s) successfully.\n"
-                f"{', '.join(synced_names)}\n"
-                f"Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages."
-            )
-        except Exception as error:
-            await message.channel.send(f"Error syncing slash commands: {error}")
-        return
-
-    if message.guild:
-        guild_id = message.guild.id
-        guild_msg_counts[guild_id] = guild_msg_counts.get(guild_id, 0) + 1
-
-        if guild_msg_counts[guild_id] >= SPAWN_THRESHOLD:
-            guild_msg_counts[guild_id] = 0
-            await spawn_in_guild(message.guild)
-
-    await bot.process_commands(message)
-
-
-@bot.event
-async def on_ready():
-    global BOT_ONLINE
-    BOT_ONLINE = True
-
-    print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
-    print(f"Loaded {len(get_vehicle_map())} vehicles from index.json")
-    print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
-    print(f"Connected to {len(bot.guilds)} guild(s)")
-    print(f"message_content intent enabled in code: {bot.intents.message_content}")
-    print(f"Bot ready. Commands are synced. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages.")
-
-    await set_ready_presence()
-
-    if not rainbow_task.is_running():
-        rainbow_task.start()
-
-
-async def setup_hook():
-    try:
-        await sync_all_commands()
-    except Exception as error:
-        print(f"Error syncing tree during setup: {error}")
-
-
-bot.setup_hook = setup_hook
-
-
-@bot.event
-async def on_disconnect():
-    global BOT_ONLINE
-    BOT_ONLINE = False
-
-
-if __name__ == "__main__":
-    print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
-    print(f"Loaded {len(get_vehicle_map())} vehicles from index.json")
-
-    start_health_server()
-
-    if not TOKEN:
-        print("No DISCORD_TOKEN found. Set it in environment variables or .env.")
-        raise SystemExit(1)
-
-    if not acquire_instance_lock():
-        raise SystemExit(1)
-
-    retry_delay = 15
-    max_retry_delay = 3600
-
-    while True:
-        try:
-            bot.run(TOKEN)
-            break
-        except discord.LoginFailure as error:
-            print(f"Discord login failed (token issue): {error}")
-            break
-        except discord.HTTPException as error:
-            error_text = str(error)
-            if "1015" in error_text or "You are being rate limited" in error_text:
-                retry_delay = max(retry_delay, 900)
-                print(f"Cloudflare/Discord rate-limit block detected. Retrying in {retry_delay}s...")
-            else:
-                print(f"Discord HTTP error on startup: {error}. Retrying in {retry_delay}s...")
-        except Exception as error:
-            print(f"Unexpected bot startup error: {error}. Retrying in {retry_delay}s...")
-
-        time.sleep(retry_delay)
-        retry_delay = min(retry_delay * 2, max_retry_delay)
