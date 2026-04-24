@@ -48,7 +48,7 @@ ADMIN_USER_IDS = {
     1105451323584938075,
 }
 
-SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_THRESHOLD", "100")))
+SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
 FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
 ENABLE_INSTANCE_LOCK = os.getenv("ENABLE_INSTANCE_LOCK", "0" if os.getenv("RENDER") else "1").strip().lower() in {
     "1",
@@ -93,12 +93,12 @@ RARITY_ORDER = (
 )
 
 RARITY_WEIGHTS = {
-    "limited edition": 0.3,
-    "exotic": 3,
-    "legendary": 5,
-    "epic": 20,
-    "rare": 32,
-    "common": 40,
+    "limited edition": 0.5,
+    "exotic": 4,
+    "legendary": 8,
+    "epic": 19,
+    "rare": 30.5,
+    "common": 38,
 }
 
 RARITY_COLORS = {
@@ -284,6 +284,11 @@ def parse_fresh_flag(token: str) -> Optional[bool]:
         return None
 
     normalized = token.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+
     if ":" in normalized:
         key, value = normalized.split(":", 1)
     elif "=" in normalized:
@@ -318,7 +323,7 @@ def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
         "**Commands Users Can Use**\n"
-        "`/show vehicle_name` - Show a vehicle's picture and rarity\n"
+        "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
@@ -330,9 +335,16 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        "`!addinventory @user vehicle_name count fresh:true/false` - Add inventory\n"
-        "`!removeinventory @user vehicle_name count fresh:true/false` - Remove inventory\n"
+        "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
+        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
+        "**Rarities**\n"
+        "`Limited Edition` - 0.5%\n"
+        "`Exotic` - 4%\n"
+        "`Legendary` - 8%\n"
+        "`Epic` - 19%\n"
+        "`Rare` - 30.5%\n"
+        "`Common` - 38%\n\n"
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.*"
     )
 
@@ -512,6 +524,30 @@ def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
         INVENTORIES_CACHE = inventories
     except Exception as error:
         print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
+
+
+def get_global_vehicle_counts(vehicle_name: str) -> tuple[int, int]:
+    regular_count = 0
+    fresh_count = 0
+
+    for user_inventory in load_inventories().values():
+        if not isinstance(user_inventory, dict):
+            continue
+
+        for vehicle_key, count in user_inventory.items():
+            if count <= 0:
+                continue
+
+            base_name, is_fresh = split_inventory_key(vehicle_key)
+            if base_name != vehicle_name:
+                continue
+
+            if is_fresh:
+                fresh_count += count
+            else:
+                regular_count += count
+
+    return regular_count, fresh_count
 
 
 def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
@@ -1026,7 +1062,7 @@ class TradeView(discord.ui.View):
         )
 
         lines = [
-            f"- {format_count(count)} | {display_vehicle_name(name)}"
+            f"\u2022 {format_count(count)} | {display_vehicle_name(name)}"
             for name, count in sorted_items[:20]
         ]
         if len(sorted_items) > 20:
@@ -1034,35 +1070,35 @@ class TradeView(discord.ui.View):
         return "\n".join(lines)
 
     def create_embed(self) -> discord.Embed:
-        embed = discord.Embed(title="Vehicle Trade", color=discord.Color.gold())
+        embed = discord.Embed(title="\U0001F91D Vehicle Trade", color=discord.Color.gold())
 
         embed.add_field(
-            name=f"{self.user_a.name}'s Offer",
+            name=f"\U0001F381 {self.user_a.name}'s Offer",
             value=self._format_offer_block(self.offer_a),
             inline=True,
         )
         embed.add_field(
-            name=f"{self.user_b.name}'s Offer",
+            name=f"\U0001F381 {self.user_b.name}'s Offer",
             value=self._format_offer_block(self.offer_b),
             inline=True,
         )
 
-        status_a = "READY" if self.ready_a else "Not Ready"
-        status_b = "READY" if self.ready_b else "Not Ready"
+        status_a = "\u2705 READY" if self.ready_a else "\u231B WAITING"
+        status_b = "\u2705 READY" if self.ready_b else "\u231B WAITING"
         status_text = f"**{self.user_a.name}:** {status_a}\n**{self.user_b.name}:** {status_b}"
 
         if self.countdown_remaining > 0:
-            status_text += f"\n\nCompleting in {self.countdown_remaining}s"
+            status_text += f"\n\n\u23F3 Completing in {self.countdown_remaining}s"
 
-        embed.add_field(name="Status", value=status_text, inline=False)
+        embed.add_field(name="\U0001F4CB Status", value=status_text, inline=False)
 
         if self.cancelled:
-            embed.title = "Trade Cancelled"
+            embed.title = "\u274C Trade Cancelled"
             if self.cancelled_by:
                 embed.description = f"Reason: {self.cancelled_by}"
             embed.color = discord.Color.red()
         elif self.completed:
-            embed.title = "Trade Completed"
+            embed.title = "\u2705 Trade Completed"
             embed.color = discord.Color.green()
 
         return embed
@@ -1090,7 +1126,7 @@ class TradeView(discord.ui.View):
         except Exception as error:
             print(f"Error updating trade message: {error}")
 
-    @discord.ui.button(label="Ready", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Ready", style=discord.ButtonStyle.success, emoji="\u2705")
     async def ready_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id == self.user_a.id:
             self.ready_a = not self.ready_a
@@ -1112,7 +1148,7 @@ class TradeView(discord.ui.View):
         await interaction.response.defer()
         await self.update_message()
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="\U0001F6AB")
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in [self.user_a.id, self.user_b.id]:
             await interaction.response.send_message("You are not part of this trade.", ephemeral=True)
@@ -1391,7 +1427,7 @@ def register_trade_commands(discord_bot: commands.Bot):
             active_trades[interaction.user.id] = view
             view.message = await safe_send(
                 interaction,
-                f"Trade started between {user.mention} and {interaction.user.mention}.",
+                f"\U0001F91D Trade started between {user.mention} and {interaction.user.mention}.",
                 embed=view.create_embed(),
                 view=view,
                 wait=True,
@@ -1733,12 +1769,21 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
     rarity = str(vehicle_data.get("rarity", "common")).lower()
     local_path = vehicle_data.get("local_path")
     image_url = vehicle_data.get("url")
+    regular_count, fresh_count = get_global_vehicle_counts(matched_vehicle)
 
     embed = discord.Embed(
         title=display_vehicle_name(matched_vehicle),
         color=discord.Color(RARITY_COLORS.get(rarity, 0x808080)),
     )
     embed.add_field(name="Rarity", value=rarity.title(), inline=True)
+    embed.add_field(
+        name="Existing",
+        value=(
+            f"{format_count(regular_count)} {display_vehicle_name(matched_vehicle)}\n"
+            f"{format_count(fresh_count)} {display_vehicle_name(make_inventory_key(matched_vehicle, True))}"
+        ),
+        inline=True,
+    )
 
     if is_http_url(image_url):
         embed.set_image(url=str(image_url).strip())
@@ -1869,8 +1914,8 @@ async def on_message(message: discord.Message):
 
         if len(parts) < 4:
             await message.channel.send(
-                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
-                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
+                "Usage: `!addinventory @user vehicle_name count true|false`\n"
+                "Usage: `!removeinventory @user vehicle_name count true|false`"
             )
             return
 
@@ -1888,8 +1933,8 @@ async def on_message(message: discord.Message):
 
         if len(arg_tail) < 2:
             await message.channel.send(
-                "Usage: `!addinventory @user vehicle_name count fresh:true/false`\n"
-                "Usage: `!removeinventory @user vehicle_name count fresh:true/false`"
+                "Usage: `!addinventory @user vehicle_name count true|false`\n"
+                "Usage: `!removeinventory @user vehicle_name count true|false`"
             )
             return
 
