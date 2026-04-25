@@ -1939,7 +1939,7 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
         title=f"{display_vehicle_name(matched_vehicle)} ({rarity.title()})",
         color=discord.Color(RARITY_COLORS.get(rarity, 0x808080)),
     )
-    embed.set_footer(text=f"Unique: {format_count(regular_count)} | Total caught: {format_count(fresh_count)}")
+    embed.set_footer(text=f"Normal: {format_count(regular_count)} | Fresh: {format_count(fresh_count)}")
 
     if is_http_url(image_url):
         embed.set_image(url=str(image_url).strip())
