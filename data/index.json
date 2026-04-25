@@ -172,7 +172,7 @@
         "rarity": "Legendary"
     },
     "battleship": {
-        "pic_link": "",
+        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1497329971268550746/image.png?ex=69ed20b4&is=69ebcf34&hm=105f709942e0465f09d7a5a4f20e2006e0592a35e8ab3e4b555760e29d4662fb&=&format=webp&quality=lossless",
         "rarity": "Common"
     },
     "bf109": {
@@ -352,7 +352,7 @@
         "rarity": "Legendary"
     },
     "destroyer": {
-        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496396162507345991/image.png?ex=69ebb546&is=69ea63c6&hm=3d32672114a120bdec8c06db6558a8ba39541287938e2124e7ad4b1d07446510&",
+        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1497329789692809219/image.png?ex=69ed2088&is=69ebcf08&hm=0a4781012bb7350707d5b62e9249eba03a951f6e016662a96d1968cdbf7a97a8&=&format=webp&quality=lossless",
         "rarity": "Common"
     },
     "dive-bomber": {
@@ -481,7 +481,7 @@
     },
     "gold-ac130": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496440312808079450/image.png?ex=69eb35a5&is=69e9e425&hm=48add3737b6acd70318d29e20849a57cc9ddceb902cfdcc549da08ac120f744e&",
-        "rarity": "Rare"
+        "rarity": "Legedary"
     },
     "gold-b2": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496207886400094329/image.png?ex=69ebaeae&is=69ea5d2e&hm=8b58138e107352bca3926d24db9b27e9e3a3ce0570cb0528642d6589e206ca7a&",
@@ -531,8 +531,8 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638027522609284/gold-typhoon.png?ex=69dfb250&is=69de60d0&hm=cf0fdfd6f57c4d7690384e44a2102b40633a7bf4c9254b768dcbd82fa139a11b&",
         "rarity": "Legendary"
     },
-    "golden-inteceptor": {
-        "pic_link": "",
+    "golden-interceptor": {
+        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496873004754276555/afbeelding.png?ex=69eb771e&is=69ea259e&hm=2c3b4b583cb8c942e7e2f8df6386358cf75f290d7a61fb783e9746b20aaf2010&=&format=webp&quality=lossless",
         "rarity": "Legendary"
     },
     "gold-mi-35": {
@@ -603,8 +603,8 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496871466598400080/afbeelding.png?ex=69eb75b0&is=69ea2430&hm=1951d94246b28d902dc993126306a2486a7b1d263416ce806a6e8b00c9b9473a&",
         "rarity": "Common"
     },
-    "hunter-spitfire": {
-        "pic_link": "",
+    "hunt-spitfire": {
+        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496228714243948544/image.png?ex=69ed1394&is=69ebc214&hm=2c929e1e53ac451b6d74eb12becbe824832ec7d2623a1e09313f4011b9bfed33&=&format=webp&quality=lossless",
         "rarity": "Legendary"
     },
     "hx3": {
@@ -623,7 +623,7 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638488900370462/infinity-car.png?ex=69dfb2be&is=69de613e&hm=42cce6757660d4886a3cd406d4cd0a084f9819261f551cda9b9d98abfd35a49d&",
         "rarity": "Legendary"
     },
-    "inteceptor": {
+    "interceptor": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496875500537118740/afbeelding.png?ex=69eb7971&is=69ea27f1&hm=cefc12d2d7e2f7153b608d6a265f07f8e8e97496dc08e7809b6328cfaadd3267&",
         "rarity": "Epic"
     },
@@ -1201,7 +1201,7 @@
     },
     "super-anti-nuke-jeep": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640101182439517/super-anti-nuke-jeep.png?ex=69dfb43e&is=69de62be&hm=c1ea051945e50a85c463122f3797cffc2a860bf2d486973428b0e163c69c59ca&",
-        "rarity": "Exotic"
+        "rarity": "Legendary"
     },
     "super-apc": {
         "pic_link": "",
@@ -1399,7 +1399,7 @@
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496969156552294500/image.png?ex=69ebd0ab&is=69ea7f2b&hm=4bd5e65fc91a4976e3186307f93c21a27940c7d22d9da1c48f1fb3800e0cd8d5&=&format=webp&quality=lossless",
         "rarity": "Legendary"
     },
-    "super-zhi": {
+    "super-zhi_19e": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639991966826526/super-zhi.png?ex=69dfb424&is=69de62a4&hm=08730783226de779f7ca373586e16b5ed14a88ad352e853c2d68d5739c5bb5d3&",
         "rarity": "Limited Edition"
     },
@@ -1615,10 +1615,6 @@
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496873967921659944/afbeelding.png?ex=69eb7804&is=69ea2684&hm=66be6803ef02cdf0d70d921ca49655b5bdd74b0a6be0ec0e79c0f04500390e0c&=&format=webp&quality=lossless",
         "rarity": "Legendary"
     },
-    "golden_interceptor": {
-        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496873004754276555/afbeelding.png?ex=69eb771e&is=69ea259e&hm=2c3b4b583cb8c942e7e2f8df6386358cf75f290d7a61fb783e9746b20aaf2010&=&format=webp&quality=lossless",
-        "rarity": "Legendary"
-    },
     "pacv_craft": {
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496871929305370714/afbeelding.png?ex=69eb761e&is=69ea249e&hm=a4873b99d20ef883b77feac1c0026d72968c03cd3373bac2661f0d89d4d30c98&=&format=webp&quality=lossless",
         "rarity": "Legendary"
@@ -1670,5 +1666,13 @@
     "antonov-an40": {
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496199431664435552/image.png?ex=69eba6ce&is=69ea554e&hm=209c38030097bb60b742cdd53e96f7b582a63f2c033940e1e4d9bb41ff6c0671&=&format=webp&quality=lossless",
         "rarity": "Legendary"
+    },
+    "recon-destroyer": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496396162507345991/image.png?ex=69edaf86&is=69ec5e06&hm=8488ce8ad8f78a6291016df85685d064c0463f3823ef8925bee07a2c185daf36",
+        "rarity": "Exotic"
+     },
+    "a10": {
+        "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1497324757425848370/image.png?ex=69ed1bd9&is=69ebca59&hm=dbe6fa860ff702bd29586610b134b604d11e3b0c429627285bad825930081a36&=&format=webp&quality=lossless",
+        "rarity": "Exotic"
     }
 }
