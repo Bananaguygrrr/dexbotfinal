@@ -48,6 +48,9 @@ ADMIN_USER_IDS = {
     1105451323584938075,
 }
 
+
+ENABLE_TESTSPAWN = os.getenv("ENABLE_TESTSPAWN", "true").lower() in ("1", "true", "yes", "on")
+ENABLE_EVENT = os.getenv("ENABLE_EVENT", "true").lower() in ("1", "true", "yes", "on")
 SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
 FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
 SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
