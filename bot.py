@@ -2221,7 +2221,7 @@ async def on_message(message: discord.Message):
             await message.channel.send(
                 f"{scope} synced {len(synced)} slash command(s) successfully.\n"
                 f"{', '.join(synced_names)}\n"
-                f"Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages."
+                f"Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} messages."
             )
         except Exception as error:
             await message.channel.send(f"Error syncing slash commands: {error}")
