@@ -2248,7 +2248,7 @@ async def on_ready():
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
     print(f"Connected to {len(bot.guilds)} guild(s)")
     print(f"message_content intent enabled in code: {bot.intents.message_content}")
-    print(f"Bot ready. Commands are synced. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages.")
+    print(f"Bot ready. Commands are synced. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} messages.")
 
     await set_ready_presence()
 
