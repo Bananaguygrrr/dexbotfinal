@@ -50,6 +50,9 @@ ADMIN_USER_IDS = {
 
 SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
 FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
+SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
+EVENT_MAX_SPAWNS = max(1, int(os.getenv("EVENT_MAX_SPAWNS", "25")))
+EVENT_SPAWN_DELAY_SECONDS = min(2.0, max(0.0, float(os.getenv("EVENT_SPAWN_DELAY_SECONDS", "0.35"))))
 ENABLE_INSTANCE_LOCK = os.getenv("ENABLE_INSTANCE_LOCK", "0" if os.getenv("RENDER") else "1").strip().lower() in {
     "1",
     "true",
@@ -101,6 +104,15 @@ RARITY_WEIGHTS = {
     "common": 38,
 }
 
+EVENT_RARITY_WEIGHTS = {
+    "limited edition": 5,
+    "exotic": 15,
+    "legendary": 20,
+    "epic": 30,
+    "rare": 30,
+    "common": 0,
+}
+
 RARITY_COLORS = {
     "limited edition": 0x8B0000,
     "exotic": 0xFF00FF,
@@ -126,7 +138,7 @@ BOT_STARTED_AT = int(time.time())
 INSTANCE_LOCK_HANDLE = None
 
 guild_msg_counts: Dict[int, int] = {}
-active_spawns: Dict[int, "CatchView"] = {}
+active_spawns: Dict[int, list["CatchView"]] = {}
 pending_trades: Dict[tuple[int, int], int] = {}
 active_trades: Dict[int, "TradeView"] = {}
 
@@ -335,6 +347,7 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
+        f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
@@ -345,7 +358,8 @@ def build_help_message() -> str:
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
         "`Common` - 38%\n\n"
-        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages.*"
+        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages and despawn after "
+        f"{SPAWN_DESPAWN_SECONDS // 60} minutes.*"
     )
 
 
@@ -800,7 +814,10 @@ def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
     return bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
 
 
-def get_random_vehicle(vehicles: Dict[str, Dict[str, Any]]) -> Optional[str]:
+def get_random_vehicle(
+    vehicles: Dict[str, Dict[str, Any]],
+    rarity_weights: Optional[Dict[str, float]] = None,
+) -> Optional[str]:
     if not vehicles:
         return None
 
@@ -814,13 +831,91 @@ def get_random_vehicle(vehicles: Dict[str, Dict[str, Any]]) -> Optional[str]:
     if not by_rarity:
         return None
 
-    available_rarities = [rarity for rarity in RARITY_ORDER if rarity in by_rarity]
-    if not available_rarities:
-        available_rarities = sorted(by_rarity.keys())
+    weights_source = rarity_weights or RARITY_WEIGHTS
+    default_weight = 0 if rarity_weights is not None else 1
+    available_rarities = []
+    available_weights = []
 
-    weights = [RARITY_WEIGHTS.get(rarity, 1) for rarity in available_rarities]
-    selected_rarity = random.choices(available_rarities, weights=weights, k=1)[0]
+    ordered_rarities = list(RARITY_ORDER)
+    ordered_rarities.extend(rarity for rarity in sorted(by_rarity.keys()) if rarity not in ordered_rarities)
+    for rarity in ordered_rarities:
+        if rarity not in by_rarity:
+            continue
+
+        weight = float(weights_source.get(rarity, default_weight))
+        if weight <= 0:
+            continue
+
+        available_rarities.append(rarity)
+        available_weights.append(weight)
+
+    if not available_rarities:
+        available_rarities = [rarity for rarity in ordered_rarities if rarity in by_rarity]
+
+    if available_weights:
+        selected_rarity = random.choices(available_rarities, weights=available_weights, k=1)[0]
+    else:
+        selected_rarity = random.choice(available_rarities)
     return random.choice(by_rarity[selected_rarity])
+
+
+def prune_active_spawns(guild_id: Optional[int] = None):
+    guild_ids = [guild_id] if guild_id is not None else list(active_spawns.keys())
+    for current_guild_id in guild_ids:
+        views = active_spawns.get(current_guild_id, [])
+        remaining_views = [view for view in views if not view.is_finished()]
+        if remaining_views:
+            active_spawns[current_guild_id] = remaining_views
+        else:
+            active_spawns.pop(current_guild_id, None)
+
+
+def register_active_spawn(view: "CatchView"):
+    if view.guild_id is None:
+        return
+    prune_active_spawns(view.guild_id)
+    active_spawns.setdefault(view.guild_id, []).append(view)
+
+
+def unregister_active_spawn(view: "CatchView"):
+    if view.guild_id is None:
+        return
+
+    views = active_spawns.get(view.guild_id, [])
+    remaining_views = [existing_view for existing_view in views if existing_view is not view and not existing_view.is_finished()]
+    if remaining_views:
+        active_spawns[view.guild_id] = remaining_views
+    else:
+        active_spawns.pop(view.guild_id, None)
+
+
+async def expire_active_spawns(
+    guild_id: int,
+    *,
+    spawn_mode: Optional[str] = None,
+    reason: str = "The wild MT vehicle escaped",
+):
+    existing_views = list(active_spawns.get(guild_id, []))
+    kept_views: list["CatchView"] = []
+
+    for view in existing_views:
+        if view.is_finished():
+            continue
+
+        if spawn_mode is not None and view.spawn_mode != spawn_mode:
+            kept_views.append(view)
+            continue
+
+        if not view.caught:
+            await view.update_all_messages(reason, concluded=True)
+        view.stop()
+
+    if kept_views:
+        active_spawns[guild_id] = [view for view in kept_views if not view.is_finished()]
+        if not active_spawns[guild_id]:
+            active_spawns.pop(guild_id, None)
+    else:
+        active_spawns.pop(guild_id, None)
 
 
 def find_best_vehicle_match(vehicle_names: Iterable[str], query: str) -> Optional[str]:
@@ -1488,20 +1583,55 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
 
 class CatchView(discord.ui.View):
-    def __init__(self, vehicle_name: str, vehicle_code: str, image_url: str, rarity: str, is_fresh: bool = False):
-        super().__init__(timeout=SPAWN_THRESHOLD * 60)
+    def __init__(
+        self,
+        vehicle_name: str,
+        vehicle_code: str,
+        image_url: str,
+        rarity: str,
+        is_fresh: bool = False,
+        *,
+        guild_id: Optional[int] = None,
+        spawn_mode: str = "normal",
+    ):
+        super().__init__(timeout=SPAWN_DESPAWN_SECONDS)
         self.vehicle_name = vehicle_name
         self.vehicle_code = vehicle_code
         self.image_url = image_url
         self.rarity = rarity.lower()
         self.is_fresh = is_fresh
+        self.guild_id = guild_id
+        self.spawn_mode = spawn_mode
         self.caught = False
         self.messages: list[discord.Message] = []
         self.header = "A wild MT vehicle has appeared"
         self.hue = 0.0 if self.rarity == "exotic" else None
+        self.despawn_at = int(time.time()) + SPAWN_DESPAWN_SECONDS
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
+
+    def build_embed(
+        self,
+        *,
+        color: Optional[discord.Color] = None,
+        concluded: bool = False,
+    ) -> discord.Embed:
+        if color is None:
+            color = discord.Color(RARITY_COLORS.get(self.rarity, 0x0000FF))
+
+        embed = discord.Embed(title=self.header, color=color)
+        description_lines = []
+        if not concluded and not self.caught:
+            description_lines.append(f"Despawns: <t:{self.despawn_at}:R>")
+        if self.spawn_mode == "event":
+            description_lines.append("Event spawn")
+        if self.is_fresh:
+            description_lines.append("Fresh spawn")
+        if description_lines:
+            embed.description = "\n".join(f"- {line}" for line in description_lines)
+        embed.set_image(url=self.image_url)
+        return embed
 
     async def update_all_messages(
         self,
@@ -1521,14 +1651,17 @@ class CatchView(discord.ui.View):
         if color is None:
             color = discord.Color(RARITY_COLORS.get(self.rarity, 0x0000FF))
 
-        embed = discord.Embed(title=self.header, color=color)
-        embed.set_image(url=self.image_url)
+        embed = self.build_embed(color=color, concluded=concluded or self.caught)
 
         for message in self.messages:
             try:
                 await message.edit(content=None, embed=embed, view=self)
             except Exception:
                 continue
+
+    def stop(self):
+        unregister_active_spawn(self)
+        super().stop()
 
     async def on_timeout(self):
         if not self.caught:
@@ -1582,6 +1715,9 @@ async def spawn_vehicle(
     guild: Optional[discord.Guild] = None,
     ctx: Optional[commands.Context] = None,
     force_is_fresh: Optional[bool] = None,
+    rarity_weights: Optional[Dict[str, float]] = None,
+    spawn_mode: str = "normal",
+    replace_same_mode: bool = True,
 ) -> bool:
     if not vehicles:
         if ctx:
@@ -1590,13 +1726,10 @@ async def spawn_vehicle(
 
     target_guild = guild or (ctx.guild if ctx else None)
 
-    if target_guild and target_guild.id in active_spawns:
-        old_view = active_spawns[target_guild.id]
-        if not old_view.caught and not old_view.is_finished():
-            await old_view.update_all_messages("The wild MT vehicle escaped", concluded=True)
-            old_view.stop()
+    if target_guild and replace_same_mode:
+        await expire_active_spawns(target_guild.id, spawn_mode=spawn_mode)
 
-    vehicle_name = get_random_vehicle(vehicles)
+    vehicle_name = get_random_vehicle(vehicles, rarity_weights=rarity_weights)
     if not vehicle_name:
         return False
 
@@ -1629,9 +1762,15 @@ async def spawn_vehicle(
         f"remote={bool(is_http_url(image_url))} | local={bool(local_path)}"
     )
 
-    view = CatchView(vehicle_name, str(vehicle_code), display_url, rarity, is_fresh=is_fresh)
-    if target_guild:
-        active_spawns[target_guild.id] = view
+    view = CatchView(
+        vehicle_name,
+        str(vehicle_code),
+        display_url,
+        rarity,
+        is_fresh=is_fresh,
+        guild_id=target_guild.id if target_guild else None,
+        spawn_mode=spawn_mode,
+    )
 
     try:
         if isinstance(channel, discord.TextChannel):
@@ -1644,15 +1783,12 @@ async def spawn_vehicle(
                         await ctx.send("Bot is missing Embed Links permission.")
                     return False
 
-        embed = discord.Embed(
-            title=view.header,
-            color=discord.Color(RARITY_COLORS.get(rarity.lower(), 0x00FF00)),
-        )
-        embed.set_image(url=display_url)
+        embed = view.build_embed(color=discord.Color(RARITY_COLORS.get(rarity.lower(), 0x00FF00)))
 
         sender = ctx.send if ctx else channel.send
         sent = await sender(embed=embed, file=file, view=view)
         view.add_message(sent)
+        register_active_spawn(view)
         return True
     except Exception as error:
         print(f"Error sending vehicle message: {error}")
@@ -1660,7 +1796,7 @@ async def spawn_vehicle(
 
 
 async def spawn_in_guild(guild: discord.Guild):
-    vehicles = refresh_vehicles()
+    vehicles = get_vehicle_map()
     channel = _pick_spawn_channel(guild)
 
     if channel:
@@ -1669,20 +1805,48 @@ async def spawn_in_guild(guild: discord.Guild):
         print(f"No suitable channel found in {guild.name}")
 
 
+async def spawn_event_wave(
+    vehicles: Dict[str, Dict[str, Any]],
+    channel: discord.abc.Messageable,
+    *,
+    guild: Optional[discord.Guild],
+    count: int,
+) -> int:
+    successful_spawns = 0
+
+    for index in range(count):
+        spawned = await spawn_vehicle(
+            vehicles,
+            channel,
+            guild=guild,
+            rarity_weights=EVENT_RARITY_WEIGHTS,
+            spawn_mode="event",
+            replace_same_mode=False,
+        )
+        if spawned:
+            successful_spawns += 1
+
+        if index < count - 1 and EVENT_SPAWN_DELAY_SECONDS > 0:
+            await asyncio.sleep(EVENT_SPAWN_DELAY_SECONDS)
+
+    return successful_spawns
+
+
 @tasks.loop(seconds=1)
 async def rainbow_task():
     update_tasks = []
+    prune_active_spawns()
 
-    for guild_id in list(active_spawns.keys()):
-        view = active_spawns[guild_id]
-        if view.is_finished() or view.caught or view.rarity != "exotic" or not view.messages:
-            continue
+    for views in list(active_spawns.values()):
+        for view in list(views):
+            if view.is_finished() or view.caught or view.rarity != "exotic" or not view.messages:
+                continue
 
-        hue = view.hue if view.hue is not None else 0.0
-        rgb = colorsys.hsv_to_rgb(hue, 1, 1)
-        color = discord.Color.from_rgb(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
-        update_tasks.append(view.update_all_messages(color=color))
-        view.hue = (hue + 0.2) % 1.0
+            hue = view.hue if view.hue is not None else 0.0
+            rgb = colorsys.hsv_to_rgb(hue, 1, 1)
+            color = discord.Color.from_rgb(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+            update_tasks.append(view.update_all_messages(color=color))
+            view.hue = (hue + 0.2) % 1.0
 
     if update_tasks:
         await asyncio.gather(*update_tasks, return_exceptions=True)
@@ -1772,18 +1936,10 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
     regular_count, fresh_count = get_global_vehicle_counts(matched_vehicle)
 
     embed = discord.Embed(
-        title=display_vehicle_name(matched_vehicle),
+        title=f"{display_vehicle_name(matched_vehicle)} ({rarity.title()})",
         color=discord.Color(RARITY_COLORS.get(rarity, 0x808080)),
     )
-    embed.add_field(name="Rarity", value=rarity.title(), inline=True)
-    embed.add_field(
-        name="Existing",
-        value=(
-            f"{format_count(regular_count)} {display_vehicle_name(matched_vehicle)}\n"
-            f"{format_count(fresh_count)} {display_vehicle_name(make_inventory_key(matched_vehicle, True))}"
-        ),
-        inline=True,
-    )
+    embed.set_footer(text=f"Unique: {format_count(regular_count)} | Total caught: {format_count(fresh_count)}")
 
     if is_http_url(image_url):
         embed.set_image(url=str(image_url).strip())
@@ -1890,7 +2046,7 @@ async def on_message(message: discord.Message):
                 return
             forced_fresh = parsed_fresh
 
-        vehicles = refresh_vehicles()
+        vehicles = get_vehicle_map()
         spawned = await spawn_vehicle(vehicles, message.channel, guild=message.guild, force_is_fresh=forced_fresh)
         if spawned:
             if forced_fresh is None:
@@ -1901,6 +2057,48 @@ async def on_message(message: discord.Message):
                 )
         else:
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
+        return
+
+    if command == "!event":
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
+            return
+
+        if not has_admin_access(message):
+            await message.channel.send("Only bot admins can use `!event`.")
+            return
+
+        event_count_token = ""
+        if len(parts) == 2:
+            event_count_token = parts[1]
+        elif len(parts) == 3 and parts[1].lower() == "count":
+            event_count_token = parts[2]
+        else:
+            await message.channel.send(f"Usage: `!event <count>` or `!event count <count>` (max `{EVENT_MAX_SPAWNS}`)")
+            return
+
+        event_count = parse_count(event_count_token)
+        if event_count is None or event_count <= 0:
+            await message.channel.send("Invalid count. Use a positive number (for example: `1`, `10`, `25`).")
+            return
+
+        if event_count > EVENT_MAX_SPAWNS:
+            await message.channel.send(
+                f"Too many event spawns requested. The current limit is `{EVENT_MAX_SPAWNS}` per command."
+            )
+            return
+
+        vehicles = get_vehicle_map()
+        spawned_count = await spawn_event_wave(vehicles, message.channel, guild=message.guild, count=event_count)
+        if spawned_count <= 0:
+            await message.channel.send("Event spawn failed. Check channel permissions and vehicle data.")
+            return
+
+        await message.channel.send(
+            "Event wave finished: "
+            f"spawned **{format_count(spawned_count)}** vehicle(s) "
+            "with boosted event odds."
+        )
         return
 
     if command in {"!addinventory", "!removeinventory"}:
