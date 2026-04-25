@@ -359,7 +359,7 @@ def build_help_message() -> str:
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
         "`Common` - 38%\n\n"
-        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
+        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} messages. Normal/test spawns despawn after "
         f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
 
