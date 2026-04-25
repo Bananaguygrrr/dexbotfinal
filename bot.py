@@ -51,6 +51,7 @@ ADMIN_USER_IDS = {
 SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
 FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
 SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
+EVENT_SPAWN_DESPAWN_SECONDS = max(15, int(os.getenv("EVENT_SPAWN_DESPAWN_SECONDS", "60")))
 EVENT_MAX_SPAWNS = max(1, int(os.getenv("EVENT_MAX_SPAWNS", "25")))
 EVENT_SPAWN_DELAY_SECONDS = min(2.0, max(0.0, float(os.getenv("EVENT_SPAWN_DELAY_SECONDS", "0.35"))))
 ENABLE_INSTANCE_LOCK = os.getenv("ENABLE_INSTANCE_LOCK", "0" if os.getenv("RENDER") else "1").strip().lower() in {
@@ -105,11 +106,11 @@ RARITY_WEIGHTS = {
 }
 
 EVENT_RARITY_WEIGHTS = {
-    "limited edition": 5,
-    "exotic": 15,
-    "legendary": 20,
+    "limited edition": 10,
+    "exotic": 20,
+    "legendary": 25,
     "epic": 30,
-    "rare": 30,
+    "rare": 15,
     "common": 0,
 }
 
@@ -347,7 +348,7 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
+        f"`!event <count>` / `!eventz <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
@@ -358,8 +359,8 @@ def build_help_message() -> str:
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
         "`Common` - 38%\n\n"
-        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages and despawn after "
-        f"{SPAWN_DESPAWN_SECONDS // 60} minutes.*"
+        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
+        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
 
 
@@ -1593,8 +1594,9 @@ class CatchView(discord.ui.View):
         *,
         guild_id: Optional[int] = None,
         spawn_mode: str = "normal",
+        timeout_seconds: int = SPAWN_DESPAWN_SECONDS,
     ):
-        super().__init__(timeout=SPAWN_DESPAWN_SECONDS)
+        super().__init__(timeout=timeout_seconds)
         self.vehicle_name = vehicle_name
         self.vehicle_code = vehicle_code
         self.image_url = image_url
@@ -1602,11 +1604,11 @@ class CatchView(discord.ui.View):
         self.is_fresh = is_fresh
         self.guild_id = guild_id
         self.spawn_mode = spawn_mode
+        self.timeout_seconds = max(1, int(timeout_seconds))
         self.caught = False
         self.messages: list[discord.Message] = []
         self.header = "A wild MT vehicle has appeared"
         self.hue = 0.0 if self.rarity == "exotic" else None
-        self.despawn_at = int(time.time()) + SPAWN_DESPAWN_SECONDS
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
@@ -1622,8 +1624,6 @@ class CatchView(discord.ui.View):
 
         embed = discord.Embed(title=self.header, color=color)
         description_lines = []
-        if not concluded and not self.caught:
-            description_lines.append(f"Despawns: <t:{self.despawn_at}:R>")
         if self.spawn_mode == "event":
             description_lines.append("Event spawn")
         if self.is_fresh:
@@ -1718,6 +1718,7 @@ async def spawn_vehicle(
     rarity_weights: Optional[Dict[str, float]] = None,
     spawn_mode: str = "normal",
     replace_same_mode: bool = True,
+    despawn_seconds: Optional[int] = None,
 ) -> bool:
     if not vehicles:
         if ctx:
@@ -1757,8 +1758,15 @@ async def spawn_vehicle(
         print(f"Skipping vehicle without usable image: {vehicle_name}")
         return False
 
+    actual_despawn_seconds = despawn_seconds
+    if actual_despawn_seconds is None:
+        actual_despawn_seconds = (
+            EVENT_SPAWN_DESPAWN_SECONDS if spawn_mode == "event" else SPAWN_DESPAWN_SECONDS
+        )
+
     print(
         f"Spawning vehicle: {vehicle_name} | rarity={rarity} | fresh={is_fresh} | "
+        f"mode={spawn_mode} | timeout={actual_despawn_seconds}s | "
         f"remote={bool(is_http_url(image_url))} | local={bool(local_path)}"
     )
 
@@ -1770,6 +1778,7 @@ async def spawn_vehicle(
         is_fresh=is_fresh,
         guild_id=target_guild.id if target_guild else None,
         spawn_mode=spawn_mode,
+        timeout_seconds=actual_despawn_seconds,
     )
 
     try:
@@ -2059,13 +2068,13 @@ async def on_message(message: discord.Message):
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
         return
 
-    if command == "!event":
+    if command in {"!event", "!eventz"}:
         if not message.guild:
             await message.channel.send("This command can only be used in a server.")
             return
 
         if not has_admin_access(message):
-            await message.channel.send("Only bot admins can use `!event`.")
+            await message.channel.send("Only bot admins can use `!event` / `!eventz`.")
             return
 
         event_count_token = ""
@@ -2074,7 +2083,10 @@ async def on_message(message: discord.Message):
         elif len(parts) == 3 and parts[1].lower() == "count":
             event_count_token = parts[2]
         else:
-            await message.channel.send(f"Usage: `!event <count>` or `!event count <count>` (max `{EVENT_MAX_SPAWNS}`)")
+            await message.channel.send(
+                f"Usage: `!event <count>`, `!eventz <count>`, `!event count <count>`, or `!eventz count <count>` "
+                f"(max `{EVENT_MAX_SPAWNS}`)"
+            )
             return
 
         event_count = parse_count(event_count_token)
@@ -2093,12 +2105,6 @@ async def on_message(message: discord.Message):
         if spawned_count <= 0:
             await message.channel.send("Event spawn failed. Check channel permissions and vehicle data.")
             return
-
-        await message.channel.send(
-            "Event wave finished: "
-            f"spawned **{format_count(spawned_count)}** vehicle(s) "
-            "with boosted event odds."
-        )
         return
 
     if command in {"!addinventory", "!removeinventory"}:
