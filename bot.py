@@ -1640,8 +1640,6 @@ class CatchView(discord.ui.View):
         if self.spawn_mode == "event":
             description_lines.append("Event spawn")
         if self.is_fresh:
-            description_lines.append("Fresh spawn")
-        if description_lines:
             embed.description = "\n".join(f"- {line}" for line in description_lines)
         embed.set_image(url=self.image_url)
         return embed
