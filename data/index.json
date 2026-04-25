@@ -33,7 +33,7 @@
     },
     "ac130": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496811299399663738/afbeelding.png?ex=69eb3da7&is=69e9ec27&hm=9e49796b888dfea0e998cb0808db465fca7ee283bd533bce35622f00bd45714b&",
-        "rarity": "Rare"
+        "rarity": "Legendary"
     },
     "carrier": {
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496876848322183249/afbeelding.png?ex=69eb7ab3&is=69ea2933&hm=f3502009702ebab79248204bd0c47d18faf1ca6d0947cf90a4b393afbf7b33ec&=&format=webp&quality=lossless",
@@ -1673,6 +1673,6 @@
      },
     "a10": {
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1497324757425848370/image.png?ex=69ed1bd9&is=69ebca59&hm=dbe6fa860ff702bd29586610b134b604d11e3b0c429627285bad825930081a36&=&format=webp&quality=lossless",
-        "rarity": "Exotic"
+        "rarity": "Legendary"
     }
 }
