@@ -348,7 +348,7 @@ def has_admin_access(message: discord.Message) -> bool:
 def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
-        "**Commands Users Can Use**\n"
+        "**Commands Users**\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/trade @user` - Send a trade request to another user\n"
@@ -358,7 +358,7 @@ def build_help_message() -> str:
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "\n"
-        "**Bot Admins**\n"
+        "**Bot Devs**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
