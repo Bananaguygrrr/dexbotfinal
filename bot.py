@@ -54,6 +54,13 @@ SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
 EVENT_SPAWN_DESPAWN_SECONDS = max(15, int(os.getenv("EVENT_SPAWN_DESPAWN_SECONDS", "60")))
 EVENT_MAX_SPAWNS = max(1, int(os.getenv("EVENT_MAX_SPAWNS", "25")))
 EVENT_SPAWN_DELAY_SECONDS = min(2.0, max(0.0, float(os.getenv("EVENT_SPAWN_DELAY_SECONDS", "0.35"))))
+COMMAND_SYNC_MODE = os.getenv("COMMAND_SYNC_MODE", "global").strip().lower()
+if COMMAND_SYNC_MODE not in {"global", "guild"}:
+    COMMAND_SYNC_MODE = "global"
+try:
+    COMMAND_SYNC_GUILD_ID = int((os.getenv("COMMAND_SYNC_GUILD_ID", "0") or "0").strip()) or None
+except ValueError:
+    COMMAND_SYNC_GUILD_ID = None
 ENABLE_INSTANCE_LOCK = os.getenv("ENABLE_INSTANCE_LOCK", "0" if os.getenv("RENDER") else "1").strip().lower() in {
     "1",
     "true",
@@ -348,7 +355,7 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        f"`!event <count>` / `!eventz <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
+        f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
@@ -359,7 +366,7 @@ def build_help_message() -> str:
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
         "`Common` - 38%\n\n"
-        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} messages. Normal/test spawns despawn after "
+        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
         f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
 
@@ -1907,16 +1914,27 @@ async def set_ready_presence():
 
 
 async def sync_all_commands():
+    if COMMAND_SYNC_MODE == "guild":
+        if not COMMAND_SYNC_GUILD_ID:
+            raise RuntimeError("COMMAND_SYNC_MODE is set to 'guild' but COMMAND_SYNC_GUILD_ID is missing.")
+
+        target_guild = discord.Object(id=COMMAND_SYNC_GUILD_ID)
+        bot.tree.clear_commands(guild=target_guild)
+        bot.tree.copy_global_to(guild=target_guild)
+        synced = await bot.tree.sync(guild=target_guild)
+        print(f"Guild-only synced {len(synced)} command(s) to guild {COMMAND_SYNC_GUILD_ID}.")
+        return synced
+
     synced = await bot.tree.sync()
     print(f"Globally synced {len(synced)} command(s)")
 
     for guild in bot.guilds:
         try:
-            bot.tree.copy_global_to(guild=guild)
-            guild_synced = await bot.tree.sync(guild=guild)
-            print(f"Guild synced {len(guild_synced)} command(s) in {guild.name}")
+            bot.tree.clear_commands(guild=guild)
+            await bot.tree.sync(guild=guild)
+            print(f"Cleared guild-specific command copies in {guild.name}")
         except Exception as guild_error:
-            print(f"Error syncing guild {guild.name}: {guild_error}")
+            print(f"Error clearing guild command copies in {guild.name}: {guild_error}")
 
     print(f"Sync complete. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages.")
     return synced
@@ -2068,13 +2086,13 @@ async def on_message(message: discord.Message):
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
         return
 
-    if command in {"!event", "!eventz"}:
+    if command == "!event":
         if not message.guild:
             await message.channel.send("This command can only be used in a server.")
             return
 
         if not has_admin_access(message):
-            await message.channel.send("Only bot admins can use `!event` / `!eventz`.")
+            await message.channel.send("Only bot admins can use `!event`.")
             return
 
         event_count_token = ""
@@ -2084,8 +2102,7 @@ async def on_message(message: discord.Message):
             event_count_token = parts[2]
         else:
             await message.channel.send(
-                f"Usage: `!event <count>`, `!eventz <count>`, `!event count <count>`, or `!eventz count <count>` "
-                f"(max `{EVENT_MAX_SPAWNS}`)"
+                f"Usage: `!event <count>` or `!event count <count>` (max `{EVENT_MAX_SPAWNS}`)"
             )
             return
 
@@ -2191,13 +2208,8 @@ async def on_message(message: discord.Message):
             return
 
         try:
-            if message.guild:
-                bot.tree.copy_global_to(guild=message.guild)
-                synced = await bot.tree.sync(guild=message.guild)
-                scope = "Guild"
-            else:
-                synced = await sync_all_commands()
-                scope = "Global"
+            synced = await sync_all_commands()
+            scope = "Guild-only" if COMMAND_SYNC_MODE == "guild" else "Global"
 
             synced_names = sorted(f"/{command.name}" for command in synced)
             await message.channel.send(
