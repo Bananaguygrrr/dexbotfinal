@@ -61,6 +61,12 @@ try:
     COMMAND_SYNC_GUILD_ID = int((os.getenv("COMMAND_SYNC_GUILD_ID", "0") or "0").strip()) or None
 except ValueError:
     COMMAND_SYNC_GUILD_ID = None
+AUTO_RESTART_BOT = os.getenv("AUTO_RESTART_BOT", "0" if os.getenv("RENDER") else "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 ENABLE_INSTANCE_LOCK = os.getenv("ENABLE_INSTANCE_LOCK", "0" if os.getenv("RENDER") else "1").strip().lower() in {
     "1",
     "true",
@@ -2283,6 +2289,11 @@ if __name__ == "__main__":
     else:
         print("Instance lock is disabled (ENABLE_INSTANCE_LOCK=false).")
 
+    if AUTO_RESTART_BOT:
+        print("Bot auto-restart is enabled.")
+    else:
+        print("Bot auto-restart is disabled.")
+
     retry_delay = 15
     max_retry_delay = 3600
 
@@ -2302,6 +2313,10 @@ if __name__ == "__main__":
                 print(f"Discord HTTP error on startup: {error}. Retrying in {retry_delay}s...")
         except Exception as error:
             print(f"Unexpected bot startup error: {error}. Retrying in {retry_delay}s...")
+
+        if not AUTO_RESTART_BOT:
+            print("Auto-restart is disabled, so the bot process will now exit.")
+            raise SystemExit(1)
 
         time.sleep(retry_delay)
         retry_delay = min(retry_delay * 2, max_retry_delay)
