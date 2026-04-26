@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-import colorsys
 import json
 import os
 import random
@@ -129,12 +128,22 @@ EVENT_RARITY_WEIGHTS = {
 
 RARITY_COLORS = {
     "limited edition": 0x8B0000,
-    "exotic": 0xFF00FF,
+    "exotic": 0xFF00D4,
     "legendary": 0xFFD700,
     "epic": 0x800080,
     "rare": 0x0000FF,
     "common": 0x808080,
 }
+
+EXOTIC_RAINBOW_COLORS = (
+    0xFF00D4,  # neon magenta
+    0x7A00FF,  # electric purple
+    0x004CFF,  # saturated blue
+    0xFF1744,  # hot red
+    0xFF7A00,  # vivid orange
+    0xFFE600,  # bright yellow
+    0x00D95A,  # neon green
+)
 
 RARITY_BUTTON_STYLE = {
     "limited edition": discord.ButtonStyle.danger,
@@ -1869,11 +1878,10 @@ async def rainbow_task():
             if view.is_finished() or view.caught or view.rarity != "exotic" or not view.messages:
                 continue
 
-            hue = view.hue if view.hue is not None else 0.0
-            rgb = colorsys.hsv_to_rgb(hue, 1, 1)
-            color = discord.Color.from_rgb(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+            palette_index = int(view.hue if view.hue is not None else 0) % len(EXOTIC_RAINBOW_COLORS)
+            color = discord.Color(EXOTIC_RAINBOW_COLORS[palette_index])
             update_tasks.append(view.update_all_messages(color=color))
-            view.hue = (hue + 0.2) % 1.0
+            view.hue = (palette_index + 1) % len(EXOTIC_RAINBOW_COLORS)
 
     if update_tasks:
         await asyncio.gather(*update_tasks, return_exceptions=True)
