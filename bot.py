@@ -52,7 +52,7 @@ FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.
 SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
 EVENT_SPAWN_DESPAWN_SECONDS = max(15, int(os.getenv("EVENT_SPAWN_DESPAWN_SECONDS", "60")))
 EVENT_MAX_SPAWNS = max(1, int(os.getenv("EVENT_MAX_SPAWNS", "25")))
-EVENT_SPAWN_DELAY_SECONDS = min(2.0, max(0.0, float(os.getenv("EVENT_SPAWN_DELAY_SECONDS", "0.35"))))
+EVENT_SPAWN_DELAY_SECONDS = min(30.0, max(0.0, float(os.getenv("EVENT_SPAWN_DELAY_SECONDS", "3"))))
 COMMAND_SYNC_MODE = os.getenv("COMMAND_SYNC_MODE", "global").strip().lower()
 if COMMAND_SYNC_MODE not in {"global", "guild"}:
     COMMAND_SYNC_MODE = "global"
@@ -155,7 +155,6 @@ SPAWN_HEADER = "\U0001F697 A wild MT vehicle has appeared"
 DESPAWN_HEADER = "\U0001F4A8 The wild MT vehicle disappeared"
 EVENT_SPAWN_LABEL = "\U0001F389 Event spawn"
 FRESH_CATCH_EMOJI = "\u2728"
-REGULAR_CATCH_EMOJI = "\U0001F697"
 
 
 intents = discord.Intents.default()
@@ -1595,18 +1594,18 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
         caught_label = display_vehicle_name(self.correct_name)
         awarded_fresh = self.view.is_fresh
-        catch_status_emoji = FRESH_CATCH_EMOJI if awarded_fresh else REGULAR_CATCH_EMOJI
+        catch_status_emoji = f"{FRESH_CATCH_EMOJI} " if awarded_fresh else ""
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
         await interaction.response.send_message(
-            f"\U0001F389 {catch_status_emoji} {interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
+            f"\U0001F389 {catch_status_emoji}{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
             ephemeral=False,
         )
         add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
 
         await self.view.update_all_messages(
-            f"\U0001F3C1 {catch_status_emoji} Captured by {interaction.user.name}: {caught_label}",
+            f"\U0001F3C1 Captured by {interaction.user.name}: {caught_label}",
             concluded=True,
         )
         self.view.stop()
@@ -1868,7 +1867,7 @@ async def spawn_event_wave(
     return successful_spawns
 
 
-@tasks.loop(seconds=1)
+@tasks.loop(seconds=5)
 async def rainbow_task():
     update_tasks = []
     prune_active_spawns()
