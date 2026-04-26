@@ -46,7 +46,6 @@ TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 ADMIN_USER_IDS = {
     1316448831596007537,
     1105451323584938075,
-    750542566599950426
 }
 
 SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
@@ -142,6 +141,12 @@ RARITY_BUTTON_STYLE = {
     "exotic": discord.ButtonStyle.success,
     "legendary": discord.ButtonStyle.primary,
 }
+
+SPAWN_HEADER = "\U0001F697 A wild MT vehicle has appeared"
+DESPAWN_HEADER = "\U0001F4A8 The wild MT vehicle disappeared"
+EVENT_SPAWN_LABEL = "\U0001F389 Event spawn"
+FRESH_CATCH_EMOJI = "\u2728"
+REGULAR_CATCH_EMOJI = "\U0001F697"
 
 
 intents = discord.Intents.default()
@@ -349,7 +354,7 @@ def has_admin_access(message: discord.Message) -> bool:
 def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
-        "**Commands Users**\n"
+        "**Commands Users Can Use**\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/trade @user` - Send a trade request to another user\n"
@@ -359,7 +364,7 @@ def build_help_message() -> str:
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "\n"
-        "**Bot Devs**\n"
+        "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
@@ -373,8 +378,8 @@ def build_help_message() -> str:
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
         "`Common` - 38%\n\n"
-        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} messages and despawn after "
-        f"{SPAWN_DESPAWN_SECONDS}*"
+        f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
+        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
 
 
@@ -908,7 +913,7 @@ async def expire_active_spawns(
     guild_id: int,
     *,
     spawn_mode: Optional[str] = None,
-    reason: str = "The wild MT vehicle escaped",
+    reason: str = DESPAWN_HEADER,
 ):
     existing_views = list(active_spawns.get(guild_id, []))
     kept_views: list["CatchView"] = []
@@ -1581,17 +1586,18 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
         caught_label = display_vehicle_name(self.correct_name)
         awarded_fresh = self.view.is_fresh
+        catch_status_emoji = FRESH_CATCH_EMOJI if awarded_fresh else REGULAR_CATCH_EMOJI
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
         await interaction.response.send_message(
-            f"{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
+            f"\U0001F389 {catch_status_emoji} {interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
             ephemeral=False,
         )
         add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
 
         await self.view.update_all_messages(
-            f"Captured by {interaction.user.name}: {caught_label}",
+            f"\U0001F3C1 {catch_status_emoji} Captured by {interaction.user.name}: {caught_label}",
             concluded=True,
         )
         self.view.stop()
@@ -1621,7 +1627,7 @@ class CatchView(discord.ui.View):
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.caught = False
         self.messages: list[discord.Message] = []
-        self.header = "A wild MT vehicle has appeared"
+        self.header = SPAWN_HEADER
         self.hue = 0.0 if self.rarity == "exotic" else None
 
     def add_message(self, message: discord.Message):
@@ -1639,8 +1645,8 @@ class CatchView(discord.ui.View):
         embed = discord.Embed(title=self.header, color=color)
         description_lines = []
         if self.spawn_mode == "event":
-            description_lines.append("Event spawn")
-        if self.is_fresh:
+            description_lines.append(EVENT_SPAWN_LABEL)
+        if description_lines:
             embed.description = "\n".join(f"- {line}" for line in description_lines)
         embed.set_image(url=self.image_url)
         return embed
@@ -1677,7 +1683,7 @@ class CatchView(discord.ui.View):
 
     async def on_timeout(self):
         if not self.caught:
-            await self.update_all_messages("The wild MT vehicle escaped", concluded=True)
+            await self.update_all_messages(DESPAWN_HEADER, concluded=True)
             self.stop()
 
     @discord.ui.button(label="Catch", style=discord.ButtonStyle.primary)
@@ -2220,7 +2226,7 @@ async def on_message(message: discord.Message):
             await message.channel.send(
                 f"{scope} synced {len(synced)} slash command(s) successfully.\n"
                 f"{', '.join(synced_names)}\n"
-                f"Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} messages."
+                f"Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages."
             )
         except Exception as error:
             await message.channel.send(f"Error syncing slash commands: {error}")
@@ -2247,7 +2253,7 @@ async def on_ready():
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
     print(f"Connected to {len(bot.guilds)} guild(s)")
     print(f"message_content intent enabled in code: {bot.intents.message_content}")
-    print(f"Bot ready. Commands are synced. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} messages.")
+    print(f"Bot ready. Commands are synced. Spawn rate: 1 vehicle every {SPAWN_THRESHOLD} guild messages.")
 
     await set_ready_presence()
 
