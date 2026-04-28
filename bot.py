@@ -464,6 +464,7 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
+        "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n\n"
@@ -2238,27 +2239,63 @@ async def on_message(message: discord.Message):
             return
 
         forced_fresh = None
-        if len(parts) > 2:
-            await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
+        force_special = False
+        testspawn_usage = (
+            "Usage: `!testspawn`, `!testspawn true|false`, "
+            "or `!testspawn special [true|false]`"
+        )
+        testspawn_args = [part.lower() for part in parts[1:]]
+        if len(testspawn_args) > 2:
+            await message.channel.send(testspawn_usage)
             return
 
-        if len(parts) == 2:
-            parsed_fresh = parse_bool_true_false(parts[1])
-            if parsed_fresh is None:
-                await message.channel.send("Usage: `!testspawn` or `!testspawn true` or `!testspawn false`")
-                return
-            forced_fresh = parsed_fresh
-
-        vehicles = get_vehicle_map()
-        spawned = await spawn_vehicle(vehicles, message.channel, guild=message.guild, force_is_fresh=forced_fresh)
-        if spawned:
-            if forced_fresh is None:
-                await message.channel.send("Test spawn sent successfully.")
+        if testspawn_args:
+            if testspawn_args[0] == "special":
+                force_special = True
+                if len(testspawn_args) == 2:
+                    parsed_fresh = parse_bool_true_false(testspawn_args[1])
+                    if parsed_fresh is None:
+                        await message.channel.send(testspawn_usage)
+                        return
+                    forced_fresh = parsed_fresh
             else:
+                if len(testspawn_args) != 1:
+                    await message.channel.send(testspawn_usage)
+                    return
+
+                parsed_fresh = parse_bool_true_false(testspawn_args[0])
+                if parsed_fresh is None:
+                    await message.channel.send(testspawn_usage)
+                    return
+                forced_fresh = parsed_fresh
+
+        rarity_weights = {"specials": 1} if force_special else None
+        vehicles = get_vehicle_map()
+        spawned = await spawn_vehicle(
+            vehicles,
+            message.channel,
+            guild=message.guild,
+            force_is_fresh=forced_fresh,
+            rarity_weights=rarity_weights,
+        )
+        if spawned:
+            if force_special and forced_fresh is not None:
+                await message.channel.send(
+                    "Special test spawn sent successfully "
+                    f"(fresh forced: {'true' if forced_fresh else 'false'})."
+                )
+            elif force_special:
+                await message.channel.send("Special test spawn sent successfully.")
+            elif forced_fresh is not None:
                 await message.channel.send(
                     f"Test spawn sent successfully (fresh forced: {'true' if forced_fresh else 'false'})."
                 )
+            else:
+                await message.channel.send("Test spawn sent successfully.")
         else:
+            if force_special:
+                await message.channel.send("Special test spawn failed. Check special vehicle data and images.")
+                return
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
         return
 
