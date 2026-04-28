@@ -132,7 +132,7 @@ EVENT_RARITY_WEIGHTS = {
 }
 
 RARITY_COLORS = {
-    "specials": 0x00FFF7,
+    "specials": 0xFFFFFF,
     "limited edition": 0x8B0000,
     "exotic": 0xFF00D4,
     "legendary": 0xFFD700,
@@ -151,8 +151,16 @@ EXOTIC_RAINBOW_COLORS = (
     0x00D95A,  # neon green
 )
 
+SPECIAL_RAINBOW_COLORS = (
+    0xFFFFFF,  # bright white
+    0x00FFF7,  # glowing cyan
+    0xFFD700,  # rare gold
+    0xFF00D4,  # neon magenta
+    0x7A00FF,  # deep purple
+)
+
 RARITY_BUTTON_STYLE = {
-    "specials": discord.ButtonStyle.primary,
+    "specials": discord.ButtonStyle.danger,
     "limited edition": discord.ButtonStyle.danger,
     "exotic": discord.ButtonStyle.success,
     "legendary": discord.ButtonStyle.primary,
@@ -1118,7 +1126,13 @@ class RarityButton(discord.ui.Button):
         disabled: bool,
         owner: discord.abc.User,
     ):
-        super().__init__(label=display_rarity_name(rarity, reveal_specials=not disabled), style=style, disabled=disabled)
+        emoji = "\U0001F48E" if rarity == "specials" else None
+        super().__init__(
+            label=display_rarity_name(rarity, reveal_specials=not disabled),
+            style=style,
+            disabled=disabled,
+            emoji=emoji,
+        )
         self.target_user = target_user
         self.rarity = rarity
         self.owner = owner
@@ -1634,7 +1648,8 @@ def register_trade_commands(discord_bot: commands.Bot):
             active_trades[interaction.user.id] = view
             view.message = await safe_send(
                 interaction,
-                f"\U0001F91D Trade started between {user.mention} and {interaction.user.mention}.",
+                f"\U0001F91D Trade started between {user.mention} and {interaction.user.mention}.\n"
+                "Use `/tradeadd` to add and `/traderemove` to remove vehicles.",
                 embed=view.create_embed(),
                 view=view,
                 wait=True,
@@ -1720,7 +1735,7 @@ class CatchView(discord.ui.View):
         self.caught = False
         self.messages: list[discord.Message] = []
         self.header = SPAWN_HEADER
-        self.hue = 0.0 if self.rarity == "exotic" else None
+        self.hue = 0.0 if self.rarity in {"exotic", "specials"} else None
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
@@ -1960,13 +1975,14 @@ async def rainbow_task():
 
     for views in list(active_spawns.values()):
         for view in list(views):
-            if view.is_finished() or view.caught or view.rarity != "exotic" or not view.messages:
+            if view.is_finished() or view.caught or view.rarity not in {"exotic", "specials"} or not view.messages:
                 continue
 
-            palette_index = int(view.hue if view.hue is not None else 0) % len(EXOTIC_RAINBOW_COLORS)
-            color = discord.Color(EXOTIC_RAINBOW_COLORS[palette_index])
+            palette = SPECIAL_RAINBOW_COLORS if view.rarity == "specials" else EXOTIC_RAINBOW_COLORS
+            palette_index = int(view.hue if view.hue is not None else 0) % len(palette)
+            color = discord.Color(palette[palette_index])
             update_tasks.append(view.update_all_messages(color=color))
-            view.hue = (palette_index + 1) % len(EXOTIC_RAINBOW_COLORS)
+            view.hue = (palette_index + 1) % len(palette)
 
     if update_tasks:
         await asyncio.gather(*update_tasks, return_exceptions=True)
