@@ -132,7 +132,7 @@ EVENT_RARITY_WEIGHTS = {
 }
 
 RARITY_COLORS = {
-    "specials": 0xFFFFFF,
+    "specials": 0x00FF9D,
     "limited edition": 0x8B0000,
     "exotic": 0xFF00D4,
     "legendary": 0xFFD700,
@@ -152,15 +152,15 @@ EXOTIC_RAINBOW_COLORS = (
 )
 
 SPECIAL_RAINBOW_COLORS = (
-    0xFFFFFF,  # bright white
-    0x00FFF7,  # glowing cyan
-    0xFFD700,  # rare gold
-    0xFF00D4,  # neon magenta
-    0x7A00FF,  # deep purple
+    0x00FF9D,  # mint plasma
+    0x00E5FF,  # electric aqua
+    0xB6FF00,  # acid lime
+    0xFF2BD6,  # hot pink
+    0xFFFFFF,  # flash white
 )
 
 RARITY_BUTTON_STYLE = {
-    "specials": discord.ButtonStyle.danger,
+    "specials": discord.ButtonStyle.secondary,
     "limited edition": discord.ButtonStyle.danger,
     "exotic": discord.ButtonStyle.success,
     "legendary": discord.ButtonStyle.primary,
@@ -170,6 +170,7 @@ SPAWN_HEADER = "\U0001F697 A wild MT vehicle has appeared"
 DESPAWN_HEADER = "\U0001F4A8 The wild MT vehicle disappeared"
 EVENT_SPAWN_LABEL = "\U0001F389 Event spawn"
 FRESH_CATCH_EMOJI = "\u2728"
+SPECIAL_CATCH_EMOJI = "\U0001F31F"
 
 
 intents = discord.Intents.default()
@@ -1126,7 +1127,7 @@ class RarityButton(discord.ui.Button):
         disabled: bool,
         owner: discord.abc.User,
     ):
-        emoji = "\U0001F48E" if rarity == "specials" else None
+        emoji = SPECIAL_CATCH_EMOJI if rarity == "specials" else None
         super().__init__(
             label=display_rarity_name(rarity, reveal_specials=not disabled),
             style=style,
@@ -1693,7 +1694,12 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
         caught_label = display_vehicle_name(self.correct_name)
         awarded_fresh = self.view.is_fresh
-        catch_status_emoji = f"{FRESH_CATCH_EMOJI} " if awarded_fresh else ""
+        catch_emojis = []
+        if self.view.rarity == "specials":
+            catch_emojis.append(SPECIAL_CATCH_EMOJI)
+        if awarded_fresh:
+            catch_emojis.append(FRESH_CATCH_EMOJI)
+        catch_status_emoji = f"{' '.join(catch_emojis)} " if catch_emojis else ""
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
@@ -1736,6 +1742,11 @@ class CatchView(discord.ui.View):
         self.messages: list[discord.Message] = []
         self.header = SPAWN_HEADER
         self.hue = 0.0 if self.rarity in {"exotic", "specials"} else None
+        if self.rarity == "specials":
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    item.style = discord.ButtonStyle.secondary
+                    item.emoji = SPECIAL_CATCH_EMOJI
 
     def add_message(self, message: discord.Message):
         self.messages.append(message)
