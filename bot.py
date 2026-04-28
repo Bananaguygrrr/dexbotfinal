@@ -41,14 +41,15 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 
-# Add Discord user IDs here for admin-only prefix commands.
-ADMIN_USER_IDS = {
+PERMISSION_OWNER_USER_ID = 1105451323584938075
+INITIAL_ADMIN_USER_IDS = {
     1316448831596007537,
-    1105451323584938075,
+    PERMISSION_OWNER_USER_ID,
 }
 
 SPAWN_THRESHOLD = max(1, int(os.getenv("SPAWN_RATE", os.getenv("SPAWN_THRESHOLD", "100"))))
 FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("FRESH_SPAWN_CHANCE", "0.005"))))
+EVENT_FRESH_SPAWN_CHANCE = min(1.0, max(0.0, float(os.getenv("EVENT_FRESH_SPAWN_CHANCE", "0.05"))))
 SPAWN_DESPAWN_SECONDS = max(30, int(os.getenv("SPAWN_DESPAWN_SECONDS", "240")))
 EVENT_SPAWN_DESPAWN_SECONDS = max(15, int(os.getenv("EVENT_SPAWN_DESPAWN_SECONDS", "60")))
 EVENT_MAX_SPAWNS = max(1, int(os.getenv("EVENT_MAX_SPAWNS", "25")))
@@ -88,6 +89,7 @@ except Exception as error:
 
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
+ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
@@ -100,6 +102,7 @@ IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
 RARITY_ORDER = (
+    "specials",
     "limited edition",
     "exotic",
     "legendary",
@@ -109,24 +112,27 @@ RARITY_ORDER = (
 )
 
 RARITY_WEIGHTS = {
+    "specials": 0.01,
     "limited edition": 0.5,
     "exotic": 4,
     "legendary": 8,
     "epic": 19,
     "rare": 30.5,
-    "common": 38,
+    "common": 37.99,
 }
 
 EVENT_RARITY_WEIGHTS = {
+    "specials": 1,
     "limited edition": 10,
     "exotic": 20,
     "legendary": 25,
-    "epic": 30,
+    "epic": 29,
     "rare": 15,
     "common": 0,
 }
 
 RARITY_COLORS = {
+    "specials": 0x00FFF7,
     "limited edition": 0x8B0000,
     "exotic": 0xFF00D4,
     "legendary": 0xFFD700,
@@ -146,6 +152,7 @@ EXOTIC_RAINBOW_COLORS = (
 )
 
 RARITY_BUTTON_STYLE = {
+    "specials": discord.ButtonStyle.primary,
     "limited edition": discord.ButtonStyle.danger,
     "exotic": discord.ButtonStyle.success,
     "legendary": discord.ButtonStyle.primary,
@@ -172,6 +179,7 @@ active_trades: Dict[int, "TradeView"] = {}
 
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
@@ -355,14 +363,79 @@ def parse_bool_true_false(token: str) -> Optional[bool]:
     return None
 
 
+def _parse_user_id_value(value: Any) -> Optional[int]:
+    try:
+        user_id = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return user_id if user_id > 0 else None
+
+
+def load_admin_user_ids() -> set[int]:
+    global ADMIN_USER_IDS_CACHE
+
+    if ADMIN_USER_IDS_CACHE is not None:
+        return ADMIN_USER_IDS_CACHE
+
+    if not os.path.exists(ADMIN_USER_IDS_FILE):
+        ADMIN_USER_IDS_CACHE = set(INITIAL_ADMIN_USER_IDS)
+        save_admin_user_ids(ADMIN_USER_IDS_CACHE)
+        return ADMIN_USER_IDS_CACHE
+
+    try:
+        with open(ADMIN_USER_IDS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {ADMIN_USER_IDS_FILE}: {error}")
+        ADMIN_USER_IDS_CACHE = set(INITIAL_ADMIN_USER_IDS)
+        return ADMIN_USER_IDS_CACHE
+
+    raw_ids = raw_data.get("admin_user_ids") if isinstance(raw_data, dict) else raw_data
+    admin_ids: set[int] = set()
+    if isinstance(raw_ids, list):
+        for raw_user_id in raw_ids:
+            parsed_user_id = _parse_user_id_value(raw_user_id)
+            if parsed_user_id is not None:
+                admin_ids.add(parsed_user_id)
+
+    if not admin_ids:
+        admin_ids = set(INITIAL_ADMIN_USER_IDS)
+
+    admin_ids.add(PERMISSION_OWNER_USER_ID)
+    ADMIN_USER_IDS_CACHE = admin_ids
+    save_admin_user_ids(admin_ids)
+    return ADMIN_USER_IDS_CACHE
+
+
+def save_admin_user_ids(admin_ids: Iterable[int]) -> None:
+    global ADMIN_USER_IDS_CACHE
+
+    normalized_ids = {
+        parsed_user_id
+        for raw_user_id in admin_ids
+        if (parsed_user_id := _parse_user_id_value(raw_user_id)) is not None
+    }
+    normalized_ids.add(PERMISSION_OWNER_USER_ID)
+
+    try:
+        os.makedirs(os.path.dirname(ADMIN_USER_IDS_FILE), exist_ok=True)
+        with open(ADMIN_USER_IDS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(sorted(normalized_ids), handle, indent=2)
+        ADMIN_USER_IDS_CACHE = normalized_ids
+    except Exception as error:
+        print(f"Error saving {ADMIN_USER_IDS_FILE}: {error}")
+
+
 def has_admin_access(message: discord.Message) -> bool:
-    return message.author.id in ADMIN_USER_IDS
+    return message.author.id in load_admin_user_ids()
 
 
 def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
         "**Commands Users Can Use**\n"
+        "`/help` - Show this help message\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/trade @user` - Send a trade request to another user\n"
@@ -379,15 +452,20 @@ def build_help_message() -> str:
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!sync` - Manually sync slash commands\n\n"
+        "**Permission Owner**\n"
+        "`!permadd @user` - Add a bot admin\n"
+        "`!permremove @user` - Remove a bot admin\n\n"
         "**Rarities**\n"
+        "`Specials` - 0.01% (1% in events)\n"
         "`Limited Edition` - 0.5%\n"
         "`Exotic` - 4%\n"
         "`Legendary` - 8%\n"
         "`Epic` - 19%\n"
         "`Rare` - 30.5%\n"
-        "`Common` - 38%\n\n"
+        "`Common` - 37.99%\n\n"
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
-        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
+        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds. "
+        f"Event fresh chance is {EVENT_FRESH_SPAWN_CHANCE * 100:g}%.*"
     )
 
 
@@ -1741,6 +1819,7 @@ async def spawn_vehicle(
     guild: Optional[discord.Guild] = None,
     ctx: Optional[commands.Context] = None,
     force_is_fresh: Optional[bool] = None,
+    fresh_spawn_chance: float = FRESH_SPAWN_CHANCE,
     rarity_weights: Optional[Dict[str, float]] = None,
     spawn_mode: str = "normal",
     replace_same_mode: bool = True,
@@ -1766,7 +1845,7 @@ async def spawn_vehicle(
     vehicle_code = vehicle_data.get("code") or vehicle_data.get("rarity", "common")
     rarity = str(vehicle_data.get("rarity", "common"))
     if force_is_fresh is None:
-        is_fresh = random.random() < FRESH_SPAWN_CHANCE
+        is_fresh = random.random() < fresh_spawn_chance
     else:
         is_fresh = bool(force_is_fresh)
 
@@ -1855,6 +1934,7 @@ async def spawn_event_wave(
             channel,
             guild=guild,
             rarity_weights=EVENT_RARITY_WEIGHTS,
+            fresh_spawn_chance=EVENT_FRESH_SPAWN_CHANCE,
             spawn_mode="event",
             replace_same_mode=False,
         )
@@ -1924,7 +2004,7 @@ async def set_ready_presence():
     try:
         await bot.change_presence(
             status=discord.Status.online,
-            activity=discord.Game(name="!help"),
+            activity=discord.Game(name="/help"),
         )
         print("Presence set to online.")
     except Exception as error:
@@ -1959,6 +2039,11 @@ async def sync_all_commands():
 
 
 register_trade_commands(bot)
+
+
+@bot.tree.command(name="help", description="Show MT vehicle bot commands")
+async def help_slash(interaction: discord.Interaction):
+    await safe_send(interaction, build_help_message(), ephemeral=True)
 
 
 @bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
@@ -2070,13 +2155,53 @@ async def on_message(message: discord.Message):
     parts = message.content.split()
     command = parts[0].lower() if parts else ""
 
-    if command == "!testspawn":
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
+    if command in {"!permadd", "!permremove"}:
+        if message.author.id != PERMISSION_OWNER_USER_ID:
             return
 
+        if len(parts) != 2:
+            await message.channel.send(f"Usage: `{command} @user` or `{command} user_id`")
+            return
+
+        user_id_match = DIGIT_ID_RE.search(parts[1])
+        if not user_id_match:
+            await message.channel.send("Could not find a user ID. Mention a user or provide their ID.")
+            return
+
+        target_user_id = int(user_id_match.group(1))
+        target_user = await resolve_user_from_token(parts[1], message.guild)
+        target_label = target_user.mention if target_user else f"`{target_user_id}`"
+        admin_ids = set(load_admin_user_ids())
+
+        if command == "!permadd":
+            if target_user_id in admin_ids:
+                await message.channel.send(f"{target_label} is already a bot admin.")
+                return
+
+            admin_ids.add(target_user_id)
+            save_admin_user_ids(admin_ids)
+            await message.channel.send(f"Added {target_label} as a bot admin.")
+            return
+
+        if target_user_id == PERMISSION_OWNER_USER_ID:
+            await message.channel.send("The permission owner cannot be removed.")
+            return
+
+        if target_user_id not in admin_ids:
+            await message.channel.send(f"{target_label} is not a bot admin.")
+            return
+
+        admin_ids.remove(target_user_id)
+        save_admin_user_ids(admin_ids)
+        await message.channel.send(f"Removed {target_label} from bot admins.")
+        return
+
+    if command == "!testspawn":
         if not has_admin_access(message):
-            await message.channel.send("Only bot admins can use `!testspawn`.")
+            return
+
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
             return
 
         forced_fresh = None
@@ -2105,12 +2230,11 @@ async def on_message(message: discord.Message):
         return
 
     if command == "!event":
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
+        if not has_admin_access(message):
             return
 
-        if not has_admin_access(message):
-            await message.channel.send("Only bot admins can use `!event`.")
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
             return
 
         event_count_token = ""
@@ -2143,12 +2267,11 @@ async def on_message(message: discord.Message):
         return
 
     if command in {"!addinventory", "!removeinventory"}:
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
+        if not has_admin_access(message):
             return
 
-        if not has_admin_access(message):
-            await message.channel.send(f"Only bot admins can use `{command}`.")
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
             return
 
         if len(parts) < 4:
@@ -2215,14 +2338,8 @@ async def on_message(message: discord.Message):
         )
         return
 
-    if command in {"!help", "!h"}:
-        await message.channel.send(build_help_message())
-        return
-
     if command == "!sync":
-        is_admin = message.author.id in ADMIN_USER_IDS
-        if not is_admin:
-            await message.channel.send("Only bot admins can use `!sync`.")
+        if not has_admin_access(message):
             return
 
         try:
