@@ -1922,5 +1922,41 @@
     "zumwalt-x": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640923513360447/zumwalt-x.png?ex=69dfb502&is=69de6382&hm=e81a0d7d11a74f5a9d0e76a79728794162a9f5f5f9dbd7cf8ae38390e257240a&",
         "rarity": "Limited Edition"
+    },
+    "zumwalt-x": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640923513360447/zumwalt-x.png?ex=69dfb502&is=69de6382&hm=e81a0d7d11a74f5a9d0e76a79728794162a9f5f5f9dbd7cf8ae38390e257240a&",
+        "rarity": "Limited Edition"
+    },
+    "golden-falken": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638030962196521/golden-falken.png?ex=69dfb251&is=69de60d1&hm=fd7d66262b60c87f49a8cdcaaa310e2ba0ede522ae3b9cc1775bd963a65bb3ce&",
+        "rarity": "Exotic"
+    },
+    "a50": {
+        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635995848020201/a50.png?ex=69dfb06b&is=69de5eeb&hm=4b09e6bf1a19ab9292f2b960150027d23be71f7ceb01978da344743e3a96959e&",
+        "rarity": "Exotic"
+    },
+    "Le_rattata": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498739755826020393/image.png?ex=69f241ab&is=69f0f02b&hm=b313098e0f00a4c88b55b070fee53a567f228b0ef0bd4c0543f029a11b840df4&=&format=webp&quality=lossless",
+        "rarity": "specials"
+    },
+    "gold silkfire": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498740247771480134/image.png?ex=69f24220&is=69f0f0a0&hm=2a7fd64079c78a3c51dd3b16dd787dbdfbe3d3576fc18e3472a38ac5a639d7a7&=&format=webp&quality=lossless",
+        "rarity": "specials"
+    },
+    "LE1000_Biplane": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498739647537221703/image.png?ex=69f24191&is=69f0f011&hm=9508c552fa12a1fb577e4c09ea8dc49b9649dbfbff142adc23cab87dcdcfa487&=&format=webp&quality=lossless&width=211&height=350",
+        "rarity": "specials"
+    },
+    "LE_E": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498739619678781541/image.png?ex=69f2418a&is=69f0f00a&hm=1a5b06abb6d8d552e097d6ff46ecfd75bef52bcf60c811d9b453829aafb4a69f&=&format=webp&quality=lossless",
+        "rarity": "specials"
+    },
+    "Rainbow_Darkstar": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498739584530513940/image.png?ex=69f24182&is=69f0f002&hm=a3608586469008879e1ee4341b5a92749ff6bcae474bb030b39b0ad0e3c024e9&=&format=webp&quality=lossless",
+        "rarity": "specials"
+    },
+    "bv238 fling": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1498739683339931868/image.png?ex=69f24199&is=69f0f019&hm=57316b8869131067dba20ed5267ec3afa7ab4f686e0c99084022f0e7773fc57a&=&format=webp&quality=lossless",
+        "rarity": "specials"
     }
 }
