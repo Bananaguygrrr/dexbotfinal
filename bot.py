@@ -431,6 +431,13 @@ def has_admin_access(message: discord.Message) -> bool:
     return message.author.id in load_admin_user_ids()
 
 
+def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
+    normalized = str(rarity or "").strip().lower()
+    if normalized == "specials":
+        return "Specials" if reveal_specials else "???"
+    return normalized.title()
+
+
 def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
@@ -450,13 +457,9 @@ def build_help_message() -> str:
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
-        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
-        "`!sync` - Manually sync slash commands\n\n"
-        "**Permission Owner**\n"
-        "`!permadd @user` - Add a bot admin\n"
-        "`!permremove @user` - Remove a bot admin\n\n"
+        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n\n"
         "**Rarities**\n"
-        "`Specials` - 0.01% (1% in events)\n"
+        "`???` - 0.01%\n"
         "`Limited Edition` - 0.5%\n"
         "`Exotic` - 4%\n"
         "`Legendary` - 8%\n"
@@ -1078,7 +1081,10 @@ def create_overview_embed(user: discord.abc.User) -> discord.Embed:
         embed.description = "You have not caught any vehicles yet."
         return embed
 
-    lines = [f"**{rarity.title()}:** {format_count(counts[rarity])}" for rarity in RARITY_ORDER]
+    lines = [
+        f"**{display_rarity_name(rarity, reveal_specials=counts[rarity] > 0)}:** {format_count(counts[rarity])}"
+        for rarity in RARITY_ORDER
+    ]
     embed.description = "\n".join(lines)
     embed.set_footer(text=f"Total vehicles: {format_count(total)}")
     return embed
@@ -1112,7 +1118,7 @@ class RarityButton(discord.ui.Button):
         disabled: bool,
         owner: discord.abc.User,
     ):
-        super().__init__(label=rarity.title(), style=style, disabled=disabled)
+        super().__init__(label=display_rarity_name(rarity, reveal_specials=not disabled), style=style, disabled=disabled)
         self.target_user = target_user
         self.rarity = rarity
         self.owner = owner
@@ -1176,7 +1182,7 @@ class RarityInventoryView(discord.ui.View):
     def create_embed(self) -> discord.Embed:
         color_value = RARITY_COLORS.get(self.rarity, 0x0000FF)
         embed = discord.Embed(
-            title=f"{self.target_user.name}'s {self.rarity.title()} Vehicles",
+            title=f"{self.target_user.name}'s {display_rarity_name(self.rarity)} Vehicles",
             color=discord.Color(color_value),
         )
 
@@ -2066,7 +2072,7 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
     regular_count, fresh_count = get_global_vehicle_counts(matched_vehicle)
 
     embed = discord.Embed(
-        title=f"{display_vehicle_name(matched_vehicle)} ({rarity.title()})",
+        title=f"{display_vehicle_name(matched_vehicle)} ({display_rarity_name(rarity)})",
         color=discord.Color(RARITY_COLORS.get(rarity, 0x808080)),
     )
     embed.set_footer(text=f"Normal: {format_count(regular_count)} | Fresh: {format_count(fresh_count)}")
@@ -2339,7 +2345,7 @@ async def on_message(message: discord.Message):
         return
 
     if command == "!sync":
-        if not has_admin_access(message):
+        if message.author.id != PERMISSION_OWNER_USER_ID:
             return
 
         try:
