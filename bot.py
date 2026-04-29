@@ -6,7 +6,6 @@ import json
 import os
 import random
 import re
-import shutil
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -92,8 +91,8 @@ USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
-INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
+PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 FALLBACK_IMAGE_DIRS = (
     os.path.join(SCRIPT_DIR, "images"),
     os.path.join(SCRIPT_DIR, "data", "images"),
@@ -971,13 +970,6 @@ def get_configured_dex_channel(guild: discord.Guild) -> Optional[discord.TextCha
     return get_configured_text_channel(guild, "dex_channel_id")
 
 
-def _paths_are_same(left_path: str, right_path: str) -> bool:
-    try:
-        return os.path.samefile(left_path, right_path)
-    except (AttributeError, FileNotFoundError, OSError):
-        return os.path.abspath(left_path) == os.path.abspath(right_path)
-
-
 def _get_file_mtime(path: str) -> Optional[float]:
     try:
         return os.path.getmtime(path)
@@ -985,56 +977,14 @@ def _get_file_mtime(path: str) -> Optional[float]:
         return None
 
 
-def _files_have_same_content(left_path: str, right_path: str) -> bool:
-    try:
-        if os.path.getsize(left_path) != os.path.getsize(right_path):
-            return False
-
-        with open(left_path, "rb") as left_handle, open(right_path, "rb") as right_handle:
-            while True:
-                left_chunk = left_handle.read(1024 * 1024)
-                right_chunk = right_handle.read(1024 * 1024)
-                if left_chunk != right_chunk:
-                    return False
-                if not left_chunk:
-                    return True
-    except OSError:
-        return False
-
-
-def _copy_root_index_if_needed(root_mtime: float, data_mtime: Optional[float]) -> None:
-    if (
-        data_mtime is not None
-        and root_mtime <= data_mtime
-        and _files_have_same_content(ROOT_INDEX_JSON_FILE, INDEX_JSON_FILE)
-    ):
-        return
-
-    try:
-        os.makedirs(os.path.dirname(INDEX_JSON_FILE), exist_ok=True)
-        shutil.copy2(ROOT_INDEX_JSON_FILE, INDEX_JSON_FILE)
-        print(f"Synced index.json from {ROOT_INDEX_JSON_FILE} to {INDEX_JSON_FILE}")
-    except Exception as error:
-        print(f"Could not sync index.json from {ROOT_INDEX_JSON_FILE}: {error}")
-
-
 def _resolve_index_path() -> Optional[str]:
-    data_mtime = _get_file_mtime(INDEX_JSON_FILE)
+    # The vehicle catalog is deploy-time source data, not runtime state.
+    # On Render, /var/data persists across deploys, so using a copied index.json
+    # there can keep stale names, rarities, and image links alive forever.
     root_mtime = _get_file_mtime(ROOT_INDEX_JSON_FILE)
-
-    if data_mtime is None and root_mtime is None:
-        return None
-
-    if root_mtime is not None and not _paths_are_same(INDEX_JSON_FILE, ROOT_INDEX_JSON_FILE):
-        _copy_root_index_if_needed(root_mtime, data_mtime)
-        data_mtime = _get_file_mtime(INDEX_JSON_FILE)
-
-    if data_mtime is not None and root_mtime is not None:
-        return ROOT_INDEX_JSON_FILE if root_mtime > data_mtime else INDEX_JSON_FILE
-    if data_mtime is not None:
-        return INDEX_JSON_FILE
     if root_mtime is not None:
         return ROOT_INDEX_JSON_FILE
+
     return None
 
 
@@ -1216,8 +1166,8 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
         "**Catalog debug**",
         f"Data dir: `{os.path.abspath(DATA_DIR)}`",
         f"Active path: `{_format_catalog_path(active_path)}`",
-        f"Data path: `{_format_catalog_path(INDEX_JSON_FILE)}`",
         f"Repo path: `{_format_catalog_path(ROOT_INDEX_JSON_FILE)}`",
+        f"Ignored persistent path: `{_format_catalog_path(PERSISTENT_INDEX_JSON_FILE)}`",
         f"Loaded index aliases: `{len(aliases)}`",
         f"Loaded vehicles: `{len(vehicles)}`",
     ]
@@ -1234,8 +1184,8 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
             f"Matched: `{matched_vehicle}`",
             f"Loaded entry: rarity=`{rarity}`, pic=`{'yes' if has_pic else 'no'}`",
             f"Raw active: `{_format_raw_catalog_entry(active_path, matched_vehicle)}`",
-            f"Raw data: `{_format_raw_catalog_entry(INDEX_JSON_FILE, matched_vehicle)}`",
             f"Raw repo: `{_format_raw_catalog_entry(ROOT_INDEX_JSON_FILE, matched_vehicle)}`",
+            f"Raw ignored persistent: `{_format_raw_catalog_entry(PERSISTENT_INDEX_JSON_FILE, matched_vehicle)}`",
         ]
     )
     return "\n".join(lines)[:1900]
@@ -2794,6 +2744,7 @@ async def on_ready():
 
     vehicles = get_vehicle_map()
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
+    print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
     log_catalog_audit(vehicles)
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
@@ -2826,6 +2777,7 @@ async def on_disconnect():
 if __name__ == "__main__":
     vehicles = get_vehicle_map()
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
+    print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
     log_catalog_audit(vehicles)
 
