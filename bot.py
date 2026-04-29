@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -196,8 +197,15 @@ VEHICLES_CACHE_PATH: Optional[str] = None
 
 FRESH_INVENTORY_SUFFIX = "|fresh"
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
-REPEATED_CHAR_RE = re.compile(r"(.)\1+")
 DIGIT_ID_RE = re.compile(r"(\d+)")
+VEHICLE_ALIASES = {
+    "c17_liberty": "c17-liberty",
+    "liberty-c17": "c17-liberty",
+    "liberty_c17": "c17-liberty",
+    "golden-inteceptor": "golden-interceptor",
+    "golden_inteceptor": "golden-interceptor",
+    "inteceptor": "interceptor",
+}
 
 COUNT_SUFFIXES = (
     "",
@@ -240,7 +248,7 @@ SHORT_COUNT_SUFFIX_MAP = {
 def make_inventory_key(name: str, is_fresh: bool = False) -> str:
     if not name:
         return ""
-    key = str(name).strip()
+    key = canonical_vehicle_name(str(name).strip())
     if not key:
         return ""
     return f"{key}{FRESH_INVENTORY_SUFFIX}" if is_fresh else key
@@ -258,8 +266,16 @@ def split_inventory_key(key: str) -> tuple[str, bool]:
 def normalize_name(name: str) -> str:
     if not name:
         return ""
-    cleaned = NON_ALNUM_RE.sub("", str(name).lower())
-    return REPEATED_CHAR_RE.sub(r"\1", cleaned)
+    return NON_ALNUM_RE.sub("", str(name).lower())
+
+
+def canonical_vehicle_name(name: str) -> str:
+    key = str(name or "").strip()
+    if not key:
+        return ""
+
+    lowered = key.lower()
+    return VEHICLE_ALIASES.get(lowered, VEHICLE_ALIASES.get(lowered.replace("_", "-"), key))
 
 
 def display_vehicle_name(name_or_key: str) -> str:
@@ -659,6 +675,61 @@ def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
         print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
 
 
+def prune_inventories_to_vehicle_names(vehicle_names: set[str]) -> None:
+    if not vehicle_names:
+        return
+
+    inventories = load_inventories()
+    pruned_inventories: Dict[str, Dict[str, int]] = {}
+    migrated = False
+    removed_entries = 0
+    removed_count = 0
+
+    for raw_user_id, user_inventory in inventories.items():
+        user_id = str(raw_user_id)
+        cleaned_inventory: Dict[str, int] = {}
+
+        if not isinstance(user_inventory, dict):
+            pruned_inventories[user_id] = cleaned_inventory
+            migrated = True
+            continue
+
+        for raw_vehicle_key, raw_count in user_inventory.items():
+            base_name, is_fresh = split_inventory_key(str(raw_vehicle_key))
+            canonical_name = canonical_vehicle_name(base_name)
+            inventory_key = make_inventory_key(canonical_name, is_fresh)
+            item_count = _coerce_non_negative_int(raw_count)
+
+            if not inventory_key or item_count <= 0:
+                migrated = True
+                continue
+
+            if canonical_name not in vehicle_names:
+                migrated = True
+                removed_entries += 1
+                removed_count += item_count
+                continue
+
+            cleaned_inventory[inventory_key] = cleaned_inventory.get(inventory_key, 0) + item_count
+            if inventory_key != str(raw_vehicle_key) or item_count != raw_count:
+                migrated = True
+
+        if cleaned_inventory != user_inventory:
+            migrated = True
+        pruned_inventories[user_id] = cleaned_inventory
+
+    if pruned_inventories != inventories:
+        migrated = True
+
+    if migrated:
+        save_inventories(pruned_inventories)
+        if removed_entries:
+            print(
+                f"Pruned {removed_entries} removed vehicle inventory entries "
+                f"({removed_count} total count) after index.json update."
+            )
+
+
 def get_global_vehicle_counts(vehicle_name: str) -> tuple[int, int]:
     regular_count = 0
     fresh_count = 0
@@ -830,10 +901,48 @@ def get_configured_dex_channel(guild: discord.Guild) -> Optional[discord.TextCha
     return get_configured_text_channel(guild, "dex_channel_id")
 
 
+def _paths_are_same(left_path: str, right_path: str) -> bool:
+    try:
+        return os.path.samefile(left_path, right_path)
+    except (AttributeError, FileNotFoundError, OSError):
+        return os.path.abspath(left_path) == os.path.abspath(right_path)
+
+
+def _get_file_mtime(path: str) -> Optional[float]:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _copy_root_index_if_newer(root_mtime: float, data_mtime: Optional[float]) -> None:
+    if data_mtime is not None and root_mtime <= data_mtime:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(INDEX_JSON_FILE), exist_ok=True)
+        shutil.copy2(ROOT_INDEX_JSON_FILE, INDEX_JSON_FILE)
+        print(f"Synced index.json from {ROOT_INDEX_JSON_FILE} to {INDEX_JSON_FILE}")
+    except Exception as error:
+        print(f"Could not sync index.json from {ROOT_INDEX_JSON_FILE}: {error}")
+
+
 def _resolve_index_path() -> Optional[str]:
-    if os.path.exists(INDEX_JSON_FILE):
+    data_mtime = _get_file_mtime(INDEX_JSON_FILE)
+    root_mtime = _get_file_mtime(ROOT_INDEX_JSON_FILE)
+
+    if data_mtime is None and root_mtime is None:
+        return None
+
+    if root_mtime is not None and not _paths_are_same(INDEX_JSON_FILE, ROOT_INDEX_JSON_FILE):
+        _copy_root_index_if_newer(root_mtime, data_mtime)
+        data_mtime = _get_file_mtime(INDEX_JSON_FILE)
+
+    if data_mtime is not None and root_mtime is not None:
+        return ROOT_INDEX_JSON_FILE if root_mtime > data_mtime else INDEX_JSON_FILE
+    if data_mtime is not None:
         return INDEX_JSON_FILE
-    if os.path.exists(ROOT_INDEX_JSON_FILE):
+    if root_mtime is not None:
         return ROOT_INDEX_JSON_FILE
     return None
 
@@ -849,6 +958,34 @@ def _resolve_local_image(vehicle_name: str) -> Optional[str]:
             if os.path.isfile(test_path):
                 return test_path
     return None
+
+
+def _merge_vehicle_entry(
+    processed: Dict[str, Dict[str, Any]],
+    vehicle_name: str,
+    vehicle_data: Dict[str, Any],
+    *,
+    is_alias: bool,
+) -> None:
+    existing = processed.get(vehicle_name)
+    if not existing:
+        processed[vehicle_name] = vehicle_data
+        return
+
+    incoming_url = str(vehicle_data.get("url") or "").strip()
+    if incoming_url and (not existing.get("url") or not is_alias):
+        existing["url"] = incoming_url
+
+    incoming_local_path = vehicle_data.get("local_path")
+    if incoming_local_path and (not existing.get("local_path") or not is_alias):
+        existing["local_path"] = incoming_local_path
+
+    incoming_code = vehicle_data.get("code")
+    if incoming_code and (not existing.get("code") or not is_alias):
+        existing["code"] = incoming_code
+
+    if not is_alias:
+        existing["rarity"] = vehicle_data.get("rarity", existing.get("rarity", "common"))
 
 
 def load_vehicles() -> Dict[str, Dict[str, Any]]:
@@ -882,9 +1019,11 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
     processed: Dict[str, Dict[str, Any]] = {}
 
     for raw_name, raw_value in data.items():
-        vehicle_name = str(raw_name).strip()
+        raw_vehicle_name = str(raw_name).strip()
+        vehicle_name = canonical_vehicle_name(raw_vehicle_name)
         if not vehicle_name:
             continue
+        is_alias = vehicle_name != raw_vehicle_name
 
         image_url = ""
         rarity = "common"
@@ -907,14 +1046,17 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
             vehicle_data["code"] = code
 
         local_path = _resolve_local_image(vehicle_name)
+        if not local_path and is_alias:
+            local_path = _resolve_local_image(raw_vehicle_name)
         if local_path:
             vehicle_data["local_path"] = local_path
 
-        processed[vehicle_name] = vehicle_data
+        _merge_vehicle_entry(processed, vehicle_name, vehicle_data, is_alias=is_alias)
 
     VEHICLES_CACHE = processed
     VEHICLES_CACHE_PATH = index_path
     VEHICLES_CACHE_MTIME = current_mtime
+    prune_inventories_to_vehicle_names(set(processed.keys()))
     return VEHICLES_CACHE
 
 
@@ -1038,6 +1180,11 @@ async def expire_active_spawns(
 
 
 def find_best_vehicle_match(vehicle_names: Iterable[str], query: str) -> Optional[str]:
+    vehicle_names = list(vehicle_names)
+    canonical_query = canonical_vehicle_name(query)
+    if canonical_query in vehicle_names:
+        return canonical_query
+
     normalized_query = normalize_name(query)
     if not normalized_query:
         return None
