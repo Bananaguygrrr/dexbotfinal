@@ -99,7 +99,11 @@ FALLBACK_IMAGE_DIRS = (
 )
 IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp")
 
-os.makedirs(IMAGES_DIR, exist_ok=True)
+try:
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+except Exception as error:
+    print(f"Failed to access image cache directory '{IMAGES_DIR}': {error}. Local image cache disabled.")
+    IMAGES_DIR = ""
 
 RARITY_ORDER = (
     "specials",
@@ -108,6 +112,7 @@ RARITY_ORDER = (
     "legendary",
     "epic",
     "rare",
+    "uncommon",
     "common",
 )
 
@@ -117,8 +122,9 @@ RARITY_WEIGHTS = {
     "exotic": 4,
     "legendary": 8,
     "epic": 19,
-    "rare": 30.5,
-    "common": 37.99,
+    "rare": 25.5,
+    "uncommon": 10,
+    "common": 27.99,
 }
 
 EVENT_RARITY_WEIGHTS = {
@@ -128,6 +134,7 @@ EVENT_RARITY_WEIGHTS = {
     "legendary": 25,
     "epic": 29,
     "rare": 15,
+    "uncommon": 0,
     "common": 0,
 }
 
@@ -138,6 +145,7 @@ RARITY_COLORS = {
     "legendary": 0xFFD700,
     "epic": 0x800080,
     "rare": 0x0000FF,
+    "uncommon": 0x1EFF00,
     "common": 0x808080,
 }
 
@@ -199,6 +207,8 @@ VEHICLE_ALIASES_CACHE_SIGNATURE: Optional[tuple[tuple[str, Optional[float], Opti
 FRESH_INVENTORY_SUFFIX = "|fresh"
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
+NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
+ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
 CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
 
 COUNT_SUFFIXES = (
@@ -284,6 +294,65 @@ def _iter_alias_values(raw_aliases: Any) -> Iterable[str]:
             yield str(raw_alias or "")
 
 
+def _name_tokens_for_order_match(name: str) -> tuple[str, ...]:
+    return tuple(NAME_TOKEN_RE.findall(str(name or "").lower()))
+
+
+def _clean_vehicle_key_from_tokens(tokens: Iterable[str]) -> str:
+    return "-".join(token for token in tokens if token)
+
+
+def _order_insensitive_signature(name: str) -> tuple[str, ...]:
+    return tuple(sorted(_name_tokens_for_order_match(name)))
+
+
+def _choose_order_insensitive_canonical(names: Iterable[str]) -> str:
+    raw_names = [str(name or "").strip() for name in names if str(name or "").strip()]
+    if not raw_names:
+        return ""
+
+    scored_names = []
+    for index, raw_name in enumerate(raw_names):
+        tokens = _name_tokens_for_order_match(raw_name)
+        cleaned_key = _clean_vehicle_key_from_tokens(tokens)
+        if not cleaned_key:
+            continue
+
+        first_token = tokens[0] if tokens else ""
+        last_token = tokens[-1] if tokens else ""
+        suffix_score = 0 if last_token in ORDER_INSENSITIVE_SUFFIX_TOKENS else 1
+        prefix_penalty = 1 if first_token in ORDER_INSENSITIVE_SUFFIX_TOKENS else 0
+        clean_score = 0 if raw_name == cleaned_key else 1
+        scored_names.append((suffix_score, prefix_penalty, clean_score, index, cleaned_key))
+
+    if not scored_names:
+        return ""
+
+    scored_names.sort()
+    return scored_names[0][-1]
+
+
+def _add_vehicle_alias(aliases: Dict[str, str], alias: str, target: str) -> None:
+    alias = str(alias or "").strip()
+    target = str(target or "").strip()
+    if not alias or not target:
+        return
+
+    for alias_variant in (
+        alias,
+        alias.replace("_", "-"),
+        alias.replace("-", "_"),
+        NON_ALNUM_RE.sub("", alias.lower()),
+    ):
+        alias_key = str(alias_variant or "").strip().lower()
+        if not alias_key:
+            continue
+        existing_target = aliases.get(alias_key)
+        if existing_target and existing_target != target:
+            continue
+        aliases[alias_key] = target
+
+
 def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
     if not path or not os.path.exists(path):
         return {}
@@ -299,18 +368,37 @@ def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
         return {}
 
     aliases: Dict[str, str] = {}
+    order_groups: Dict[tuple[str, ...], list[str]] = {}
     for raw_name, raw_value in raw_data.items():
         target = str(raw_name or "").strip()
-        if not target or not isinstance(raw_value, dict):
+        if not target:
+            continue
+
+        signature = _order_insensitive_signature(target)
+        if signature:
+            order_groups.setdefault(signature, []).append(target)
+
+        _add_vehicle_alias(aliases, target.lower(), target)
+        _add_vehicle_alias(aliases, target.replace("-", "_"), target)
+        _add_vehicle_alias(aliases, target.replace("_", "-"), target)
+
+        if not isinstance(raw_value, dict):
             continue
 
         for raw_alias in _iter_alias_values(raw_value.get("aliases")):
-            alias = str(raw_alias or "").strip().lower()
-            if not alias or alias == target.lower():
-                continue
+            _add_vehicle_alias(aliases, raw_alias, target)
 
-            aliases[alias] = target
-            aliases[alias.replace("_", "-")] = target
+    for names in order_groups.values():
+        if len(names) <= 1:
+            continue
+
+        canonical = _choose_order_insensitive_canonical(names)
+        if not canonical:
+            continue
+
+        for name in names:
+            _add_vehicle_alias(aliases, name, canonical)
+            _add_vehicle_alias(aliases, name.replace("-", "_"), canonical)
 
     return aliases
 
@@ -699,7 +787,6 @@ def load_inventories() -> Dict[str, Dict[str, int]]:
 
     if not os.path.exists(USER_INVENTORIES_FILE):
         INVENTORIES_CACHE = {}
-        save_inventories(INVENTORIES_CACHE)
         return INVENTORIES_CACHE
 
     try:
@@ -981,6 +1068,16 @@ def _resolve_index_path() -> Optional[str]:
     # The vehicle catalog is deploy-time source data, not runtime state.
     # On Render, /var/data persists across deploys, so using a copied index.json
     # there can keep stale names, rarities, and image links alive forever.
+    try:
+        if (
+            os.path.exists(PERSISTENT_INDEX_JSON_FILE)
+            and os.path.abspath(PERSISTENT_INDEX_JSON_FILE) != os.path.abspath(ROOT_INDEX_JSON_FILE)
+        ):
+            os.remove(PERSISTENT_INDEX_JSON_FILE)
+            print(f"Deleted stale persistent vehicle catalog: {PERSISTENT_INDEX_JSON_FILE}")
+    except Exception as error:
+        print(f"Could not delete stale persistent vehicle catalog {PERSISTENT_INDEX_JSON_FILE}: {error}")
+
     root_mtime = _get_file_mtime(ROOT_INDEX_JSON_FILE)
     if root_mtime is not None:
         return ROOT_INDEX_JSON_FILE
@@ -991,7 +1088,7 @@ def _resolve_index_path() -> Optional[str]:
 def _resolve_local_image(vehicle_name: str) -> Optional[str]:
     seen_dirs = set()
     for image_dir in (IMAGES_DIR, *FALLBACK_IMAGE_DIRS):
-        if image_dir in seen_dirs:
+        if not image_dir or image_dir in seen_dirs:
             continue
         seen_dirs.add(image_dir)
         for extension in IMAGE_EXTENSIONS:
