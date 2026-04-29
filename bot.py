@@ -193,19 +193,14 @@ ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
+VEHICLE_ALIASES_CACHE: Dict[str, str] = {}
+VEHICLE_ALIASES_CACHE_SIGNATURE: Optional[tuple[tuple[str, Optional[float], Optional[int]], ...]] = None
 
 
 FRESH_INVENTORY_SUFFIX = "|fresh"
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
-VEHICLE_ALIASES = {
-    "c17_liberty": "c17-liberty",
-    "liberty-c17": "c17-liberty",
-    "liberty_c17": "c17-liberty",
-    "golden-inteceptor": "golden-interceptor",
-    "golden_inteceptor": "golden-interceptor",
-    "inteceptor": "interceptor",
-}
+CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
 
 COUNT_SUFFIXES = (
     "",
@@ -269,13 +264,89 @@ def normalize_name(name: str) -> str:
     return NON_ALNUM_RE.sub("", str(name).lower())
 
 
+def _index_alias_signature(path: Optional[str]) -> tuple[str, Optional[float], Optional[int]]:
+    if not path:
+        return ("", None, None)
+
+    absolute_path = os.path.abspath(path)
+    try:
+        return (absolute_path, os.path.getmtime(path), os.path.getsize(path))
+    except OSError:
+        return (absolute_path, None, None)
+
+
+def _iter_alias_values(raw_aliases: Any) -> Iterable[str]:
+    if isinstance(raw_aliases, str):
+        yield raw_aliases
+        return
+
+    if isinstance(raw_aliases, (list, tuple, set)):
+        for raw_alias in raw_aliases:
+            yield str(raw_alias or "")
+
+
+def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
+    if not path or not os.path.exists(path):
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading vehicle aliases from {path}: {error}")
+        return {}
+
+    if not isinstance(raw_data, dict):
+        return {}
+
+    aliases: Dict[str, str] = {}
+    for raw_name, raw_value in raw_data.items():
+        target = str(raw_name or "").strip()
+        if not target or not isinstance(raw_value, dict):
+            continue
+
+        for raw_alias in _iter_alias_values(raw_value.get("aliases")):
+            alias = str(raw_alias or "").strip().lower()
+            if not alias or alias == target.lower():
+                continue
+
+            aliases[alias] = target
+            aliases[alias.replace("_", "-")] = target
+
+    return aliases
+
+
+def load_vehicle_aliases() -> Dict[str, str]:
+    global VEHICLE_ALIASES_CACHE, VEHICLE_ALIASES_CACHE_SIGNATURE
+
+    index_path = _resolve_index_path()
+    signature = (_index_alias_signature(index_path),)
+    if VEHICLE_ALIASES_CACHE_SIGNATURE == signature:
+        return VEHICLE_ALIASES_CACHE
+
+    VEHICLE_ALIASES_CACHE = _load_vehicle_aliases_from_index(index_path)
+    VEHICLE_ALIASES_CACHE_SIGNATURE = signature
+    return VEHICLE_ALIASES_CACHE
+
+
 def canonical_vehicle_name(name: str) -> str:
     key = str(name or "").strip()
     if not key:
         return ""
 
     lowered = key.lower()
-    return VEHICLE_ALIASES.get(lowered, VEHICLE_ALIASES.get(lowered.replace("_", "-"), key))
+    aliases = load_vehicle_aliases()
+    canonical = aliases.get(lowered, aliases.get(lowered.replace("_", "-"), key))
+
+    # Follow one extra hop so alias files can safely rename an older alias target later.
+    second_hop = aliases.get(str(canonical).lower())
+    return second_hop or canonical
+
+
+def refresh_vehicle_aliases() -> Dict[str, str]:
+    global VEHICLE_ALIASES_CACHE_SIGNATURE
+    VEHICLE_ALIASES_CACHE_SIGNATURE = None
+    return load_vehicle_aliases()
 
 
 def display_vehicle_name(name_or_key: str) -> str:
@@ -1089,6 +1160,97 @@ def refresh_vehicles() -> Dict[str, Dict[str, Any]]:
 
 def get_vehicle_map() -> Dict[str, Dict[str, Any]]:
     return load_vehicles()
+
+
+def _raw_json_vehicle_entry(path: str, vehicle_name: str) -> Optional[Dict[str, Any]]:
+    if not path or not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception:
+        return None
+
+    if not isinstance(raw_data, dict):
+        return None
+
+    entry = raw_data.get(vehicle_name)
+    return entry if isinstance(entry, dict) else None
+
+
+def _format_catalog_path(path: str) -> str:
+    if not path:
+        return "missing"
+    exists = os.path.exists(path)
+    if not exists:
+        return f"{path} (missing)"
+
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+
+    mtime = _get_file_mtime(path)
+    mtime_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)) if mtime else "unknown"
+    return f"{path} ({size} bytes, mtime {mtime_text})"
+
+
+def _format_raw_catalog_entry(path: str, vehicle_name: str) -> str:
+    entry = _raw_json_vehicle_entry(path, vehicle_name)
+    if not entry:
+        return "missing"
+
+    rarity = entry.get("rarity", "missing")
+    has_pic = bool(str(entry.get("pic_link") or entry.get("url") or "").strip())
+    return f"rarity={rarity}, pic={'yes' if has_pic else 'no'}"
+
+
+def build_catalog_debug_message(vehicle_query: str) -> str:
+    aliases = refresh_vehicle_aliases()
+    vehicles = refresh_vehicles()
+    matched_vehicle = vehicle_query if vehicle_query in vehicles else find_best_vehicle_match(vehicles.keys(), vehicle_query)
+    active_path = _resolve_index_path() or ""
+
+    lines = [
+        "**Catalog debug**",
+        f"Data dir: `{os.path.abspath(DATA_DIR)}`",
+        f"Active path: `{_format_catalog_path(active_path)}`",
+        f"Data path: `{_format_catalog_path(INDEX_JSON_FILE)}`",
+        f"Repo path: `{_format_catalog_path(ROOT_INDEX_JSON_FILE)}`",
+        f"Loaded index aliases: `{len(aliases)}`",
+        f"Loaded vehicles: `{len(vehicles)}`",
+    ]
+
+    if not matched_vehicle:
+        lines.append(f"Vehicle `{vehicle_query}`: not found")
+        return "\n".join(lines)[:1900]
+
+    vehicle_data = vehicles[matched_vehicle]
+    rarity = str(vehicle_data.get("rarity", "missing"))
+    has_pic = bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
+    lines.extend(
+        [
+            f"Matched: `{matched_vehicle}`",
+            f"Loaded entry: rarity=`{rarity}`, pic=`{'yes' if has_pic else 'no'}`",
+            f"Raw active: `{_format_raw_catalog_entry(active_path, matched_vehicle)}`",
+            f"Raw data: `{_format_raw_catalog_entry(INDEX_JSON_FILE, matched_vehicle)}`",
+            f"Raw repo: `{_format_raw_catalog_entry(ROOT_INDEX_JSON_FILE, matched_vehicle)}`",
+        ]
+    )
+    return "\n".join(lines)[:1900]
+
+
+def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
+    for vehicle_name in CATALOG_AUDIT_VEHICLES:
+        vehicle_data = vehicles.get(vehicle_name)
+        if not vehicle_data:
+            print(f"Catalog audit: {vehicle_name}=missing")
+            continue
+
+        rarity = str(vehicle_data.get("rarity", "missing"))
+        has_pic = bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
+        print(f"Catalog audit: {vehicle_name} rarity={rarity} pic={has_pic}")
 
 
 def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
@@ -2397,6 +2559,27 @@ async def on_message(message: discord.Message):
         await message.channel.send(f"Removed {target_label} from bot admins.")
         return
 
+    if command in {"!catalogdebug", "!vehicledebug"}:
+        if not has_admin_access(message):
+            return
+
+        vehicle_query = " ".join(parts[1:]).strip()
+        if not vehicle_query:
+            await message.channel.send(f"Usage: `{command} vehicle_name`")
+            return
+
+        await message.channel.send(build_catalog_debug_message(vehicle_query))
+        return
+
+    if command in {"!reloadindex", "!refreshvehicles"}:
+        if not has_admin_access(message):
+            return
+
+        vehicles = refresh_vehicles()
+        log_catalog_audit(vehicles)
+        await message.channel.send(f"Reloaded catalog: **{len(vehicles)}** vehicles.")
+        return
+
     if command == "!testspawn":
         if not has_admin_access(message):
             return
@@ -2609,8 +2792,10 @@ async def on_ready():
     global BOT_ONLINE
     BOT_ONLINE = True
 
+    vehicles = get_vehicle_map()
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
-    print(f"Loaded {len(get_vehicle_map())} vehicles from index.json")
+    print(f"Loaded {len(vehicles)} vehicles from index.json")
+    log_catalog_audit(vehicles)
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
     print(f"Connected to {len(bot.guilds)} guild(s)")
     print(f"message_content intent enabled in code: {bot.intents.message_content}")
@@ -2639,8 +2824,10 @@ async def on_disconnect():
 
 
 if __name__ == "__main__":
+    vehicles = get_vehicle_map()
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
-    print(f"Loaded {len(get_vehicle_map())} vehicles from index.json")
+    print(f"Loaded {len(vehicles)} vehicles from index.json")
+    log_catalog_audit(vehicles)
 
     start_health_server()
 
