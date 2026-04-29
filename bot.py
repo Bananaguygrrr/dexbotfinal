@@ -493,8 +493,7 @@ def build_help_message() -> str:
         "`Rare` - 30.5%\n"
         "`Common` - 37.99%\n\n"
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
-        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds. "
-        f"Event fresh chance is {EVENT_FRESH_SPAWN_CHANCE * 100:g}%.*"
+        f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
 
 
@@ -915,8 +914,29 @@ def _get_file_mtime(path: str) -> Optional[float]:
         return None
 
 
-def _copy_root_index_if_newer(root_mtime: float, data_mtime: Optional[float]) -> None:
-    if data_mtime is not None and root_mtime <= data_mtime:
+def _files_have_same_content(left_path: str, right_path: str) -> bool:
+    try:
+        if os.path.getsize(left_path) != os.path.getsize(right_path):
+            return False
+
+        with open(left_path, "rb") as left_handle, open(right_path, "rb") as right_handle:
+            while True:
+                left_chunk = left_handle.read(1024 * 1024)
+                right_chunk = right_handle.read(1024 * 1024)
+                if left_chunk != right_chunk:
+                    return False
+                if not left_chunk:
+                    return True
+    except OSError:
+        return False
+
+
+def _copy_root_index_if_needed(root_mtime: float, data_mtime: Optional[float]) -> None:
+    if (
+        data_mtime is not None
+        and root_mtime <= data_mtime
+        and _files_have_same_content(ROOT_INDEX_JSON_FILE, INDEX_JSON_FILE)
+    ):
         return
 
     try:
@@ -935,7 +955,7 @@ def _resolve_index_path() -> Optional[str]:
         return None
 
     if root_mtime is not None and not _paths_are_same(INDEX_JSON_FILE, ROOT_INDEX_JSON_FILE):
-        _copy_root_index_if_newer(root_mtime, data_mtime)
+        _copy_root_index_if_needed(root_mtime, data_mtime)
         data_mtime = _get_file_mtime(INDEX_JSON_FILE)
 
     if data_mtime is not None and root_mtime is not None:
