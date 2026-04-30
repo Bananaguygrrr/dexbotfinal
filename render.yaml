@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: dexbotfinal
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start.py
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DATA_DIR
+        value: /var/data
+      - key: SYNC_INDEX_FROM_REPO
+        value: "1"
+      - key: COMMAND_SYNC_MODE
+        value: global
+      - key: ENABLE_INSTANCE_LOCK
+        value: "0"
+      - key: AUTO_RESTART_BOT
+        value: "0"
