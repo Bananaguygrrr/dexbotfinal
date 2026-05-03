@@ -418,6 +418,16 @@ def _patch_bot_module(dexbot: Any) -> None:
     module_id = id(dexbot)
     if module_id in _PATCHED_BOT_MODULE_IDS:
         return
+
+    required_attrs = (
+        "save_inventories",
+        "prune_inventories_to_vehicle_names",
+        "get_vehicle_map",
+        "BaseHTTPRequestHandler",
+    )
+    if any(not hasattr(dexbot, attr) for attr in required_attrs):
+        return
+
     _PATCHED_BOT_MODULE_IDS.add(module_id)
 
     _install_inventory_backup(dexbot)
@@ -432,7 +442,7 @@ def _patch_bot_module(dexbot: Any) -> None:
 
 def _import_with_bot_patch(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
     module = _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)
-    if name.split(".", 1)[0] == "bot":
+    if level == 0 and name.split(".", 1)[0] == "bot":
         dexbot = sys.modules.get("bot")
         if dexbot is not None:
             _patch_bot_module(dexbot)
