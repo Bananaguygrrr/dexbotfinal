@@ -112,7 +112,6 @@ RARITY_ORDER = (
     "legendary",
     "epic",
     "rare",
-    "uncommon",
     "common",
 )
 
@@ -123,8 +122,7 @@ RARITY_WEIGHTS = {
     "legendary": 8,
     "epic": 19,
     "rare": 25.5,
-    "uncommon": 10,
-    "common": 27.99,
+    "common": 37.99,
 }
 
 EVENT_RARITY_WEIGHTS = {
@@ -134,7 +132,6 @@ EVENT_RARITY_WEIGHTS = {
     "legendary": 25,
     "epic": 29,
     "rare": 15,
-    "uncommon": 0,
     "common": 0,
 }
 
@@ -145,7 +142,6 @@ RARITY_COLORS = {
     "legendary": 0xFFD700,
     "epic": 0x800080,
     "rare": 0x0000FF,
-    "uncommon": 0x1EFF00,
     "common": 0x808080,
 }
 
@@ -183,7 +179,7 @@ SPECIAL_CATCH_EMOJI = "\U0001F31F"
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 BOT_ONLINE = False
 BOT_STARTED_AT = int(time.time())
@@ -209,7 +205,6 @@ NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
 NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
-CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
 
 COUNT_SUFFIXES = (
     "",
@@ -332,7 +327,7 @@ def _choose_order_insensitive_canonical(names: Iterable[str]) -> str:
     return scored_names[0][-1]
 
 
-def _add_vehicle_alias(aliases: Dict[str, str], alias: str, target: str) -> None:
+def _add_vehicle_alias(aliases: Dict[str, str], alias: str, target: str, *, override: bool = False) -> None:
     alias = str(alias or "").strip()
     target = str(target or "").strip()
     if not alias or not target:
@@ -348,7 +343,7 @@ def _add_vehicle_alias(aliases: Dict[str, str], alias: str, target: str) -> None
         if not alias_key:
             continue
         existing_target = aliases.get(alias_key)
-        if existing_target and existing_target != target:
+        if existing_target and existing_target != target and not override:
             continue
         aliases[alias_key] = target
 
@@ -369,10 +364,15 @@ def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
 
     aliases: Dict[str, str] = {}
     order_groups: Dict[tuple[str, ...], list[str]] = {}
+    normalized_groups: Dict[str, list[str]] = {}
     for raw_name, raw_value in raw_data.items():
         target = str(raw_name or "").strip()
         if not target:
             continue
+
+        normalized_target = normalize_name(target)
+        if normalized_target:
+            normalized_groups.setdefault(normalized_target, []).append(target)
 
         signature = _order_insensitive_signature(target)
         if signature:
@@ -388,7 +388,8 @@ def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
         for raw_alias in _iter_alias_values(raw_value.get("aliases")):
             _add_vehicle_alias(aliases, raw_alias, target)
 
-    for names in order_groups.values():
+    duplicate_groups = list(normalized_groups.values()) + list(order_groups.values())
+    for names in duplicate_groups:
         if len(names) <= 1:
             continue
 
@@ -397,8 +398,8 @@ def _load_vehicle_aliases_from_index(path: Optional[str]) -> Dict[str, str]:
             continue
 
         for name in names:
-            _add_vehicle_alias(aliases, name, canonical)
-            _add_vehicle_alias(aliases, name.replace("-", "_"), canonical)
+            _add_vehicle_alias(aliases, name, canonical, override=True)
+            _add_vehicle_alias(aliases, name.replace("-", "_"), canonical, override=True)
 
     return aliases
 
@@ -628,6 +629,7 @@ def build_help_message() -> str:
         "`/help` - Show this help message\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
+        "`/leaderboard` - Show who owns the most vehicles\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
         "`/tradeadd vehicle_name amount` - Add vehicles to a trade\n"
@@ -636,6 +638,7 @@ def build_help_message() -> str:
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "\n"
         "**Bot Admins**\n"
+        "`!list` - Show vehicles missing pictures\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
@@ -910,6 +913,145 @@ def get_global_vehicle_counts(vehicle_name: str) -> tuple[int, int]:
     return regular_count, fresh_count
 
 
+def get_user_inventory_totals(user_inventory: Dict[str, int], vehicles: Dict[str, Dict[str, Any]]) -> tuple[int, int]:
+    total_count = 0
+    unique_vehicle_names: set[str] = set()
+
+    if not isinstance(user_inventory, dict):
+        return 0, 0
+
+    for vehicle_key, raw_count in user_inventory.items():
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+
+        if count <= 0:
+            continue
+
+        vehicle_name, _ = split_inventory_key(str(vehicle_key))
+        if vehicle_name not in vehicles:
+            continue
+
+        total_count += count
+        unique_vehicle_names.add(vehicle_name)
+
+    return total_count, len(unique_vehicle_names)
+
+
+def build_missing_vehicle_list_pages() -> list[str]:
+    vehicles = get_vehicle_map()
+    missing_vehicle_names = [
+        display_vehicle_name(vehicle_name)
+        for vehicle_name, vehicle_data in vehicles.items()
+        if not _vehicle_is_spawnable(vehicle_data)
+    ]
+    missing_vehicle_names.sort(key=str.lower)
+
+    if not missing_vehicle_names:
+        return ["No missing vehicles."]
+
+    pages: list[str] = []
+    current_lines: list[str] = []
+    current_length = 0
+    max_length = 1900
+
+    for display_name in missing_vehicle_names:
+        line = f"`{display_name}`"
+        line_length = len(line) + 1
+        if current_lines and current_length + line_length > max_length:
+            pages.append("\n".join(current_lines))
+            current_lines = []
+            current_length = 0
+
+        current_lines.append(line)
+        current_length += line_length
+
+    if current_lines:
+        pages.append("\n".join(current_lines))
+
+    return pages
+
+
+async def resolve_leaderboard_user_label(guild: Optional[discord.Guild], user_id: int) -> str:
+    if guild:
+        member = guild.get_member(user_id)
+        if member:
+            return member.display_name
+
+        try:
+            member = await guild.fetch_member(user_id)
+            return member.display_name
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+
+    try:
+        user = await bot.fetch_user(user_id)
+        return user.name
+    except (discord.NotFound, discord.HTTPException):
+        return f"User {user_id}"
+
+
+async def create_leaderboard_embed(guild: Optional[discord.Guild], viewer_id: Optional[int] = None) -> discord.Embed:
+    inventories = load_inventories()
+    vehicles = get_vehicle_map()
+    leaderboard_rows: list[tuple[int, int, int]] = []
+
+    for raw_user_id, user_inventory in inventories.items():
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            continue
+
+        total_count, unique_count = get_user_inventory_totals(user_inventory, vehicles)
+        if total_count <= 0:
+            continue
+
+        leaderboard_rows.append((total_count, unique_count, user_id))
+
+    leaderboard_rows.sort(key=lambda row: (-row[0], -row[1], row[2]))
+
+    embed = discord.Embed(title="Vehicle Leaderboard", color=discord.Color.gold())
+    if not leaderboard_rows:
+        embed.description = "No vehicles have been caught yet."
+        if viewer_id is not None:
+            embed.description += "\n\nYour rank is not ranked yet."
+        return embed
+
+    lines: list[str] = []
+    for position, (total_count, unique_count, user_id) in enumerate(leaderboard_rows[:10], start=1):
+        label = discord.utils.escape_markdown(await resolve_leaderboard_user_label(guild, user_id))
+        lines.append(
+            f"**{position}.** {label} - **{format_count(total_count)}** vehicles "
+            f"({format_count(unique_count)} unique)"
+        )
+
+    if viewer_id is not None:
+        viewer_rank: Optional[int] = None
+        viewer_total = 0
+        viewer_unique = 0
+        for position, (total_count, unique_count, user_id) in enumerate(leaderboard_rows, start=1):
+            if user_id == viewer_id:
+                viewer_rank = position
+                viewer_total = total_count
+                viewer_unique = unique_count
+                break
+
+        if viewer_rank is None:
+            lines.append("")
+            lines.append("Your rank is not ranked yet.")
+        else:
+            lines.append("")
+            lines.append(
+                f"Your rank is **#{format_count(viewer_rank)}** with "
+                f"**{format_count(viewer_total)}** vehicles ({format_count(viewer_unique)} unique)."
+            )
+
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"Ranked {format_count(len(leaderboard_rows))} players by total vehicle count")
+    return embed
+
+
 def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
     return add_vehicle_count(user_id, vehicle_name, 1, is_fresh=is_fresh)
 
@@ -1098,6 +1240,22 @@ def _resolve_local_image(vehicle_name: str) -> Optional[str]:
     return None
 
 
+def _rarity_rank(rarity: Any) -> int:
+    normalized = str(rarity or "").strip().lower()
+    try:
+        return RARITY_ORDER.index(normalized)
+    except ValueError:
+        return len(RARITY_ORDER)
+
+
+def _rarer_rarity(existing_rarity: Any, incoming_rarity: Any) -> str:
+    existing = str(existing_rarity or "common").strip().lower()
+    incoming = str(incoming_rarity or "common").strip().lower()
+    if _rarity_rank(incoming) < _rarity_rank(existing):
+        return incoming
+    return existing if existing in RARITY_WEIGHTS else "common"
+
+
 def _merge_vehicle_entry(
     processed: Dict[str, Dict[str, Any]],
     vehicle_name: str,
@@ -1122,8 +1280,7 @@ def _merge_vehicle_entry(
     if incoming_code and (not existing.get("code") or not is_alias):
         existing["code"] = incoming_code
 
-    if not is_alias:
-        existing["rarity"] = vehicle_data.get("rarity", existing.get("rarity", "common"))
+    existing["rarity"] = _rarer_rarity(existing.get("rarity"), vehicle_data.get("rarity"))
 
 
 def load_vehicles() -> Dict[str, Dict[str, Any]]:
@@ -1286,18 +1443,6 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
         ]
     )
     return "\n".join(lines)[:1900]
-
-
-def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
-    for vehicle_name in CATALOG_AUDIT_VEHICLES:
-        vehicle_data = vehicles.get(vehicle_name)
-        if not vehicle_data:
-            print(f"Catalog audit: {vehicle_name}=missing")
-            continue
-
-        rarity = str(vehicle_data.get("rarity", "missing"))
-        has_pic = bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
-        print(f"Catalog audit: {vehicle_name} rarity={rarity} pic={has_pic}")
 
 
 def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
@@ -2456,6 +2601,15 @@ async def help_slash(interaction: discord.Interaction):
     await safe_send(interaction, build_help_message(), ephemeral=True)
 
 
+@bot.tree.command(name="leaderboard", description="Show who owns the most vehicles")
+@app_commands.guild_only()
+async def leaderboard_slash(interaction: discord.Interaction):
+    if not await safe_defer(interaction):
+        return
+
+    embed = await create_leaderboard_embed(interaction.guild, interaction.user.id)
+    await safe_send(interaction, embed=embed)
+
 @bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
 @app_commands.describe(vehicle_name="The name of the vehicle to show")
 async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
@@ -2565,6 +2719,9 @@ async def on_message(message: discord.Message):
     parts = message.content.split()
     command = parts[0].lower() if parts else ""
 
+    if command == "!help":
+        return
+
     if command in {"!permadd", "!permremove"}:
         if message.author.id != PERMISSION_OWNER_USER_ID:
             return
@@ -2606,6 +2763,15 @@ async def on_message(message: discord.Message):
         await message.channel.send(f"Removed {target_label} from bot admins.")
         return
 
+    if command == "!list":
+        if not has_admin_access(message):
+            return
+
+        pages = build_missing_vehicle_list_pages()
+        for page in pages:
+            await message.channel.send(page)
+        return
+
     if command in {"!catalogdebug", "!vehicledebug"}:
         if not has_admin_access(message):
             return
@@ -2623,7 +2789,6 @@ async def on_message(message: discord.Message):
             return
 
         vehicles = refresh_vehicles()
-        log_catalog_audit(vehicles)
         await message.channel.send(f"Reloaded catalog: **{len(vehicles)}** vehicles.")
         return
 
@@ -2843,7 +3008,6 @@ async def on_ready():
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
     print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
-    log_catalog_audit(vehicles)
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
     print(f"Connected to {len(bot.guilds)} guild(s)")
     print(f"message_content intent enabled in code: {bot.intents.message_content}")
@@ -2876,7 +3040,6 @@ if __name__ == "__main__":
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
     print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
-    log_catalog_audit(vehicles)
 
     start_health_server()
 
