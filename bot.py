@@ -49,6 +49,7 @@ DISCORD_CLIENT_ID = (
     or ""
 ).strip()
 INVITE_PERMISSIONS = os.getenv("INVITE_PERMISSIONS", "2147561408").strip()
+WEBSITE_TITLE = "Military Tycoon Vehicle Dex Bot"
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -2543,27 +2544,8 @@ async def rainbow_task():
         await asyncio.gather(*update_tasks, return_exceptions=True)
 
 
-def _format_uptime(seconds: int) -> str:
-    seconds = max(0, int(seconds))
-    days, seconds = divmod(seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-
-    parts = []
-    if days:
-        parts.append(f"{days}d")
-    if hours or parts:
-        parts.append(f"{hours}h")
-    if minutes or parts:
-        parts.append(f"{minutes}m")
-    parts.append(f"{seconds}s")
-    return " ".join(parts)
-
-
 def _bot_display_name() -> str:
-    if bot.user:
-        return str(bot.user)
-    return "Military Tycoon Dex"
+    return WEBSITE_TITLE
 
 
 def _client_id_from_token() -> str:
@@ -2602,15 +2584,12 @@ def _bot_invite_url() -> str:
 
 def _website_status_payload() -> Dict[str, Any]:
     vehicles = get_vehicle_map()
-    uptime_seconds = int(time.time()) - BOT_STARTED_AT
     return {
         "online": bool(BOT_ONLINE and bot.is_ready()),
         "bot_name": _bot_display_name(),
         "guild_count": len(bot.guilds) if bot.is_ready() else 0,
         "vehicle_count": len(vehicles),
-        "spawn_rate": SPAWN_THRESHOLD,
-        "uptime": _format_uptime(uptime_seconds),
-        "uptime_seconds": uptime_seconds,
+        "last_update": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         "invite_url": _bot_invite_url(),
     }
 
@@ -2632,7 +2611,7 @@ def _render_website() -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Military Tycoon Dex</title>
+  <title>Military Tycoon Vehicle Dex Bot</title>
   <style>
     :root {{
       color-scheme: dark;
@@ -2702,7 +2681,7 @@ def _render_website() -> bytes:
     .status.offline {{ color: var(--red); }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
       margin: 24px 0;
     }}
@@ -2721,6 +2700,10 @@ def _render_website() -> bytes:
       font-size: 24px;
       font-weight: 800;
       overflow-wrap: anywhere;
+    }}
+    .value.time {{
+      font-size: 18px;
+      line-height: 1.35;
     }}
     .actions {{
       display: flex;
@@ -2764,8 +2747,7 @@ def _render_website() -> bytes:
   <main>
     <section class="top">
       <div>
-        <h1>{escape(str(status["bot_name"]))}</h1>
-        <p>Military Tycoon vehicle dex and inventory bot.</p>
+        <h1>Military Tycoon Vehicle Dex Bot</h1>
       </div>
       <div class="status {status_class}" id="status-pill">
         <span class="dot"></span>
@@ -2782,17 +2764,13 @@ def _render_website() -> bytes:
         <div class="value" id="vehicle-count">{status["vehicle_count"]}</div>
       </div>
       <div class="metric">
-        <div class="label">Spawn rate</div>
-        <div class="value">1 / {status["spawn_rate"]} msgs</div>
-      </div>
-      <div class="metric">
-        <div class="label">Uptime</div>
-        <div class="value" id="uptime">{escape(str(status["uptime"]))}</div>
+        <div class="label">Last update</div>
+        <div class="value time" id="last-update">{escape(str(status["last_update"]))}</div>
       </div>
     </section>
     <section class="actions">
       {invite_html}
-      <p>Use <code>/help</code> in Discord after adding the bot.</p>
+      <p>Use <code>/help</code></p>
     </section>
   </main>
   <script>
@@ -2808,7 +2786,7 @@ def _render_website() -> bytes:
         statusText.textContent = data.online ? 'Online' : 'Offline';
         document.getElementById('guild-count').textContent = data.guild_count;
         document.getElementById('vehicle-count').textContent = data.vehicle_count;
-        document.getElementById('uptime').textContent = data.uptime;
+        document.getElementById('last-update').textContent = data.last_update;
       }} catch (error) {{}}
     }}
     setInterval(refreshStatus, 15000);
