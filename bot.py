@@ -50,6 +50,8 @@ DISCORD_CLIENT_ID = (
 ).strip()
 INVITE_PERMISSIONS = os.getenv("INVITE_PERMISSIONS", "2147561408").strip()
 WEBSITE_TITLE = "Military Tycoon Vehicle Dex Bot"
+WEBSITE_BACKGROUND_URL = os.getenv("WEBSITE_BACKGROUND_URL", "").strip()
+SERVER_INVITE_URL = os.getenv("SERVER_INVITE_URL", "https://discord.gg/yWJHqqBRSJ").strip()
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -2601,6 +2603,7 @@ def _website_status_payload() -> Dict[str, Any]:
         "last_update": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         "invite_url": _bot_invite_url(),
         "avatar_url": _bot_avatar_url(),
+        "server_invite_url": SERVER_INVITE_URL,
     }
 
 
@@ -2608,16 +2611,42 @@ def _render_website() -> bytes:
     status = _website_status_payload()
     is_online = bool(status["online"])
     invite_url = str(status["invite_url"])
+    server_invite_url = str(status.get("server_invite_url") or "")
+    background_layer = (
+        f'url("{escape(WEBSITE_BACKGROUND_URL)}") center / cover no-repeat,'
+        if WEBSITE_BACKGROUND_URL
+        else ""
+    )
     invite_html = (
-        f'<a class="button" href="{escape(invite_url)}" target="_blank" rel="noopener">Add to server</a>'
+        f'<a class="button primary" href="{escape(invite_url)}" target="_blank" rel="noopener">Add to server</a>'
         if invite_url
-        else '<span class="button disabled" title="Set DISCORD_CLIENT_ID if the bot is offline">Add to server</span>'
+        else '<span class="button primary disabled" title="Set DISCORD_CLIENT_ID if the bot is offline">Add to server</span>'
+    )
+    server_html = (
+        f'<a class="button secondary" href="{escape(server_invite_url)}" target="_blank" rel="noopener">Join Discord</a>'
+        if server_invite_url
+        else ""
+    )
+    nav_invite_html = (
+        f'<a href="{escape(invite_url)}" target="_blank" rel="noopener">Invite</a>'
+        if invite_url
+        else ""
+    )
+    nav_server_html = (
+        f'<a href="{escape(server_invite_url)}" target="_blank" rel="noopener">Discord</a>'
+        if server_invite_url
+        else ""
     )
     avatar_url = str(status.get("avatar_url") or "")
     profile_html = (
         f'<img class="profile" src="{escape(avatar_url)}" alt="Military Tycoon Dex logo">'
         if avatar_url
         else '<div class="profile fallback">MT<br>DEX</div>'
+    )
+    brand_icon_html = (
+        f'<img class="brand-icon" src="{escape(avatar_url)}" alt="">'
+        if avatar_url
+        else '<span class="brand-mark">DEX</span>'
     )
     status_text = "Online" if is_online else "Offline"
     status_class = "online" if is_online else "offline"
@@ -2631,38 +2660,118 @@ def _render_website() -> bytes:
   <style>
     :root {{
       color-scheme: dark;
-      --bg: #805ce8;
-      --panel: #805ce8;
-      --line: rgba(255, 255, 255, 0.55);
-      --text: #f1f3f7;
-      --muted: rgba(255, 255, 255, 0.9);
-      --green: #35d07f;
-      --red: #ff5c72;
-      --accent: #ffffff;
-      --accent-text: #805ce8;
+      --black: #090b0a;
+      --gunmetal: #151a18;
+      --steel: #263238;
+      --olive: #3d4a2b;
+      --moss: #66713a;
+      --sand: #c6aa72;
+      --amber: #ff9d3d;
+      --text: #f8f4e8;
+      --muted: rgba(248, 244, 232, 0.84);
+      --line: rgba(248, 244, 232, 0.28);
+      --green: #54f08c;
+      --red: #ff6578;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
+      background:
+        linear-gradient(90deg, rgba(5, 7, 5, 0.9), rgba(15, 20, 17, 0.56) 45%, rgba(5, 7, 5, 0.82)),
+        {background_layer}
+        radial-gradient(circle at 16% 72%, rgba(198, 170, 114, 0.28), transparent 30%),
+        linear-gradient(135deg, #111714 0%, #263126 29%, #5b6335 48%, #997044 68%, #191e1d 100%);
       color: var(--text);
+      overflow-x: hidden;
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(118deg, transparent 0 12%, rgba(92, 102, 55, 0.35) 12% 24%, transparent 24% 37%, rgba(31, 39, 35, 0.45) 37% 51%, transparent 51% 64%, rgba(181, 142, 82, 0.2) 64% 75%, transparent 75%),
+        linear-gradient(43deg, transparent 0 18%, rgba(10, 12, 11, 0.38) 18% 29%, transparent 29% 43%, rgba(76, 88, 48, 0.28) 43% 54%, transparent 54%);
+      mix-blend-mode: soft-light;
+    }}
+    body::after {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(84, 240, 140, 0.12) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(84, 240, 140, 0.08) 1px, transparent 1px),
+        linear-gradient(135deg, transparent 0 47%, rgba(255, 157, 61, 0.18) 48% 49%, transparent 50% 100%);
+      background-size: 80px 80px, 80px 80px, 260px 260px;
+      opacity: 0.48;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent 75%);
+    }}
+    .topbar {{
+      position: relative;
+      z-index: 2;
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 18px clamp(18px, 4vw, 46px);
+      background: rgba(8, 11, 10, 0.72);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(14px);
+    }}
+    .brand {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 900;
+      letter-spacing: 0;
+    }}
+    .brand-icon, .brand-mark {{
+      width: 38px;
+      height: 38px;
+      object-fit: contain;
+      border-radius: 50%;
+    }}
+    .brand-mark {{
       display: grid;
       place-items: center;
-      padding: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 11px;
     }}
+    nav {{
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 18px;
+      flex-wrap: wrap;
+    }}
+    nav a {{
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 800;
+      font-size: 14px;
+    }}
+    nav a:hover {{ color: var(--text); }}
     main {{
-      width: min(980px, 100%);
-      background: var(--panel);
-      border-radius: 0;
-      padding: 42px;
+      position: relative;
+      z-index: 1;
+      min-height: calc(100vh - 72px);
+      display: grid;
+      place-items: center;
+      padding: clamp(34px, 6vw, 92px) clamp(18px, 5vw, 72px);
     }}
     h1 {{
       margin: 0;
-      font-size: 62px;
-      line-height: 1.15;
+      font-size: clamp(44px, 6vw, 82px);
+      line-height: 1.05;
       letter-spacing: 0;
+      text-shadow: 0 6px 28px rgba(0, 0, 0, 0.48);
     }}
     p {{
       margin: 0;
@@ -2670,18 +2779,20 @@ def _render_website() -> bytes:
       line-height: 1.5;
     }}
     .hero {{
+      width: min(1120px, 100%);
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 64px;
+      gap: clamp(42px, 8vw, 98px);
     }}
     .profile-wrap {{
-      flex: 0 1 390px;
+      flex: 0 1 430px;
       display: flex;
       justify-content: center;
+      filter: drop-shadow(0 28px 44px rgba(0, 0, 0, 0.62));
     }}
     .profile {{
-      width: min(390px, 42vw);
+      width: min(430px, 42vw);
       max-width: 100%;
       aspect-ratio: 1;
       object-fit: contain;
@@ -2702,6 +2813,7 @@ def _render_website() -> bytes:
     .content {{
       flex: 1 1 420px;
       min-width: 0;
+      padding: 28px 0;
     }}
     .status {{
       display: inline-flex;
@@ -2713,7 +2825,8 @@ def _render_website() -> bytes:
       font-weight: 700;
       white-space: nowrap;
       margin-bottom: 18px;
-      background: rgba(0, 0, 0, 0.1);
+      background: rgba(9, 11, 10, 0.58);
+      backdrop-filter: blur(10px);
     }}
     .dot {{
       width: 10px;
@@ -2727,8 +2840,8 @@ def _render_website() -> bytes:
     .grid {{
       display: grid;
       grid-template-columns: 1fr;
-      gap: 8px;
-      margin: 20px 0 24px;
+      gap: 9px;
+      margin: 22px 0 28px;
     }}
     .metric {{
       border: 0;
@@ -2738,15 +2851,17 @@ def _render_website() -> bytes:
     }}
     .label {{
       color: var(--muted);
-      font-size: 21px;
+      font-size: 22px;
       margin-bottom: 0;
       display: inline;
+      text-shadow: 0 4px 20px rgba(0, 0, 0, 0.38);
     }}
     .value {{
-      font-size: 23px;
-      font-weight: 800;
+      font-size: 24px;
+      font-weight: 900;
       overflow-wrap: anywhere;
       display: inline;
+      color: #fff;
     }}
     .value.time {{
       font-size: 20px;
@@ -2760,21 +2875,32 @@ def _render_website() -> bytes:
     }}
     .button {{
       appearance: none;
-      border: 3px solid #fff;
+      border: 2px solid rgba(255, 255, 255, 0.88);
       border-radius: 999px;
-      background: transparent;
-      color: #fff;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
       font-weight: 800;
       padding: 12px 28px;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 260px;
+      min-width: 220px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(10px);
+    }}
+    .button.primary {{
+      background: linear-gradient(135deg, rgba(255, 157, 61, 0.88), rgba(198, 170, 114, 0.72));
+      color: #16130d;
+      border-color: rgba(255, 226, 159, 0.9);
+    }}
+    .button.secondary {{
+      background: rgba(12, 16, 14, 0.62);
     }}
     .button:hover {{
+      transform: translateY(-1px);
       background: #fff;
-      color: var(--accent-text);
+      color: #151914;
     }}
     .button.disabled {{
       background: rgba(0, 0, 0, 0.12);
@@ -2788,6 +2914,12 @@ def _render_website() -> bytes:
       padding: 2px 6px;
     }}
     @media (max-width: 760px) {{
+      .topbar {{
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+      }}
+      nav {{ justify-content: flex-start; }}
       main {{ padding: 28px; }}
       .hero {{
         flex-direction: column;
@@ -2797,11 +2929,23 @@ def _render_website() -> bytes:
       .profile {{ width: min(270px, 72vw); }}
       h1 {{ font-size: 42px; }}
       .actions {{ justify-content: center; }}
+      .content {{ padding: 0; }}
       .button {{ min-width: min(280px, 100%); }}
     }}
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      {brand_icon_html}
+      <span>Military Tycoon Dex</span>
+    </a>
+    <nav>
+      <a href="/status">Status</a>
+      {nav_invite_html}
+      {nav_server_html}
+    </nav>
+  </header>
   <main>
     <section class="hero">
       <div class="profile-wrap">
@@ -2831,8 +2975,9 @@ def _render_website() -> bytes:
         </section>
         <section class="actions">
           {invite_html}
-          <p>Use <code>/help</code></p>
+          {server_html}
         </section>
+        <p>Use <code>/help</code></p>
       </div>
     </section>
   </main>
@@ -2882,6 +3027,18 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(302)
             self.send_header("Location", invite_url)
+            self.end_headers()
+            return
+
+        if self.path.startswith("/discord") or self.path.startswith("/server"):
+            if not SERVER_INVITE_URL:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"Discord server URL is not configured yet.")
+                return
+            self.send_response(302)
+            self.send_header("Location", SERVER_INVITE_URL)
             self.end_headers()
             return
 
