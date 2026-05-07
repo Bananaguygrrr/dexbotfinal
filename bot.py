@@ -3047,7 +3047,7 @@ async def set_ready_presence():
     try:
         await bot.change_presence(
             status=discord.Status.online,
-            activity=discord.Game(name="/help"),
+            activity=discord.Game(name="/help | https://dexbotfinal.onrender.com/"),
         )
         print("Presence set to online.")
     except Exception as error:
