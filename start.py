@@ -114,7 +114,6 @@ def run_bot() -> None:
         f"{os.path.abspath(dexbot.VEHICLES_CACHE_PATH) if dexbot.VEHICLES_CACHE_PATH else 'missing'}"
     )
     print(f"Loaded {len(vehicles)} vehicles from index.json")
-    dexbot.log_catalog_audit(vehicles)
 
     dexbot.start_health_server()
 
