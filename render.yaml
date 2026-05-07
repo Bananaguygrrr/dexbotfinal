@@ -2,19 +2,42 @@ services:
   - type: web
     name: dexbotfinal
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python start.py
+    plan: starter
+    region: oregon
     autoDeploy: true
+    buildCommand: |
+      pip install -r requirements.txt
+      python3 -m py_compile bot.py
+      g++ -std=c++17 -O2 -Wall -Wextra -pedantic main.cpp -o dexbot_boot
+    startCommand: ./dexbot_boot
+    disk:
+      name: dexbot-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: DISCORD_TOKEN
         sync: false
       - key: DATA_DIR
         value: /var/data
-      - key: SYNC_INDEX_FROM_REPO
-        value: "1"
+      - key: DEXBOT_PYTHON_COMMAND
+        value: python3 bot.py
+      - key: ENABLE_INSTANCE_LOCK
+        value: "false"
+      - key: AUTO_RESTART_BOT
+        value: "false"
+      - key: SPAWN_RATE
+        value: "50"
+      - key: SPAWN_DESPAWN_SECONDS
+        value: "240"
+      - key: FRESH_SPAWN_CHANCE
+        value: "0.005"
+      - key: EVENT_FRESH_SPAWN_CHANCE
+        value: "0.05"
+      - key: EVENT_SPAWN_DESPAWN_SECONDS
+        value: "60"
+      - key: EVENT_MAX_SPAWNS
+        value: "25"
+      - key: EVENT_SPAWN_DELAY_SECONDS
+        value: "3"
       - key: COMMAND_SYNC_MODE
         value: global
-      - key: ENABLE_INSTANCE_LOCK
-        value: "0"
-      - key: AUTO_RESTART_BOT
-        value: "0"

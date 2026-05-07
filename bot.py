@@ -205,6 +205,7 @@ NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
 NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
+CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
 
 COUNT_SUFFIXES = (
     "",
@@ -1443,6 +1444,18 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
         ]
     )
     return "\n".join(lines)[:1900]
+
+
+def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
+    for vehicle_name in CATALOG_AUDIT_VEHICLES:
+        vehicle_data = vehicles.get(vehicle_name)
+        if not vehicle_data:
+            print(f"Catalog audit: {vehicle_name}=missing")
+            continue
+
+        rarity = str(vehicle_data.get("rarity", "missing"))
+        has_pic = bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
+        print(f"Catalog audit: {vehicle_name} rarity={rarity} pic={has_pic}")
 
 
 def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
@@ -2789,6 +2802,7 @@ async def on_message(message: discord.Message):
             return
 
         vehicles = refresh_vehicles()
+        log_catalog_audit(vehicles)
         await message.channel.send(f"Reloaded catalog: **{len(vehicles)}** vehicles.")
         return
 
@@ -3008,6 +3022,7 @@ async def on_ready():
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
     print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
+    log_catalog_audit(vehicles)
     print(f"Bot is logged in as {bot.user.name} | pid={os.getpid()} | started={BOT_STARTED_AT}")
     print(f"Connected to {len(bot.guilds)} guild(s)")
     print(f"message_content intent enabled in code: {bot.intents.message_content}")
@@ -3040,6 +3055,7 @@ if __name__ == "__main__":
     print(f"Using data directory: {os.path.abspath(DATA_DIR)}")
     print(f"Vehicle catalog source: {os.path.abspath(VEHICLES_CACHE_PATH) if VEHICLES_CACHE_PATH else 'missing'}")
     print(f"Loaded {len(vehicles)} vehicles from index.json")
+    log_catalog_audit(vehicles)
 
     start_health_server()
 
