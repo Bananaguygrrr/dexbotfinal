@@ -115,7 +115,7 @@ def run_bot() -> None:
     )
     print(f"Loaded {len(vehicles)} vehicles from index.json")
 
-    dexbot.start_health_server()
+    dexbot.start_website_server()
 
     if not dexbot.TOKEN:
         print("No DISCORD_TOKEN found. Set it in environment variables or .env.")
