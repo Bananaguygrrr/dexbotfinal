@@ -2548,6 +2548,15 @@ def _bot_display_name() -> str:
     return WEBSITE_TITLE
 
 
+def _bot_avatar_url() -> str:
+    if not bot.user:
+        return ""
+    try:
+        return str(bot.user.display_avatar.replace(size=512, static_format="png").url)
+    except Exception:
+        return str(bot.user.display_avatar.url)
+
+
 def _client_id_from_token() -> str:
     token_prefix = TOKEN.split(".", 1)[0].strip()
     if not token_prefix:
@@ -2591,6 +2600,7 @@ def _website_status_payload() -> Dict[str, Any]:
         "vehicle_count": len(vehicles),
         "last_update": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         "invite_url": _bot_invite_url(),
+        "avatar_url": _bot_avatar_url(),
     }
 
 
@@ -2602,6 +2612,12 @@ def _render_website() -> bytes:
         f'<a class="button" href="{escape(invite_url)}" target="_blank" rel="noopener">Add to server</a>'
         if invite_url
         else '<span class="button disabled" title="Set DISCORD_CLIENT_ID if the bot is offline">Add to server</span>'
+    )
+    avatar_url = str(status.get("avatar_url") or "")
+    profile_html = (
+        f'<img class="profile" src="{escape(avatar_url)}" alt="Military Tycoon Dex logo">'
+        if avatar_url
+        else '<div class="profile fallback">MT<br>DEX</div>'
     )
     status_text = "Online" if is_online else "Offline"
     status_class = "online" if is_online else "offline"
@@ -2615,14 +2631,15 @@ def _render_website() -> bytes:
   <style>
     :root {{
       color-scheme: dark;
-      --bg: #101114;
-      --panel: #1b1d23;
-      --line: #2b2f38;
+      --bg: #805ce8;
+      --panel: #805ce8;
+      --line: rgba(255, 255, 255, 0.55);
       --text: #f1f3f7;
-      --muted: #a6adba;
+      --muted: rgba(255, 255, 255, 0.9);
       --green: #35d07f;
       --red: #ff5c72;
-      --accent: #5aa7ff;
+      --accent: #ffffff;
+      --accent-text: #805ce8;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -2636,15 +2653,14 @@ def _render_website() -> bytes:
       padding: 24px;
     }}
     main {{
-      width: min(720px, 100%);
-      border: 1px solid var(--line);
+      width: min(980px, 100%);
       background: var(--panel);
-      border-radius: 8px;
-      padding: 28px;
+      border-radius: 0;
+      padding: 42px;
     }}
     h1 {{
-      margin: 0 0 8px;
-      font-size: 28px;
+      margin: 0;
+      font-size: 62px;
       line-height: 1.15;
       letter-spacing: 0;
     }}
@@ -2653,12 +2669,39 @@ def _render_website() -> bytes:
       color: var(--muted);
       line-height: 1.5;
     }}
-    .top {{
+    .hero {{
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 18px;
-      margin-bottom: 28px;
+      align-items: center;
+      justify-content: center;
+      gap: 64px;
+    }}
+    .profile-wrap {{
+      flex: 0 1 390px;
+      display: flex;
+      justify-content: center;
+    }}
+    .profile {{
+      width: min(390px, 42vw);
+      max-width: 100%;
+      aspect-ratio: 1;
+      object-fit: contain;
+      display: block;
+    }}
+    .profile.fallback {{
+      border: 5px solid rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-size: 68px;
+      font-weight: 900;
+      line-height: 0.9;
+      color: white;
+      background: rgba(0, 0, 0, 0.18);
+    }}
+    .content {{
+      flex: 1 1 420px;
+      min-width: 0;
     }}
     .status {{
       display: inline-flex;
@@ -2666,9 +2709,11 @@ def _render_website() -> bytes:
       gap: 8px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 8px 12px;
+      padding: 8px 13px;
       font-weight: 700;
       white-space: nowrap;
+      margin-bottom: 18px;
+      background: rgba(0, 0, 0, 0.1);
     }}
     .dot {{
       width: 10px;
@@ -2681,28 +2726,30 @@ def _render_website() -> bytes:
     .status.offline {{ color: var(--red); }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin: 24px 0;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin: 20px 0 24px;
     }}
     .metric {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-      min-height: 88px;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      min-height: 0;
     }}
     .label {{
       color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 8px;
+      font-size: 21px;
+      margin-bottom: 0;
+      display: inline;
     }}
     .value {{
-      font-size: 24px;
+      font-size: 23px;
       font-weight: 800;
       overflow-wrap: anywhere;
+      display: inline;
     }}
     .value.time {{
-      font-size: 18px;
+      font-size: 20px;
       line-height: 1.35;
     }}
     .actions {{
@@ -2713,64 +2760,80 @@ def _render_website() -> bytes:
     }}
     .button {{
       appearance: none;
-      border: 0;
-      border-radius: 8px;
-      background: var(--accent);
-      color: #07111f;
+      border: 3px solid #fff;
+      border-radius: 999px;
+      background: transparent;
+      color: #fff;
       font-weight: 800;
-      padding: 12px 16px;
+      padding: 12px 28px;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      min-width: 260px;
+    }}
+    .button:hover {{
+      background: #fff;
+      color: var(--accent-text);
     }}
     .button.disabled {{
-      background: #343945;
-      color: var(--muted);
+      background: rgba(0, 0, 0, 0.12);
+      color: rgba(255, 255, 255, 0.7);
     }}
     code {{
       color: var(--text);
-      background: #111318;
-      border: 1px solid var(--line);
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 6px;
       padding: 2px 6px;
     }}
-    @media (max-width: 620px) {{
-      .top {{ display: block; }}
-      .status {{ margin-top: 16px; }}
-      .grid {{ grid-template-columns: 1fr; }}
-      main {{ padding: 22px; }}
+    @media (max-width: 760px) {{
+      main {{ padding: 28px; }}
+      .hero {{
+        flex-direction: column;
+        gap: 28px;
+        text-align: center;
+      }}
+      .profile {{ width: min(270px, 72vw); }}
+      h1 {{ font-size: 42px; }}
+      .actions {{ justify-content: center; }}
+      .button {{ min-width: min(280px, 100%); }}
     }}
   </style>
 </head>
 <body>
   <main>
-    <section class="top">
-      <div>
+    <section class="hero">
+      <div class="profile-wrap">
+        {profile_html}
+      </div>
+      <div class="content">
+        <div class="status {status_class}" id="status-pill">
+          <span class="dot"></span>
+          <span id="status-text">{status_text}</span>
+        </div>
         <h1>Military Tycoon Vehicle Dex Bot</h1>
+        <section class="grid">
+          <div class="metric">
+            <span class="label">Serving </span>
+            <span class="value" id="guild-count">{status["guild_count"]}</span>
+            <span class="label"> servers</span>
+          </div>
+          <div class="metric">
+            <span class="label">With </span>
+            <span class="value" id="vehicle-count">{status["vehicle_count"]}</span>
+            <span class="label"> vehicles</span>
+          </div>
+          <div class="metric">
+            <span class="label">Last update </span>
+            <span class="value time" id="last-update">{escape(str(status["last_update"]))}</span>
+          </div>
+        </section>
+        <section class="actions">
+          {invite_html}
+          <p>Use <code>/help</code></p>
+        </section>
       </div>
-      <div class="status {status_class}" id="status-pill">
-        <span class="dot"></span>
-        <span id="status-text">{status_text}</span>
-      </div>
-    </section>
-    <section class="grid">
-      <div class="metric">
-        <div class="label">Servers</div>
-        <div class="value" id="guild-count">{status["guild_count"]}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Vehicles</div>
-        <div class="value" id="vehicle-count">{status["vehicle_count"]}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Last update</div>
-        <div class="value time" id="last-update">{escape(str(status["last_update"]))}</div>
-      </div>
-    </section>
-    <section class="actions">
-      {invite_html}
-      <p>Use <code>/help</code></p>
     </section>
   </main>
   <script>
