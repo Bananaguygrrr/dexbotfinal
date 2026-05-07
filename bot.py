@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import builtins
 import json
 import os
@@ -8,6 +9,7 @@ import random
 import re
 import sys
 import time
+from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any, Dict, Iterable, Optional
@@ -40,6 +42,13 @@ print = print_flush
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
+DISCORD_CLIENT_ID = (
+    os.getenv("DISCORD_CLIENT_ID")
+    or os.getenv("DISCORD_APPLICATION_ID")
+    or os.getenv("CLIENT_ID")
+    or ""
+).strip()
+INVITE_PERMISSIONS = os.getenv("INVITE_PERMISSIONS", "2147561408").strip()
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -2534,19 +2543,320 @@ async def rainbow_task():
         await asyncio.gather(*update_tasks, return_exceptions=True)
 
 
-class _HealthHandler(BaseHTTPRequestHandler):
+def _format_uptime(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or parts:
+        parts.append(f"{hours}h")
+    if minutes or parts:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def _bot_display_name() -> str:
+    if bot.user:
+        return str(bot.user)
+    return "Military Tycoon Dex"
+
+
+def _client_id_from_token() -> str:
+    token_prefix = TOKEN.split(".", 1)[0].strip()
+    if not token_prefix:
+        return ""
+
+    try:
+        padded_prefix = token_prefix + "=" * (-len(token_prefix) % 4)
+        decoded = base64.urlsafe_b64decode(padded_prefix.encode("ascii")).decode("ascii")
+    except Exception:
+        return ""
+
+    return decoded if decoded.isdigit() else ""
+
+
+def _bot_client_id() -> str:
+    if DISCORD_CLIENT_ID:
+        return DISCORD_CLIENT_ID
+    if bot.user:
+        return str(bot.user.id)
+    return _client_id_from_token()
+
+
+def _bot_invite_url() -> str:
+    client_id = _bot_client_id()
+    if not client_id:
+        return ""
+    return (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={client_id}"
+        f"&permissions={INVITE_PERMISSIONS or '2147561408'}"
+        "&scope=bot%20applications.commands"
+    )
+
+
+def _website_status_payload() -> Dict[str, Any]:
+    vehicles = get_vehicle_map()
+    uptime_seconds = int(time.time()) - BOT_STARTED_AT
+    return {
+        "online": bool(BOT_ONLINE and bot.is_ready()),
+        "bot_name": _bot_display_name(),
+        "guild_count": len(bot.guilds) if bot.is_ready() else 0,
+        "vehicle_count": len(vehicles),
+        "spawn_rate": SPAWN_THRESHOLD,
+        "uptime": _format_uptime(uptime_seconds),
+        "uptime_seconds": uptime_seconds,
+        "invite_url": _bot_invite_url(),
+    }
+
+
+def _render_website() -> bytes:
+    status = _website_status_payload()
+    is_online = bool(status["online"])
+    invite_url = str(status["invite_url"])
+    invite_html = (
+        f'<a class="button" href="{escape(invite_url)}" target="_blank" rel="noopener">Add to server</a>'
+        if invite_url
+        else '<span class="button disabled" title="Set DISCORD_CLIENT_ID if the bot is offline">Add to server</span>'
+    )
+    status_text = "Online" if is_online else "Offline"
+    status_class = "online" if is_online else "offline"
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Military Tycoon Dex</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #1b1d23;
+      --line: #2b2f38;
+      --text: #f1f3f7;
+      --muted: #a6adba;
+      --green: #35d07f;
+      --red: #ff5c72;
+      --accent: #5aa7ff;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }}
+    main {{
+      width: min(720px, 100%);
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 28px;
+    }}
+    h1 {{
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }}
+    p {{
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }}
+    .top {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 28px;
+    }}
+    .status {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }}
+    .dot {{
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+    }}
+    .status.online .dot {{ background: var(--green); }}
+    .status.online {{ color: var(--green); }}
+    .status.offline {{ color: var(--red); }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 24px 0;
+    }}
+    .metric {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 88px;
+    }}
+    .label {{
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }}
+    .value {{
+      font-size: 24px;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }}
+    .actions {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .button {{
+      appearance: none;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #07111f;
+      font-weight: 800;
+      padding: 12px 16px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .button.disabled {{
+      background: #343945;
+      color: var(--muted);
+    }}
+    code {{
+      color: var(--text);
+      background: #111318;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 2px 6px;
+    }}
+    @media (max-width: 620px) {{
+      .top {{ display: block; }}
+      .status {{ margin-top: 16px; }}
+      .grid {{ grid-template-columns: 1fr; }}
+      main {{ padding: 22px; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="top">
+      <div>
+        <h1>{escape(str(status["bot_name"]))}</h1>
+        <p>Military Tycoon vehicle dex and inventory bot.</p>
+      </div>
+      <div class="status {status_class}" id="status-pill">
+        <span class="dot"></span>
+        <span id="status-text">{status_text}</span>
+      </div>
+    </section>
+    <section class="grid">
+      <div class="metric">
+        <div class="label">Servers</div>
+        <div class="value" id="guild-count">{status["guild_count"]}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Vehicles</div>
+        <div class="value" id="vehicle-count">{status["vehicle_count"]}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Spawn rate</div>
+        <div class="value">1 / {status["spawn_rate"]} msgs</div>
+      </div>
+      <div class="metric">
+        <div class="label">Uptime</div>
+        <div class="value" id="uptime">{escape(str(status["uptime"]))}</div>
+      </div>
+    </section>
+    <section class="actions">
+      {invite_html}
+      <p>Use <code>/help</code> in Discord after adding the bot.</p>
+    </section>
+  </main>
+  <script>
+    async function refreshStatus() {{
+      try {{
+        const res = await fetch('/status', {{ cache: 'no-store' }});
+        if (!res.ok) return;
+        const data = await res.json();
+        const pill = document.getElementById('status-pill');
+        const statusText = document.getElementById('status-text');
+        pill.classList.toggle('online', Boolean(data.online));
+        pill.classList.toggle('offline', !data.online);
+        statusText.textContent = data.online ? 'Online' : 'Offline';
+        document.getElementById('guild-count').textContent = data.guild_count;
+        document.getElementById('vehicle-count').textContent = data.vehicle_count;
+        document.getElementById('uptime').textContent = data.uptime;
+      }} catch (error) {{}}
+    }}
+    setInterval(refreshStatus, 15000);
+  </script>
+</body>
+</html>"""
+    return html.encode("utf-8")
+
+
+class _WebsiteHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/status"):
+            payload = _website_status_payload()
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path.startswith("/invite"):
+            invite_url = _bot_invite_url()
+            if not invite_url:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"Invite URL is not configured yet.")
+                return
+            self.send_response(302)
+            self.send_header("Location", invite_url)
+            self.end_headers()
+            return
+
+        body = _render_website()
         self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        payload = {"running": True, "online": bool(BOT_ONLINE)}
-        self.wfile.write(json.dumps(payload).encode("utf-8"))
+        self.wfile.write(body)
 
     def log_message(self, format, *args):
         return
 
 
-def start_health_server():
+def start_website_server():
     port_value = os.getenv("PORT")
     if not port_value:
         return
@@ -2559,11 +2869,11 @@ def start_health_server():
 
     def _serve():
         try:
-            server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-            print(f"Health server listening on port {port}")
+            server = HTTPServer(("0.0.0.0", port), _WebsiteHandler)
+            print(f"Website server listening on port {port}")
             server.serve_forever()
         except Exception as error:
-            print(f"Health server error: {error}")
+            print(f"Website server error: {error}")
 
     Thread(target=_serve, daemon=True).start()
 
@@ -3057,7 +3367,7 @@ if __name__ == "__main__":
     print(f"Loaded {len(vehicles)} vehicles from index.json")
     log_catalog_audit(vehicles)
 
-    start_health_server()
+    start_website_server()
 
     if not TOKEN:
         print("No DISCORD_TOKEN found. Set it in environment variables or .env.")
