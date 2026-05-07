@@ -2627,16 +2627,6 @@ def _render_website() -> bytes:
         if server_invite_url
         else ""
     )
-    nav_invite_html = (
-        f'<a href="{escape(invite_url)}" target="_blank" rel="noopener">Invite</a>'
-        if invite_url
-        else ""
-    )
-    nav_server_html = (
-        f'<a href="{escape(server_invite_url)}" target="_blank" rel="noopener">Discord</a>'
-        if server_invite_url
-        else ""
-    )
     avatar_url = str(status.get("avatar_url") or "")
     profile_html = (
         f'<img class="profile" src="{escape(avatar_url)}" alt="Military Tycoon Dex logo">'
@@ -2715,8 +2705,7 @@ def _render_website() -> bytes:
       min-height: 72px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 24px;
+      justify-content: flex-start;
       padding: 18px clamp(18px, 4vw, 46px);
       background: rgba(8, 11, 10, 0.72);
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -2744,20 +2733,6 @@ def _render_website() -> bytes:
       background: rgba(255, 255, 255, 0.08);
       font-size: 11px;
     }}
-    nav {{
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 18px;
-      flex-wrap: wrap;
-    }}
-    nav a {{
-      color: var(--muted);
-      text-decoration: none;
-      font-weight: 800;
-      font-size: 14px;
-    }}
-    nav a:hover {{ color: var(--text); }}
     main {{
       position: relative;
       z-index: 1;
@@ -2915,11 +2890,8 @@ def _render_website() -> bytes:
     }}
     @media (max-width: 760px) {{
       .topbar {{
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 12px;
+        align-items: center;
       }}
-      nav {{ justify-content: flex-start; }}
       main {{ padding: 28px; }}
       .hero {{
         flex-direction: column;
@@ -2940,11 +2912,6 @@ def _render_website() -> bytes:
       {brand_icon_html}
       <span>Military Tycoon Dex</span>
     </a>
-    <nav>
-      <a href="/status">Status</a>
-      {nav_invite_html}
-      {nav_server_html}
-    </nav>
   </header>
   <main>
     <section class="hero">
