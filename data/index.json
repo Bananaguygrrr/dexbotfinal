@@ -1148,10 +1148,6 @@
         "rarity": "Exotic"
     },
     "recon-heli": {
-        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496538988742312026/afbeelding.png?ex=69f2290b&is=69f0d78b&hm=c8dcc92fe956847320c4534702a3355f41d611df89082ff2c73d06d7545bcff8&",
-        "rarity": "Common"
-    },
-    "recon-helicopter": {
         "pic_link": "https://media.discordapp.net/attachments/1493613804129616014/1496538988742312026/afbeelding.png?ex=69eb918b&is=69ea400b&hm=0b45efdf82edad15eb721abe4aed14ca96fff5537cadb7f1bf82c8a07af5d62a&=&format=webp&quality=lossless",
         "rarity": "Epic"
     },
@@ -1235,13 +1231,9 @@
         "pic_link": "",
         "rarity": "Legendary"
     },
-    "shopping-card": {
+    "shopping-cart": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1495844008386236476/image.png?ex=69e8618b&is=69e7100b&hm=e56f63cea043856524c34a128cf65d5becec90b66b15a1e519b6b5355783c2c2&",
         "rarity": "Legendary"
-    },
-    "shopping-kart": {
-        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1495844008386236476/image.png?ex=69f19c0b&is=69f04a8b&hm=120749b387d29c67428f5c831e4f81ce876f18430b245d2bb55a88e7c99b52ba&",
-        "rarity": "Common"
     },
     "silver-howl": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1497988270930268220/image.png?ex=69f228cb&is=69f0d74b&hm=6e493abf055c6c350ce836ab23f09b858eec6e6b91d86a719cd8fde5dac796cb&",
