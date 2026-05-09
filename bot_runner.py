@@ -10,6 +10,9 @@ from typing import Any
 import discord
 
 import bot as dexbot
+import guess_game_patch
+
+guess_game_patch.install(dexbot)
 
 
 def _utc_now() -> str:
