@@ -7,7 +7,7 @@ services:
     autoDeploy: true
     buildCommand: |
       pip install -r requirements.txt
-      python3 -m py_compile bot.py bot_runner.py
+      python3 -m py_compile bot.py bot_runner.py guess_game_patch.py
       g++ -std=c++17 -O2 -Wall -Wextra -pedantic main.cpp -o dexbot_boot
     startCommand: ./dexbot_boot
     healthCheckPath: /health
@@ -22,6 +22,14 @@ services:
         value: /var/data
       - key: DEXBOT_PYTHON_COMMAND
         value: python3 bot_runner.py
+      - key: GUESS_GAME_DEFAULT_ROUNDS
+        value: "5"
+      - key: GUESS_GAME_DEFAULT_SECONDS
+        value: "30"
+      - key: GUESS_GAME_MAX_ROUNDS
+        value: "20"
+      - key: GUESS_GAME_MAX_SECONDS
+        value: "120"
       - key: ENABLE_INSTANCE_LOCK
         value: "false"
       - key: AUTO_RESTART_BOT
