@@ -13,6 +13,9 @@ MIN_SECONDS = max(5, int(os.getenv("GUESS_GAME_MIN_SECONDS", "10")))
 DEFAULT_SECONDS = max(MIN_SECONDS, int(os.getenv("GUESS_GAME_DEFAULT_SECONDS", "30")))
 MAX_SECONDS = max(MIN_SECONDS, int(os.getenv("GUESS_GAME_MAX_SECONDS", "120")))
 NEXT_ROUND_DELAY = max(0.0, float(os.getenv("GUESS_GAME_NEXT_ROUND_DELAY_SECONDS", "5")))
+SPAWN_AVAILABLE_COLOR = 0x00FF00
+SPAWN_CAUGHT_COLOR = 0xFF0000
+SPAWN_DESPAWN_COLOR = 0x8A8F98
 
 _ACTIVE_GAMES: dict[int, "VehicleGuessGame"] = {}
 _INSTALLED = False
@@ -112,6 +115,29 @@ def _patch_help(dexbot: Any) -> None:
     dexbot.build_help_message = build_help_message_with_game
 
 
+def _patch_spawn_colors(dexbot: Any) -> None:
+    catch_view = getattr(dexbot, "CatchView", None)
+    discord = getattr(dexbot, "discord", None)
+    if catch_view is None or discord is None:
+        return
+
+    original_build_embed = getattr(catch_view, "build_embed", None)
+    if not callable(original_build_embed) or getattr(original_build_embed, "_guess_game_spawn_colors", False):
+        return
+
+    def build_embed_with_spawn_colors(self: Any, *, color: Any = None, concluded: bool = False) -> Any:
+        if getattr(self, "caught", False):
+            color = discord.Color(SPAWN_CAUGHT_COLOR)
+        elif concluded:
+            color = discord.Color(SPAWN_DESPAWN_COLOR)
+        else:
+            color = discord.Color(SPAWN_AVAILABLE_COLOR)
+        return original_build_embed(self, color=color, concluded=concluded)
+
+    build_embed_with_spawn_colors._guess_game_spawn_colors = True  # type: ignore[attr-defined]
+    catch_view.build_embed = build_embed_with_spawn_colors
+
+
 class VehicleGuessGame:
     def __init__(self, dexbot: Any, channel: Any, host: Any, rounds: int, seconds: int) -> None:
         self.dexbot = dexbot
@@ -204,7 +230,7 @@ class VehicleGuessGame:
                 f"Guessing ends in **{self.seconds} seconds**.\n"
                 "Type the vehicle name in chat."
             ),
-            color=0xB73535,
+            color=SPAWN_AVAILABLE_COLOR,
         )
         embed.set_footer(text="Practice game: no inventory rewards.")
 
@@ -243,7 +269,7 @@ class VehicleGuessGame:
         embed = self.discord.Embed(
             title=f"{self.current_winner.display_name} got it right",
             description=f"The vehicle was **{label}**.\n\nAnswered in **{elapsed:.1f}s**.\n{next_text}",
-            color=0xD2A13A,
+            color=SPAWN_CAUGHT_COLOR,
         )
         await self.channel.send(embed=embed)
 
@@ -342,5 +368,6 @@ def install(dexbot: Any) -> None:
     _install_command(dexbot)
     _wrap_on_message(dexbot)
     _patch_help(dexbot)
+    _patch_spawn_colors(dexbot)
     _INSTALLED = True
     print("Vehicle guess training game installed. Command: /game", flush=True)
