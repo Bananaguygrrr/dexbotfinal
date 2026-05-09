@@ -150,7 +150,8 @@ class VehicleGuessGame:
                 except asyncio.TimeoutError:
                     timed_out = True
 
-                await self._send_result(vehicle_name, timed_out)
+                is_last_round = round_number == self.rounds
+                await self._send_result(vehicle_name, timed_out, is_last_round)
                 self.current_vehicle = None
                 self.current_event = None
                 self.current_winner = None
@@ -221,12 +222,18 @@ class VehicleGuessGame:
 
         await self.channel.send(embed=embed)
 
-    async def _send_result(self, vehicle_name: str, timed_out: bool) -> None:
+    async def _send_result(self, vehicle_name: str, timed_out: bool, is_last_round: bool) -> None:
         label = _vehicle_label(self.dexbot, vehicle_name)
+        next_text = (
+            "This was the last round. The winner will be announced any moment."
+            if is_last_round
+            else f"The next round starts in {NEXT_ROUND_DELAY:.0f} seconds."
+        )
+
         if timed_out or not self.current_winner:
             embed = self.discord.Embed(
                 title="Time is up",
-                description=f"Nobody guessed it. The vehicle was **{label}**.",
+                description=f"Nobody guessed it. The vehicle was **{label}**.\n\n{next_text}",
                 color=0x8A8F98,
             )
             await self.channel.send(embed=embed)
@@ -235,26 +242,33 @@ class VehicleGuessGame:
         elapsed = max(0.0, time.monotonic() - self.round_started)
         embed = self.discord.Embed(
             title=f"{self.current_winner.display_name} got it right",
-            description=f"The vehicle was **{label}**.\nAnswered in **{elapsed:.1f}s**.",
+            description=f"The vehicle was **{label}**.\n\nAnswered in **{elapsed:.1f}s**.\n{next_text}",
             color=0xD2A13A,
         )
         await self.channel.send(embed=embed)
 
     async def _send_final_score(self) -> None:
-        if not self.scores:
-            description = "No correct guesses this time."
-        else:
-            ranked = sorted(self.scores.values(), key=lambda item: item[1], reverse=True)
-            description = "\n".join(
-                f"**#{index}** {member.mention}: {score}"
-                for index, (member, score) in enumerate(ranked[:10], start=1)
-            )
+        ranked = sorted(
+            self.scores.values(),
+            key=lambda item: (-item[1], getattr(item[0], "display_name", "").lower()),
+        )
+        place_lines = []
+        for place in range(1, 4):
+            if place <= len(ranked):
+                member, score = ranked[place - 1]
+                point_word = "Point" if score == 1 else "Points"
+                place_lines.append(f"**{place}. PLACE**\n{member.mention} - {score} {point_word}")
+            else:
+                place_lines.append(f"**{place}. PLACE**\nNo one :(")
+
+        description = "**The game has ended!**\n\nThese are the winners from this game:\n\n" + "\n\n".join(place_lines)
 
         embed = self.discord.Embed(
-            title="Vehicle Guess Training Finished",
+            title="FINISHED",
             description=description,
             color=0x4C6A3D,
         )
+        embed.set_footer(text="Use /game to start another vehicle guessing practice game.")
         await self.channel.send(embed=embed)
 
 
