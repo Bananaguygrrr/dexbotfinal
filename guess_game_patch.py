@@ -115,29 +115,6 @@ def _patch_help(dexbot: Any) -> None:
     dexbot.build_help_message = build_help_message_with_game
 
 
-def _patch_spawn_colors(dexbot: Any) -> None:
-    catch_view = getattr(dexbot, "CatchView", None)
-    discord = getattr(dexbot, "discord", None)
-    if catch_view is None or discord is None:
-        return
-
-    original_build_embed = getattr(catch_view, "build_embed", None)
-    if not callable(original_build_embed) or getattr(original_build_embed, "_guess_game_spawn_colors", False):
-        return
-
-    def build_embed_with_spawn_colors(self: Any, *, color: Any = None, concluded: bool = False) -> Any:
-        if getattr(self, "caught", False):
-            color = discord.Color(SPAWN_CAUGHT_COLOR)
-        elif concluded:
-            color = discord.Color(SPAWN_DESPAWN_COLOR)
-        else:
-            color = discord.Color(SPAWN_AVAILABLE_COLOR)
-        return original_build_embed(self, color=color, concluded=concluded)
-
-    build_embed_with_spawn_colors._guess_game_spawn_colors = True  # type: ignore[attr-defined]
-    catch_view.build_embed = build_embed_with_spawn_colors
-
-
 class VehicleGuessGame:
     def __init__(self, dexbot: Any, channel: Any, host: Any, rounds: int, seconds: int) -> None:
         self.dexbot = dexbot
@@ -260,7 +237,7 @@ class VehicleGuessGame:
             embed = self.discord.Embed(
                 title="Time is up",
                 description=f"Nobody guessed it. The vehicle was **{label}**.\n\n{next_text}",
-                color=0x8A8F98,
+                color=SPAWN_DESPAWN_COLOR,
             )
             await self.channel.send(embed=embed)
             return
@@ -368,6 +345,5 @@ def install(dexbot: Any) -> None:
     _install_command(dexbot)
     _wrap_on_message(dexbot)
     _patch_help(dexbot)
-    _patch_spawn_colors(dexbot)
     _INSTALLED = True
     print("Vehicle guess training game installed. Command: /game", flush=True)
