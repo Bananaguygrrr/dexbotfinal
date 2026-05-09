@@ -18,9 +18,9 @@ void mark_booted_by_cpp() {
 
 std::string default_python_command() {
 #ifdef _WIN32
-    return "python bot.py";
+    return "python bot_runner.py";
 #else
-    return "python3 bot.py";
+    return "python3 bot_runner.py";
 #endif
 }
 
