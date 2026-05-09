@@ -102,7 +102,7 @@ def _patch_help(dexbot: Any) -> None:
             return message
 
         show_line = "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
-        game_line = "`/game [rounds] [seconds]` - Start vehicle guessing practice; no vehicles are awarded\n"
+        game_line = "`/game [rounds]` - Start vehicle guessing practice; no vehicles are awarded\n"
         if show_line in message:
             return message.replace(show_line, show_line + game_line, 1)
 
@@ -307,14 +307,10 @@ def _install_command(dexbot: Any) -> None:
 
     @dexbot.bot.tree.command(name="game", description="Start a vehicle guessing practice game")
     @app_commands.guild_only()
-    @app_commands.describe(
-        rounds=f"How many rounds to play (1-{MAX_ROUNDS})",
-        seconds=f"Seconds per question ({MIN_SECONDS}-{MAX_SECONDS})",
-    )
+    @app_commands.describe(rounds=f"How many rounds to play (1-{MAX_ROUNDS})")
     async def game_slash(
         interaction: discord.Interaction,
         rounds: int = DEFAULT_ROUNDS,
-        seconds: int = DEFAULT_SECONDS,
     ) -> None:
         if not interaction.channel:
             await interaction.response.send_message("This game needs a text channel.", ephemeral=True)
@@ -326,15 +322,14 @@ def _install_command(dexbot: Any) -> None:
             return
 
         rounds = _clamp_int(rounds, 1, MAX_ROUNDS)
-        seconds = _clamp_int(seconds, MIN_SECONDS, MAX_SECONDS)
         if not _guess_pool(dexbot):
             await interaction.response.send_message("No vehicles with pictures are available yet.", ephemeral=True)
             return
 
-        game = VehicleGuessGame(dexbot, interaction.channel, interaction.user, rounds, seconds)
+        game = VehicleGuessGame(dexbot, interaction.channel, interaction.user, rounds, DEFAULT_SECONDS)
         _ACTIVE_GAMES[channel_id] = game
         await interaction.response.send_message(
-            f"Starting vehicle guess training: **{rounds}** rounds, **{seconds}s** each. No vehicles are awarded."
+            f"Starting vehicle guess training: **{rounds}** rounds. No vehicles are awarded."
         )
         asyncio.create_task(game.run())
 
