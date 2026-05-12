@@ -107,9 +107,13 @@
         "pic_link": "",
         "rarity": "Common"
     },
-    "armoured-apc": {
+    "armored-apc": {
         "pic_link": "",
-        "rarity": "Common"
+        "rarity": "Common",
+        "aliases": [
+            "armoredapc",
+            "armoured-apc"
+        ]
     },
     "armoured-corvette": {
         "pic_link": "",
