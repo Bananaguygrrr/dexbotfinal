@@ -219,9 +219,12 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1496814695137546411/afbeelding.png?ex=69f1d850&is=69f086d0&hm=2a1d37be25a552ca5b9e47842a686b0dcd096f43c3c8222c1bcf5c6a8a4383c4&",
         "rarity": "Common"
     },
-    "bismark": {
+    "bismarck": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493635995017675034/bismark.png?ex=69dfb06b&is=69de5eeb&hm=71ce15166a690b5c68e3bfbb48ea867d6c76aa95f970724cd34e43e9b8f0fa9b&",
-        "rarity": "Exotic"
+        "rarity": "Exotic",
+        "aliases": [
+            "bismark"
+        ]
     },
     "blackbird": {
         "pic_link": "",
@@ -547,9 +550,12 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1497986216698581032/image.png?ex=69f226e1&is=69f0d561&hm=c5a6eee7c2174948cc571579b9be75a88aa54a56d7aab654c1ff691dfcad916e&",
         "rarity": "Legendary"
     },
-    "gold-bismark": {
+    "gold-bismarck": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493638030559416401/gold-bismark.png?ex=69dfb250&is=69de60d0&hm=2a3664b7f042619e6abe289dcd7da8c714bbbdb0c502994f705c9f7a7781c38a&",
-        "rarity": "Limited Edition"
+        "rarity": "Limited Edition",
+        "aliases": [
+            "gold-bismark"
+        ]
     },
     "gold-f35": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1497998647759999147/image.png?ex=69f23275&is=69f0e0f5&hm=ff80e0258cb35e06b04e860af2d5f9e1c63debbfbcec5518deee6f09c29fb98a&",
