@@ -1158,12 +1158,11 @@
         "rarity": "Legendary"
     },
     "police-heli": {
+        "aliases": [
+            "police-helicopter"
+        ],
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639192083955803/police-heli.png?ex=69dfb365&is=69de61e5&hm=fe9f9a4efa24c7e6e202753b19e2edaaa231cc35f213b8e252e6771d6d34eb03&",
         "rarity": "Legendary"
-    },
-    "police-helicopter": {
-        "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1497989127214465024/image.png?ex=69f22997&is=69f0d817&hm=862181d46b7d6683b57e868902cba6ed7822b6c47f8db23e18c105f590ae345a&",
-        "rarity": "Common"
     },
     "police-jeep": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1499678106099781762/afbeelding.png?ex=6a042c13&is=6a02da93&hm=992c5ef0a376a9b2a319e8096fe7ffaff8380fa07f2b737757fed9c94b5a45db&",
