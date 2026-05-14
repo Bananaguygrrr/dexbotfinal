@@ -376,11 +376,10 @@
         "rarity": "Legendary"
     },
     "chrysler": {
+        "aliases": [
+            "chrystler"
+        ],
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1501960125521334323/afbeelding.png?ex=6a04905e&is=6a033ede&hm=8f17c273f318faa6ea0ce67c53a2adb2617d39ba43eda6170cc74f847cc92640&",
-        "rarity": "Common"
-    },
-    "chrystler": {
-        "pic_link": "",
         "rarity": "Legendary"
     },
     "cobra": {
@@ -1031,7 +1030,10 @@
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639072189648926/nuke-b36.png?ex=69dfb349&is=69de61c9&hm=9d863ac0abf982b161bfd53f70d75972c33555e428a977d3bde1732a1f678b16&",
         "rarity": "Exotic"
     },
-    "nuke-chrystler": {
+    "nuke-chrysler": {
+        "aliases": [
+            "nuke-chrystler"
+        ],
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493639072491503767/nuke-chrystler.png?ex=69dfb349&is=69de61c9&hm=1b94c3b7a50b8f85e086e668a0db4b2d8d55feb305a3e7a3d5d08c5728ffba17&",
         "rarity": "Exotic"
     },

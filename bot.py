@@ -102,9 +102,11 @@ except Exception as error:
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
+SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
+MAX_SPAWN_RECORDS = 1000
 FALLBACK_IMAGE_DIRS = (
     os.path.join(SCRIPT_DIR, "images"),
     os.path.join(SCRIPT_DIR, "data", "images"),
@@ -653,6 +655,7 @@ def build_help_message() -> str:
         "**Bot Admins**\n"
         "`!list` - Show vehicles missing pictures\n"
         "`!vehicles` - Show total caught vehicles and fresh vehicles\n"
+        "`!check <message_id>` - Show the hidden vehicle name for a spawn message\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
@@ -846,6 +849,59 @@ def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
         INVENTORIES_CACHE = inventories
     except Exception as error:
         print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
+
+
+def load_spawn_records() -> Dict[str, Dict[str, Any]]:
+    if not os.path.exists(SPAWN_RECORDS_FILE):
+        return {}
+
+    try:
+        with open(SPAWN_RECORDS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {SPAWN_RECORDS_FILE}: {error}")
+        return {}
+
+    if not isinstance(raw_data, dict):
+        return {}
+
+    return {
+        str(message_id): record
+        for message_id, record in raw_data.items()
+        if isinstance(record, dict)
+    }
+
+
+def save_spawn_records(records: Dict[str, Dict[str, Any]]) -> None:
+    try:
+        os.makedirs(os.path.dirname(SPAWN_RECORDS_FILE), exist_ok=True)
+        with open(SPAWN_RECORDS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(records, handle, indent=2, sort_keys=True)
+    except Exception as error:
+        print(f"Error saving {SPAWN_RECORDS_FILE}: {error}")
+
+
+def remember_spawn_message(message: discord.Message, view: "CatchView") -> None:
+    records = load_spawn_records()
+    records[str(message.id)] = {
+        "vehicle_name": view.vehicle_name,
+        "is_fresh": bool(view.is_fresh),
+        "rarity": view.rarity,
+        "guild_id": message.guild.id if message.guild else None,
+        "channel_id": message.channel.id,
+        "created_at": int(time.time()),
+    }
+
+    if len(records) > MAX_SPAWN_RECORDS:
+        records = dict(
+            sorted(
+                records.items(),
+                key=lambda item: int(item[1].get("created_at") or 0),
+                reverse=True,
+            )[:MAX_SPAWN_RECORDS]
+        )
+
+    save_spawn_records(records)
 
 
 def prune_inventories_to_vehicle_names(vehicle_names: set[str]) -> None:
@@ -2561,6 +2617,7 @@ async def spawn_vehicle(
         sender = ctx.send if ctx else channel.send
         sent = await sender(embed=embed, file=file, view=view)
         view.add_message(sent)
+        remember_spawn_message(sent, view)
         register_active_spawn(view)
         return True
     except Exception as error:
@@ -2576,6 +2633,122 @@ async def spawn_in_guild(guild: discord.Guild):
         await spawn_vehicle(vehicles, channel, guild=guild)
     else:
         print(f"No suitable channel found in {guild.name}")
+
+
+def _known_vehicle_name(candidate: str) -> Optional[str]:
+    candidate = str(candidate or "").strip()
+    if not candidate:
+        return None
+
+    vehicles = get_vehicle_map()
+    canonical_name = canonical_vehicle_name(candidate)
+    if canonical_name in vehicles:
+        return canonical_name
+
+    return find_best_vehicle_match(vehicles.keys(), candidate)
+
+
+def _vehicle_name_from_spawn_record(message_id: int) -> Optional[str]:
+    record = load_spawn_records().get(str(message_id))
+    if not record:
+        return None
+
+    vehicle_name = str(record.get("vehicle_name") or "").strip()
+    return _known_vehicle_name(vehicle_name) or vehicle_name or None
+
+
+def _vehicle_name_from_active_spawn(message_id: int) -> Optional[str]:
+    prune_active_spawns()
+    for views in active_spawns.values():
+        for view in views:
+            if any(spawn_message.id == message_id for spawn_message in view.messages):
+                return _known_vehicle_name(view.vehicle_name) or view.vehicle_name
+    return None
+
+
+def _vehicle_name_from_text(text: str) -> Optional[str]:
+    text = str(text or "").strip()
+    if not text:
+        return None
+
+    candidates: list[str] = []
+    caught_match = re.search(r"\*\*(.+?)\*\*", text)
+    if caught_match:
+        candidates.append(caught_match.group(1))
+
+    if "Captured by" in text and ":" in text:
+        candidates.append(text.split(":", 1)[1])
+
+    for candidate in candidates:
+        clean_candidate = re.sub(r"\s*\[Fresh\]\s*$", "", candidate.strip(), flags=re.IGNORECASE)
+        known_name = _known_vehicle_name(clean_candidate)
+        if known_name:
+            return known_name
+
+    return None
+
+
+def _vehicle_name_from_message_embed(message: discord.Message) -> Optional[str]:
+    vehicle_name = _vehicle_name_from_text(message.content)
+    if vehicle_name:
+        return vehicle_name
+
+    for embed in message.embeds:
+        for text in (
+            embed.title or "",
+            embed.description or "",
+            embed.footer.text if embed.footer else "",
+        ):
+            vehicle_name = _vehicle_name_from_text(text)
+            if vehicle_name:
+                return vehicle_name
+
+    return None
+
+
+async def _fetch_message_for_check(source_message: discord.Message, message_id: int) -> Optional[discord.Message]:
+    channels: list[Any] = []
+    if hasattr(source_message.channel, "fetch_message"):
+        channels.append(source_message.channel)
+
+    if source_message.guild:
+        source_channel_id = getattr(source_message.channel, "id", None)
+        channels.extend(
+            channel
+            for channel in source_message.guild.text_channels
+            if channel.id != source_channel_id
+        )
+
+    seen_channel_ids: set[int] = set()
+    for channel in channels:
+        channel_id = getattr(channel, "id", None)
+        if channel_id in seen_channel_ids:
+            continue
+        if channel_id is not None:
+            seen_channel_ids.add(channel_id)
+
+        try:
+            return await channel.fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            continue
+
+    return None
+
+
+async def resolve_spawn_message_vehicle_name(source_message: discord.Message, message_id: int) -> Optional[str]:
+    vehicle_name = _vehicle_name_from_active_spawn(message_id)
+    if vehicle_name:
+        return vehicle_name
+
+    vehicle_name = _vehicle_name_from_spawn_record(message_id)
+    if vehicle_name:
+        return vehicle_name
+
+    fetched_message = await _fetch_message_for_check(source_message, message_id)
+    if fetched_message:
+        return _vehicle_name_from_message_embed(fetched_message)
+
+    return None
 
 
 async def spawn_event_wave(
@@ -3359,6 +3532,22 @@ async def on_message(message: discord.Message):
             f"Total vehicles: **{format_count(total_vehicle_count)}**\n"
             f"Fresh vehicles: **{format_count(fresh_vehicle_count)}**"
         )
+        return
+
+    if command == "!check":
+        if not has_admin_access(message):
+            return
+
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.channel.send("Usage: `!check <message_id>`")
+            return
+
+        checked_message_id = int(parts[1])
+        vehicle_name = await resolve_spawn_message_vehicle_name(message, checked_message_id)
+        if vehicle_name:
+            await message.channel.send(vehicle_name)
+        else:
+            await message.channel.send("I could not find a saved spawn for that message ID.")
         return
 
     if command in {"!catalogdebug", "!vehicledebug"}:
