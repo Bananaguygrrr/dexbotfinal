@@ -652,6 +652,7 @@ def build_help_message() -> str:
         "\n"
         "**Bot Admins**\n"
         "`!list` - Show vehicles missing pictures\n"
+        "`!vehicles` - Show total caught vehicles and fresh vehicles\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
         "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
@@ -924,6 +925,38 @@ def get_global_vehicle_counts(vehicle_name: str) -> tuple[int, int]:
                 regular_count += count
 
     return regular_count, fresh_count
+
+
+def get_global_inventory_totals(vehicles: Optional[Dict[str, Dict[str, Any]]] = None) -> tuple[int, int]:
+    if vehicles is None:
+        vehicles = get_vehicle_map()
+
+    total_count = 0
+    fresh_count = 0
+
+    for user_inventory in load_inventories().values():
+        if not isinstance(user_inventory, dict):
+            continue
+
+        for vehicle_key, raw_count in user_inventory.items():
+            try:
+                count = int(raw_count)
+            except (TypeError, ValueError):
+                continue
+
+            if count <= 0:
+                continue
+
+            base_name, is_fresh = split_inventory_key(str(vehicle_key))
+            canonical_name = canonical_vehicle_name(base_name)
+            if canonical_name not in vehicles:
+                continue
+
+            total_count += count
+            if is_fresh:
+                fresh_count += count
+
+    return total_count, fresh_count
 
 
 def get_user_inventory_totals(user_inventory: Dict[str, int], vehicles: Dict[str, Dict[str, Any]]) -> tuple[int, int]:
@@ -2595,11 +2628,16 @@ def _bot_invite_url() -> str:
 
 def _website_status_payload() -> Dict[str, Any]:
     vehicles = get_vehicle_map()
+    total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
+    ready = bot.is_ready()
     return {
-        "online": bool(BOT_ONLINE and bot.is_ready()),
+        "online": bool(ready and not bot.is_closed()),
         "bot_name": _bot_display_name(),
-        "guild_count": len(bot.guilds) if bot.is_ready() else 0,
+        "guild_count": len(bot.guilds) if ready else 0,
         "vehicle_count": len(vehicles),
+        "catalog_vehicle_count": len(vehicles),
+        "total_vehicle_count": total_vehicle_count,
+        "fresh_vehicle_count": fresh_vehicle_count,
         "last_update": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         "invite_url": _bot_invite_url(),
         "avatar_url": _bot_avatar_url(),
@@ -2932,8 +2970,10 @@ def _render_website() -> bytes:
           </div>
           <div class="metric">
             <span class="label">With </span>
-            <span class="value" id="vehicle-count">{status["vehicle_count"]}</span>
-            <span class="label"> vehicles</span>
+            <span class="value" id="total-vehicle-count">{status["total_vehicle_count"]}</span>
+            <span class="label"> total vehicles | </span>
+            <span class="value" id="fresh-vehicle-count">{status["fresh_vehicle_count"]}</span>
+            <span class="label"> fresh vehicles</span>
           </div>
           <div class="metric">
             <span class="label">Last update </span>
@@ -2960,7 +3000,8 @@ def _render_website() -> bytes:
         pill.classList.toggle('offline', !data.online);
         statusText.textContent = data.online ? 'Online' : 'Offline';
         document.getElementById('guild-count').textContent = data.guild_count;
-        document.getElementById('vehicle-count').textContent = data.vehicle_count;
+        document.getElementById('total-vehicle-count').textContent = data.total_vehicle_count;
+        document.getElementById('fresh-vehicle-count').textContent = data.fresh_vehicle_count;
         document.getElementById('last-update').textContent = data.last_update;
       }} catch (error) {{}}
     }}
@@ -3258,6 +3299,19 @@ async def on_message(message: discord.Message):
         pages = build_missing_vehicle_list_pages()
         for page in pages:
             await message.channel.send(page)
+        return
+
+    if command == "!vehicles":
+        if not has_admin_access(message):
+            return
+
+        vehicles = get_vehicle_map()
+        total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
+        await message.channel.send(
+            "**Vehicle totals**\n"
+            f"Total vehicles: **{format_count(total_vehicle_count)}**\n"
+            f"Fresh vehicles: **{format_count(fresh_vehicle_count)}**"
+        )
         return
 
     if command in {"!catalogdebug", "!vehicledebug"}:

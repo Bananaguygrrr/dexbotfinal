@@ -26,6 +26,14 @@ def _safe_vehicle_count() -> int:
         return 0
 
 
+def _safe_inventory_totals() -> tuple[int, int]:
+    try:
+        vehicles = dexbot.get_vehicle_map()
+        return dexbot.get_global_inventory_totals(vehicles)
+    except Exception:
+        return 0, 0
+
+
 def _safe_guild_count() -> int:
     try:
         return len(dexbot.bot.guilds)
@@ -39,15 +47,20 @@ def _health_payload() -> dict[str, Any]:
     except Exception:
         ready = False
 
-    online = bool(getattr(dexbot, "BOT_ONLINE", False) and ready)
+    online = bool(ready and not dexbot.bot.is_closed())
     bot_user = getattr(dexbot.bot, "user", None)
+    vehicle_count = _safe_vehicle_count()
+    total_vehicle_count, fresh_vehicle_count = _safe_inventory_totals()
 
     return {
         "running": True,
         "online": online,
         "status": "Bot online" if online else "Bot starting or offline",
         "guild_count": _safe_guild_count() if ready else 0,
-        "vehicle_count": _safe_vehicle_count(),
+        "vehicle_count": vehicle_count,
+        "catalog_vehicle_count": vehicle_count,
+        "total_vehicle_count": total_vehicle_count,
+        "fresh_vehicle_count": fresh_vehicle_count,
         "bot_user": str(bot_user) if bot_user else "",
         "started_at": int(getattr(dexbot, "BOT_STARTED_AT", int(time.time()))),
         "uptime_seconds": max(0, int(time.time()) - int(getattr(dexbot, "BOT_STARTED_AT", int(time.time())))),
