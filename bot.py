@@ -1657,13 +1657,44 @@ def _user_rarity_counts(user_inventory: Dict[str, int], vehicles: Dict[str, Dict
     return counts
 
 
+def get_user_inventory_count_breakdown(
+    user_inventory: Dict[str, int],
+    vehicles: Dict[str, Dict[str, Any]],
+) -> tuple[int, int]:
+    total_count = 0
+    fresh_count = 0
+
+    if not isinstance(user_inventory, dict):
+        return total_count, fresh_count
+
+    for vehicle_key, raw_count in user_inventory.items():
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+
+        if count <= 0:
+            continue
+
+        vehicle_name, is_fresh = split_inventory_key(str(vehicle_key))
+        vehicle_name = canonical_vehicle_name(vehicle_name)
+        if vehicle_name not in vehicles:
+            continue
+
+        total_count += count
+        if is_fresh:
+            fresh_count += count
+
+    return total_count, fresh_count
+
+
 def create_overview_embed(user: discord.abc.User) -> discord.Embed:
     inventories = load_inventories()
     user_inventory = inventories.get(str(user.id), {})
     vehicles = get_vehicle_map()
 
     counts = _user_rarity_counts(user_inventory, vehicles)
-    total = sum(counts.values())
+    total, fresh_total = get_user_inventory_count_breakdown(user_inventory, vehicles)
 
     embed = discord.Embed(title=f"{user.name}'s Inventory", color=discord.Color.blue())
     if total <= 0:
@@ -1675,7 +1706,12 @@ def create_overview_embed(user: discord.abc.User) -> discord.Embed:
         for rarity in RARITY_ORDER
     ]
     embed.description = "\n".join(lines)
-    embed.set_footer(text=f"Total vehicles: {format_count(total)}")
+    embed.set_footer(
+        text=(
+            f"Total vehicles: {format_count(total)} | "
+            f"Fresh vehicles: {format_count(fresh_total)}"
+        )
+    )
     return embed
 
 
@@ -1797,8 +1833,19 @@ class RarityInventoryView(discord.ui.View):
 
         total_unique = len(sorted_items)
         total_caught = sum(self.vehicle_counts.values())
+        fresh_caught = sum(
+            count
+            for vehicle_key, count in self.vehicle_counts.items()
+            if split_inventory_key(vehicle_key)[1]
+        )
         embed.description = "\n".join(lines)
-        embed.set_footer(text=f"Unique: {total_unique} | Total caught: {format_count(total_caught)}")
+        embed.set_footer(
+            text=(
+                f"Unique: {total_unique} | "
+                f"Total caught: {format_count(total_caught)} | "
+                f"Fresh vehicles: {format_count(fresh_caught)}"
+            )
+        )
 
         if total_unique > 30:
             embed.description += f"\n...and {total_unique - 30} more"
