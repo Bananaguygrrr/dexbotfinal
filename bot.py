@@ -101,6 +101,7 @@ except Exception as error:
 
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
 USER_BALANCES_FILE = os.path.join(DATA_DIR, "user_balances.json")
+MARKET_LISTINGS_FILE = os.path.join(DATA_DIR, "market_listings.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
@@ -109,6 +110,7 @@ ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 MAX_SPAWN_RECORDS = 1000
 INVENTORY_PAGE_SIZE = 20
+SHOP_PAGE_SIZE = 5
 FALLBACK_IMAGE_DIRS = (
     os.path.join(SCRIPT_DIR, "images"),
     os.path.join(SCRIPT_DIR, "data", "images"),
@@ -190,6 +192,7 @@ CATCH_REWARD_BY_RARITY = {
 FRESH_CATCH_BONUS = _read_money_env("FRESH_CATCH_BONUS", 50)
 SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 1)
 MONEY_TRADE_ALIASES = {"money", "cash", "coin", "coins", "dollar", "dollars", "$"}
+COIN_EMOJI = os.getenv("COIN_EMOJI", "\U0001FA99").strip() or "\U0001FA99"
 
 EXOTIC_RAINBOW_COLORS = (
     0xFF00D4,  # neon magenta
@@ -238,6 +241,7 @@ active_trades: Dict[int, "TradeView"] = {}
 
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 BALANCES_CACHE: Optional[Dict[str, int]] = None
+MARKET_LISTINGS_CACHE: Optional[list[Dict[str, Any]]] = None
 GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -528,6 +532,10 @@ def format_money(amount: Any) -> str:
     return f"{amount_int:,} coins"
 
 
+def format_price(amount: Any) -> str:
+    return f"{COIN_EMOJI} {format_money(amount)}"
+
+
 def parse_count(text: Any) -> Optional[int]:
     if not text:
         return None
@@ -686,11 +694,12 @@ def build_help_message() -> str:
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/leaderboard` - Show who owns the most vehicles\n"
+        "`/shop buy` - Search and buy vehicles from other players\n"
+        "`/shop sell` - Sell vehicles on the market or instantly for base price\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
         "`/tradeadd item amount` - Add vehicles or coins to a trade\n"
         "`/traderemove item amount` - Remove vehicles or coins from a trade\n"
-        "`/sell vehicle_name amount` - Sell vehicles for coins\n\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "\n"
@@ -1002,6 +1011,273 @@ def get_catch_reward(rarity: str, is_fresh: bool = False) -> int:
 def is_money_trade_item(item: str) -> bool:
     normalized = str(item or "").strip().lower()
     return normalized in MONEY_TRADE_ALIASES
+
+
+def make_market_listing_id(existing_ids: Optional[set[str]] = None) -> str:
+    existing_ids = existing_ids or set()
+    for _ in range(20):
+        listing_id = f"{int(time.time() * 1000):x}{random.randint(0, 0xFFFF):04x}"[-12:]
+        if listing_id not in existing_ids:
+            return listing_id
+    return f"{int(time.time() * 1000):x}{random.randint(0, 0xFFFFFF):06x}"
+
+
+def _normalize_market_listing(raw_listing: Any, vehicles: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_listing, dict):
+        return None
+
+    vehicle_name = canonical_vehicle_name(str(raw_listing.get("vehicle_name") or raw_listing.get("name") or ""))
+    if vehicle_name not in vehicles:
+        return None
+
+    count = _coerce_non_negative_int(raw_listing.get("count", 0))
+    price = _coerce_non_negative_int(raw_listing.get("price", raw_listing.get("price_each", 0)))
+    seller_id = str(raw_listing.get("seller_id") or "").strip()
+    if not seller_id.isdigit() or count <= 0 or price <= 0:
+        return None
+
+    listing_id = str(raw_listing.get("id") or "").strip()
+    if not listing_id:
+        listing_id = make_market_listing_id()
+
+    return {
+        "id": listing_id,
+        "seller_id": seller_id,
+        "vehicle_name": vehicle_name,
+        "is_fresh": bool(raw_listing.get("is_fresh", False)),
+        "count": count,
+        "price": price,
+        "created_at": _coerce_non_negative_int(raw_listing.get("created_at", int(time.time()))),
+    }
+
+
+def load_market_listings() -> list[Dict[str, Any]]:
+    global MARKET_LISTINGS_CACHE
+
+    if MARKET_LISTINGS_CACHE is not None:
+        return MARKET_LISTINGS_CACHE
+
+    if not os.path.exists(MARKET_LISTINGS_FILE):
+        MARKET_LISTINGS_CACHE = []
+        return MARKET_LISTINGS_CACHE
+
+    try:
+        with open(MARKET_LISTINGS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {MARKET_LISTINGS_FILE}: {error}")
+        MARKET_LISTINGS_CACHE = []
+        return MARKET_LISTINGS_CACHE
+
+    raw_listings = raw_data.get("listings", []) if isinstance(raw_data, dict) else raw_data
+    if not isinstance(raw_listings, list):
+        MARKET_LISTINGS_CACHE = []
+        save_market_listings(MARKET_LISTINGS_CACHE)
+        return MARKET_LISTINGS_CACHE
+
+    vehicles = get_vehicle_map()
+    normalized: list[Dict[str, Any]] = []
+    used_ids: set[str] = set()
+    migrated = not isinstance(raw_data, list)
+    for raw_listing in raw_listings:
+        listing = _normalize_market_listing(raw_listing, vehicles)
+        if not listing:
+            migrated = True
+            continue
+        if listing["id"] in used_ids:
+            listing["id"] = make_market_listing_id(used_ids)
+            migrated = True
+        used_ids.add(listing["id"])
+        if listing != raw_listing:
+            migrated = True
+        normalized.append(listing)
+
+    normalized.sort(key=lambda listing: int(listing.get("created_at", 0)), reverse=True)
+    MARKET_LISTINGS_CACHE = normalized
+    if migrated:
+        save_market_listings(MARKET_LISTINGS_CACHE)
+    return MARKET_LISTINGS_CACHE
+
+
+def save_market_listings(listings: list[Dict[str, Any]]) -> None:
+    global MARKET_LISTINGS_CACHE
+
+    vehicles = get_vehicle_map()
+    normalized: list[Dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for raw_listing in listings:
+        listing = _normalize_market_listing(raw_listing, vehicles)
+        if not listing:
+            continue
+        if listing["id"] in used_ids:
+            listing["id"] = make_market_listing_id(used_ids)
+        used_ids.add(listing["id"])
+        normalized.append(listing)
+
+    normalized.sort(key=lambda listing: int(listing.get("created_at", 0)), reverse=True)
+    try:
+        os.makedirs(os.path.dirname(MARKET_LISTINGS_FILE), exist_ok=True)
+        with open(MARKET_LISTINGS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(normalized, handle, indent=2, sort_keys=True)
+        MARKET_LISTINGS_CACHE = normalized
+    except Exception as error:
+        print(f"Error saving {MARKET_LISTINGS_FILE}: {error}")
+
+
+def get_listing_vehicle_key(listing: Dict[str, Any]) -> str:
+    return make_inventory_key(str(listing.get("vehicle_name", "")), bool(listing.get("is_fresh", False)))
+
+
+def get_listing_display_name(listing: Dict[str, Any]) -> str:
+    vehicle_key = get_listing_vehicle_key(listing)
+    return display_vehicle_name(vehicle_key)
+
+
+def listing_matches_query(listing: Dict[str, Any], query: str) -> bool:
+    if not query:
+        return True
+    needle = normalize_name(query)
+    haystacks = {
+        normalize_name(str(listing.get("vehicle_name", ""))),
+        normalize_name(display_vehicle_name(str(listing.get("vehicle_name", "")))),
+        normalize_name(get_listing_display_name(listing)),
+    }
+    return any(needle in haystack or haystack in needle for haystack in haystacks if haystack)
+
+
+def get_market_listings(
+    *,
+    viewer_id: Optional[int] = None,
+    include_own: bool = False,
+    seller_id: Optional[int] = None,
+    query: str = "",
+) -> list[Dict[str, Any]]:
+    listings = load_market_listings()
+    results: list[Dict[str, Any]] = []
+    for listing in listings:
+        listing_seller_id = str(listing.get("seller_id", ""))
+        if seller_id is not None and listing_seller_id != str(seller_id):
+            continue
+        if viewer_id is not None and not include_own and listing_seller_id == str(viewer_id):
+            continue
+        if not listing_matches_query(listing, query):
+            continue
+        results.append(listing)
+    return results
+
+
+def find_market_listing(listing_id: str) -> Optional[Dict[str, Any]]:
+    listing_id = str(listing_id or "").strip()
+    for listing in load_market_listings():
+        if listing.get("id") == listing_id:
+            return listing
+    return None
+
+
+def create_market_listing(seller_id: int, vehicle_key: str, count: int, price: int) -> tuple[bool, str, Optional[Dict[str, Any]]]:
+    count = _coerce_non_negative_int(count)
+    price = _coerce_non_negative_int(price)
+    if count <= 0 or price <= 0:
+        return False, "Amount and price must be positive.", None
+
+    vehicle_name, is_fresh = split_inventory_key(vehicle_key)
+    vehicle_name = canonical_vehicle_name(vehicle_name)
+    if vehicle_name not in get_vehicle_map():
+        return False, "That vehicle is no longer in the catalog.", None
+
+    available_count = get_available_vehicle_counts_for_user(seller_id).get(make_inventory_key(vehicle_name, is_fresh), 0)
+    if count > available_count:
+        return False, f"You only have {format_count(available_count)} available {display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))}."
+
+    removed_amount = remove_vehicle_count(seller_id, vehicle_name, count, is_fresh=is_fresh)
+    if removed_amount < count:
+        if removed_amount > 0:
+            add_vehicle_count(seller_id, vehicle_name, removed_amount, is_fresh=is_fresh)
+        return False, "Listing failed. Your inventory changed before I could reserve that vehicle.", None
+
+    listings = load_market_listings()
+    listing = {
+        "id": make_market_listing_id({str(item.get("id", "")) for item in listings}),
+        "seller_id": str(seller_id),
+        "vehicle_name": vehicle_name,
+        "is_fresh": is_fresh,
+        "count": count,
+        "price": price,
+        "created_at": int(time.time()),
+    }
+    listings.append(listing)
+    save_market_listings(listings)
+    return True, f"Listed {format_count(count)} x {get_listing_display_name(listing)} for {format_price(price)} each.", listing
+
+
+def buy_market_listing(buyer_id: int, listing_id: str, count: int) -> tuple[bool, str]:
+    count = _coerce_non_negative_int(count)
+    if count <= 0:
+        return False, "Enter a positive amount to buy."
+
+    listings = load_market_listings()
+    listing_index = next((index for index, item in enumerate(listings) if item.get("id") == listing_id), None)
+    if listing_index is None:
+        return False, "That market listing no longer exists."
+
+    listing = listings[listing_index]
+    seller_id = str(listing.get("seller_id", ""))
+    if seller_id == str(buyer_id):
+        return False, "You cannot buy your own market listing."
+
+    available_count = _coerce_non_negative_int(listing.get("count", 0))
+    price = _coerce_non_negative_int(listing.get("price", 0))
+    vehicle_name = canonical_vehicle_name(str(listing.get("vehicle_name", "")))
+    is_fresh = bool(listing.get("is_fresh", False))
+    if vehicle_name not in get_vehicle_map() or available_count <= 0 or price <= 0:
+        listings.pop(listing_index)
+        save_market_listings(listings)
+        return False, "That listing was invalid and has been removed."
+
+    if count > available_count:
+        return False, f"Only {format_count(available_count)} are available in that listing."
+
+    total_price = price * count
+    if get_user_balance(buyer_id) < total_price:
+        return False, f"You need {format_price(total_price)} but only have {format_money(get_user_balance(buyer_id))}."
+
+    if not remove_money(buyer_id, total_price):
+        return False, "Purchase failed. Your coin balance changed before checkout."
+
+    add_money(int(seller_id), total_price)
+    add_vehicle_count(buyer_id, vehicle_name, count, is_fresh=is_fresh)
+
+    remaining = available_count - count
+    if remaining > 0:
+        listing["count"] = remaining
+    else:
+        listings.pop(listing_index)
+    save_market_listings(listings)
+
+    display_name = display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))
+    return True, f"Bought {format_count(count)} x {display_name} for {format_price(total_price)}."
+
+
+def cancel_market_listing(seller_id: int, listing_id: str) -> tuple[bool, str]:
+    listings = load_market_listings()
+    listing_index = next((index for index, item in enumerate(listings) if item.get("id") == listing_id), None)
+    if listing_index is None:
+        return False, "That market listing no longer exists."
+
+    listing = listings[listing_index]
+    if str(listing.get("seller_id", "")) != str(seller_id):
+        return False, "You can only cancel your own listings."
+
+    vehicle_name = canonical_vehicle_name(str(listing.get("vehicle_name", "")))
+    is_fresh = bool(listing.get("is_fresh", False))
+    count = _coerce_non_negative_int(listing.get("count", 0))
+    if count > 0:
+        add_vehicle_count(seller_id, vehicle_name, count, is_fresh=is_fresh)
+    listings.pop(listing_index)
+    save_market_listings(listings)
+
+    display_name = display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))
+    return True, f"Cancelled listing and returned {format_count(count)} x {display_name}."
 
 
 def load_spawn_records() -> Dict[str, Dict[str, Any]]:
@@ -2396,42 +2672,276 @@ class TradeView(discord.ui.View):
         await self.update_message()
         self.stop()
 
-def register_trade_commands(discord_bot: commands.Bot):
-    @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
-    @app_commands.describe(user="The user whose inventory you want to view")
-    async def inventory_slash(interaction: discord.Interaction, user: Optional[discord.User] = None):
-        target_user = user or interaction.user
-        view = InventoryOverview(target_user, interaction.user)
-        await interaction.response.send_message(embed=create_overview_embed(target_user), view=view)
 
-    @discord_bot.tree.command(name="sell", description="Sell one of your vehicles for coins")
-    @app_commands.describe(vehicle_name="The vehicle to sell", amount="How many to sell")
-    async def sell_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
+class MarketSearchModal(discord.ui.Modal, title="Search market"):
+    query = discord.ui.TextInput(
+        label="Vehicle name",
+        placeholder="Example: m50, bismarck, fresh police heli",
+        required=False,
+        max_length=100,
+    )
+
+    def __init__(self, market_view: "ShopBuyView"):
+        super().__init__()
+        self.market_view = market_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        query = str(self.query.value or "").strip()
+        view = ShopBuyView(self.market_view.viewer, query=query, page=0)
+        view.message = self.market_view.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+
+class MarketBuyModal(discord.ui.Modal, title="Buy market listing"):
+    amount = discord.ui.TextInput(
+        label="Amount to buy",
+        placeholder="1",
+        default="1",
+        required=True,
+        max_length=20,
+    )
+
+    def __init__(self, market_view: "ShopBuyView", listing_id: str):
+        super().__init__()
+        self.market_view = market_view
+        self.listing_id = listing_id
+
+    async def on_submit(self, interaction: discord.Interaction):
         if not await safe_defer(interaction, ephemeral=True):
             return
 
-        parsed_amount = parse_count(amount)
+        parsed_amount = parse_count(str(self.amount.value))
         if parsed_amount is None or parsed_amount <= 0:
             await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
             return
 
-        active_trade = get_active_trade_for_user(interaction.user.id)
-        active_offer = get_trade_offer_for_user(active_trade, interaction.user.id) if active_trade else None
-        available_vehicles = get_available_vehicle_counts(interaction.user.id, active_offer)
-        matched_vehicle = (
-            vehicle_name
-            if vehicle_name in available_vehicles
-            else find_best_vehicle_match(available_vehicles.keys(), vehicle_name)
+        ok, message = buy_market_listing(interaction.user.id, self.listing_id, parsed_amount)
+        await safe_send(interaction, message, ephemeral=True)
+        await self.market_view.refresh_message()
+
+
+class MarketBuyButton(discord.ui.Button):
+    def __init__(self, market_view: "ShopBuyView", listing_id: str, index_label: int):
+        super().__init__(label=f"Buy {index_label}", style=discord.ButtonStyle.success, emoji=COIN_EMOJI)
+        self.market_view = market_view
+        self.listing_id = listing_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(MarketBuyModal(self.market_view, self.listing_id))
+
+
+class ShopBuyView(discord.ui.View):
+    def __init__(self, viewer: discord.abc.User, query: str = "", page: int = 0):
+        super().__init__(timeout=180)
+        self.viewer = viewer
+        self.query = query.strip()
+        self.message: Optional[discord.Message] = None
+
+        listings = self.filtered_listings()
+        self.page_count = max(1, (len(listings) + SHOP_PAGE_SIZE - 1) // SHOP_PAGE_SIZE)
+        self.page = min(max(0, page), self.page_count - 1)
+
+        search_button = discord.ui.Button(label="Search", style=discord.ButtonStyle.primary)
+        search_button.callback = self.search_callback
+        self.add_item(search_button)
+
+        clear_button = discord.ui.Button(
+            label="Clear",
+            style=discord.ButtonStyle.secondary,
+            disabled=not self.query,
         )
-        if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your inventory.", ephemeral=True)
+        clear_button.callback = self.clear_callback
+        self.add_item(clear_button)
+
+        prev_button = discord.ui.Button(label="Prev", style=discord.ButtonStyle.secondary, disabled=self.page <= 0)
+        prev_button.callback = self.prev_callback
+        self.add_item(prev_button)
+
+        next_button = discord.ui.Button(
+            label="Next",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page >= self.page_count - 1,
+        )
+        next_button.callback = self.next_callback
+        self.add_item(next_button)
+
+        for index, listing in enumerate(self.page_items(), start=1):
+            self.add_item(MarketBuyButton(self, str(listing.get("id", "")), index))
+
+    def filtered_listings(self) -> list[Dict[str, Any]]:
+        return get_market_listings(viewer_id=self.viewer.id, include_own=False, query=self.query)
+
+    def page_items(self) -> list[Dict[str, Any]]:
+        listings = self.filtered_listings()
+        start = self.page * SHOP_PAGE_SIZE
+        return listings[start : start + SHOP_PAGE_SIZE]
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.viewer.id:
+            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
+            return False
+        return True
+
+    async def refresh_message(self):
+        if not self.message:
+            return
+        view = ShopBuyView(self.viewer, query=self.query, page=self.page)
+        view.message = self.message
+        try:
+            await self.message.edit(embed=view.create_embed(), view=view)
+        except Exception as error:
+            print(f"Error refreshing shop buy view: {error}")
+
+    async def search_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(MarketSearchModal(self))
+
+    async def clear_callback(self, interaction: discord.Interaction):
+        view = ShopBuyView(self.viewer, query="", page=0)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    async def prev_callback(self, interaction: discord.Interaction):
+        view = ShopBuyView(self.viewer, query=self.query, page=self.page - 1)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    async def next_callback(self, interaction: discord.Interaction):
+        view = ShopBuyView(self.viewer, query=self.query, page=self.page + 1)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    def create_embed(self) -> discord.Embed:
+        listings = self.filtered_listings()
+        title = "Vehicle Market"
+        if self.query:
+            title += f" - search: {escape(self.query)}"
+        embed = discord.Embed(title=title, color=discord.Color.gold())
+        embed.set_footer(
+            text=(
+                f"Balance: {format_money(get_user_balance(self.viewer.id))} | "
+                f"Listings: {format_count(len(listings))} | Page {self.page + 1}/{self.page_count}"
+            )
+        )
+
+        if not listings:
+            embed.description = "No market listings found."
+            return embed
+
+        vehicles = get_vehicle_map()
+        lines = []
+        for index, listing in enumerate(self.page_items(), start=1):
+            vehicle_name = str(listing.get("vehicle_name", ""))
+            rarity = str(vehicles.get(vehicle_name, {}).get("rarity", "common")).lower()
+            fresh_text = "Fresh" if listing.get("is_fresh") else "Normal"
+            lines.append(
+                "\n".join(
+                    [
+                        f"**{index}. {get_listing_display_name(listing)}**",
+                        f"Rarity: **{display_rarity_name(rarity)}** | Type: **{fresh_text}**",
+                        f"Price: **{format_price(listing.get('price', 0))} each** | Amount: **{format_count(listing.get('count', 0))}**",
+                        f"Seller: <@{listing.get('seller_id')}> | ID: `{listing.get('id')}`",
+                    ]
+                )
+            )
+        embed.description = "\n\n".join(lines)
+        return embed
+
+
+class MarketSellModal(discord.ui.Modal, title="List vehicle on market"):
+    vehicle_name = discord.ui.TextInput(
+        label="Vehicle name",
+        placeholder="Example: m50 or fresh m50",
+        required=True,
+        max_length=100,
+    )
+    amount = discord.ui.TextInput(
+        label="Amount to list",
+        placeholder="1",
+        default="1",
+        required=True,
+        max_length=20,
+    )
+    price = discord.ui.TextInput(
+        label="Price per vehicle",
+        placeholder="Example: 250",
+        required=True,
+        max_length=20,
+    )
+
+    def __init__(self, sell_view: "ShopSellView"):
+        super().__init__()
+        self.sell_view = sell_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await safe_defer(interaction, ephemeral=True):
             return
 
-        available = available_vehicles[matched_vehicle]
-        if parsed_amount > available:
+        parsed_amount = parse_count(str(self.amount.value))
+        parsed_price = parse_count(str(self.price.value))
+        if parsed_amount is None or parsed_amount <= 0:
+            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
+            return
+        if parsed_price is None or parsed_price <= 0:
+            await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
+            return
+
+        matched_vehicle = match_user_available_vehicle(interaction.user.id, str(self.vehicle_name.value))
+        if not matched_vehicle:
+            await safe_send(interaction, f"No available vehicle matching '{self.vehicle_name.value}' found.", ephemeral=True)
+            return
+
+        available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
+        if parsed_amount > available_count:
             await safe_send(
                 interaction,
-                f"You do not have enough {display_vehicle_name(matched_vehicle)}. Available: {format_count(available)}",
+                f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
+                ephemeral=True,
+            )
+            return
+
+        ok, message, _ = create_market_listing(interaction.user.id, matched_vehicle, parsed_amount, parsed_price)
+        await safe_send(interaction, message, ephemeral=True)
+        await self.sell_view.refresh_message()
+
+
+class BaseSellModal(discord.ui.Modal, title="Sell for base price"):
+    vehicle_name = discord.ui.TextInput(
+        label="Vehicle name",
+        placeholder="Example: m50 or fresh m50",
+        required=True,
+        max_length=100,
+    )
+    amount = discord.ui.TextInput(
+        label="Amount to sell",
+        placeholder="1",
+        default="1",
+        required=True,
+        max_length=20,
+    )
+
+    def __init__(self, sell_view: "ShopSellView"):
+        super().__init__()
+        self.sell_view = sell_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await safe_defer(interaction, ephemeral=True):
+            return
+
+        parsed_amount = parse_count(str(self.amount.value))
+        if parsed_amount is None or parsed_amount <= 0:
+            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
+            return
+
+        matched_vehicle = match_user_available_vehicle(interaction.user.id, str(self.vehicle_name.value))
+        if not matched_vehicle:
+            await safe_send(interaction, f"No available vehicle matching '{self.vehicle_name.value}' found.", ephemeral=True)
+            return
+
+        available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
+        if parsed_amount > available_count:
+            await safe_send(
+                interaction,
+                f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
                 ephemeral=True,
             )
             return
@@ -2448,33 +2958,249 @@ def register_trade_commands(discord_bot: commands.Bot):
             interaction,
             (
                 f"Sold **{format_count(removed_amount)}** x **{display_vehicle_name(matched_vehicle)}** "
-                f"for **{format_money(earned)}**. Balance: **{format_money(get_user_balance(interaction.user.id))}**"
+                f"for **{format_price(earned)}**. Balance: **{format_money(get_user_balance(interaction.user.id))}**"
             ),
             ephemeral=True,
         )
+        await self.sell_view.refresh_message()
 
-    @sell_slash.autocomplete("vehicle_name")
-    async def sell_vehicle_autocomplete(interaction: discord.Interaction, current: str):
-        active_trade = get_active_trade_for_user(interaction.user.id)
-        active_offer = get_trade_offer_for_user(active_trade, interaction.user.id) if active_trade else None
-        available_vehicles = get_available_vehicle_counts(interaction.user.id, active_offer)
-        current_lower = current.lower()
 
-        sorted_items = sorted(
-            available_vehicles.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
+class ShopSellView(discord.ui.View):
+    def __init__(self, viewer: discord.abc.User):
+        super().__init__(timeout=180)
+        self.viewer = viewer
+        self.message: Optional[discord.Message] = None
+
+        market_button = discord.ui.Button(label="Market Listing", style=discord.ButtonStyle.primary, emoji=COIN_EMOJI)
+        market_button.callback = self.market_callback
+        self.add_item(market_button)
+
+        base_button = discord.ui.Button(label="Base Price", style=discord.ButtonStyle.success)
+        base_button.callback = self.base_callback
+        self.add_item(base_button)
+
+        listings_button = discord.ui.Button(label="My Listings", style=discord.ButtonStyle.secondary)
+        listings_button.callback = self.my_listings_callback
+        self.add_item(listings_button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.viewer.id:
+            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
+            return False
+        return True
+
+    async def refresh_message(self):
+        if not self.message:
+            return
+        view = ShopSellView(self.viewer)
+        view.message = self.message
+        try:
+            await self.message.edit(embed=view.create_embed(), view=view)
+        except Exception as error:
+            print(f"Error refreshing shop sell view: {error}")
+
+    async def market_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(MarketSellModal(self))
+
+    async def base_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(BaseSellModal(self))
+
+    async def my_listings_callback(self, interaction: discord.Interaction):
+        view = MyListingsView(self.viewer)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    def create_embed(self) -> discord.Embed:
+        available = get_available_vehicle_counts_for_user(self.viewer.id)
+        own_listings = get_market_listings(seller_id=self.viewer.id, include_own=True)
+        embed = discord.Embed(title="Sell Vehicles", color=discord.Color.green())
+        embed.description = (
+            "**Market Listing** lets you choose your own price and wait for another player to buy.\n"
+            f"**Base Price** sells instantly for {format_price(SELL_VEHICLE_PRICE)} each."
         )
-
-        return [
-            app_commands.Choice(
-                name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
-                value=name,
+        embed.set_footer(
+            text=(
+                f"Balance: {format_money(get_user_balance(self.viewer.id))} | "
+                f"Available stacks: {format_count(len(available))} | "
+                f"Market listings: {format_count(len(own_listings))}"
             )
-            for name, count in sorted_items
-            if not current_lower
-            or current_lower in name.lower()
-            or current_lower in display_vehicle_name(name).lower()
-        ][:25]
+        )
+        return embed
+
+
+class CancelListingButton(discord.ui.Button):
+    def __init__(self, listings_view: "MyListingsView", listing_id: str, index_label: int):
+        super().__init__(label=f"Cancel {index_label}", style=discord.ButtonStyle.danger)
+        self.listings_view = listings_view
+        self.listing_id = listing_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await safe_defer(interaction, ephemeral=True):
+            return
+        ok, message = cancel_market_listing(interaction.user.id, self.listing_id)
+        await safe_send(interaction, message, ephemeral=True)
+        await self.listings_view.refresh_message()
+
+
+class MyListingsView(discord.ui.View):
+    def __init__(self, viewer: discord.abc.User, page: int = 0):
+        super().__init__(timeout=180)
+        self.viewer = viewer
+        self.message: Optional[discord.Message] = None
+        listings = self.filtered_listings()
+        self.page_count = max(1, (len(listings) + SHOP_PAGE_SIZE - 1) // SHOP_PAGE_SIZE)
+        self.page = min(max(0, page), self.page_count - 1)
+
+        back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back_button.callback = self.back_callback
+        self.add_item(back_button)
+
+        prev_button = discord.ui.Button(label="Prev", style=discord.ButtonStyle.secondary, disabled=self.page <= 0)
+        prev_button.callback = self.prev_callback
+        self.add_item(prev_button)
+
+        next_button = discord.ui.Button(
+            label="Next",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page >= self.page_count - 1,
+        )
+        next_button.callback = self.next_callback
+        self.add_item(next_button)
+
+        for index, listing in enumerate(self.page_items(), start=1):
+            self.add_item(CancelListingButton(self, str(listing.get("id", "")), index))
+
+    def filtered_listings(self) -> list[Dict[str, Any]]:
+        return get_market_listings(seller_id=self.viewer.id, include_own=True)
+
+    def page_items(self) -> list[Dict[str, Any]]:
+        listings = self.filtered_listings()
+        start = self.page * SHOP_PAGE_SIZE
+        return listings[start : start + SHOP_PAGE_SIZE]
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.viewer.id:
+            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
+            return False
+        return True
+
+    async def refresh_message(self):
+        if not self.message:
+            return
+        view = MyListingsView(self.viewer, page=self.page)
+        view.message = self.message
+        try:
+            await self.message.edit(embed=view.create_embed(), view=view)
+        except Exception as error:
+            print(f"Error refreshing my listings view: {error}")
+
+    async def back_callback(self, interaction: discord.Interaction):
+        view = ShopSellView(self.viewer)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    async def prev_callback(self, interaction: discord.Interaction):
+        view = MyListingsView(self.viewer, page=self.page - 1)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    async def next_callback(self, interaction: discord.Interaction):
+        view = MyListingsView(self.viewer, page=self.page + 1)
+        view.message = self.message
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    def create_embed(self) -> discord.Embed:
+        listings = self.filtered_listings()
+        embed = discord.Embed(title="My Market Listings", color=discord.Color.green())
+        embed.set_footer(text=f"Listings: {format_count(len(listings))} | Page {self.page + 1}/{self.page_count}")
+
+        if not listings:
+            embed.description = "You have no active market listings."
+            return embed
+
+        vehicles = get_vehicle_map()
+        lines = []
+        for index, listing in enumerate(self.page_items(), start=1):
+            vehicle_name = str(listing.get("vehicle_name", ""))
+            rarity = str(vehicles.get(vehicle_name, {}).get("rarity", "common")).lower()
+            fresh_text = "Fresh" if listing.get("is_fresh") else "Normal"
+            lines.append(
+                "\n".join(
+                    [
+                        f"**{index}. {get_listing_display_name(listing)}**",
+                        f"Rarity: **{display_rarity_name(rarity)}** | Type: **{fresh_text}**",
+                        f"Price: **{format_price(listing.get('price', 0))} each** | Amount: **{format_count(listing.get('count', 0))}**",
+                        f"ID: `{listing.get('id')}`",
+                    ]
+                )
+            )
+        embed.description = "\n\n".join(lines)
+        return embed
+
+
+def get_available_vehicle_counts_for_user(user_id: int) -> Dict[str, int]:
+    active_trade = get_active_trade_for_user(user_id)
+    active_offer = get_trade_offer_for_user(active_trade, user_id) if active_trade else None
+    return get_available_vehicle_counts(user_id, active_offer)
+
+
+def match_user_available_vehicle(user_id: int, query: str) -> Optional[str]:
+    available = get_available_vehicle_counts_for_user(user_id)
+    query = str(query or "").strip()
+    if not query:
+        return None
+    if query in available:
+        return query
+
+    normalized_query = normalize_name(query)
+    if normalized_query.startswith("fresh"):
+        trimmed_query = query.strip()[5:].strip(" :-_")
+        matched_base = find_best_vehicle_match(
+            [split_inventory_key(name)[0] for name in available.keys()],
+            trimmed_query,
+        )
+        if matched_base:
+            fresh_key = make_inventory_key(matched_base, True)
+            if fresh_key in available:
+                return fresh_key
+
+    return find_best_vehicle_match(available.keys(), query)
+
+
+def register_trade_commands(discord_bot: commands.Bot):
+    @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
+    @app_commands.describe(user="The user whose inventory you want to view")
+    async def inventory_slash(interaction: discord.Interaction, user: Optional[discord.User] = None):
+        target_user = user or interaction.user
+        view = InventoryOverview(target_user, interaction.user)
+        await interaction.response.send_message(embed=create_overview_embed(target_user), view=view)
+
+    @discord_bot.tree.command(name="shop", description="Open the vehicle coin shop")
+    @app_commands.guild_only()
+    @app_commands.describe(action="Buy from the market or sell your vehicles")
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="buy", value="buy"),
+            app_commands.Choice(name="sell", value="sell"),
+        ]
+    )
+    async def shop_slash(interaction: discord.Interaction, action: app_commands.Choice[str]):
+        selected_action = str(action.value).lower()
+        if selected_action == "buy":
+            view = ShopBuyView(interaction.user)
+            await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
+            try:
+                view.message = await interaction.original_response()
+            except Exception as error:
+                print(f"Error storing shop buy message: {error}")
+            return
+
+        view = ShopSellView(interaction.user)
+        await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
+        try:
+            view.message = await interaction.original_response()
+        except Exception as error:
+            print(f"Error storing shop sell message: {error}")
 
     @discord_bot.tree.command(name="tradeadd", description="Add a vehicle or coins to your active trade offer")
     @app_commands.guild_only()
