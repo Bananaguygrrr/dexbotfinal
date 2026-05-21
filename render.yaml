@@ -49,19 +49,21 @@ services:
       - key: EVENT_SPAWN_DELAY_SECONDS
         value: "3"
       - key: CATCH_REWARD_SPECIALS
-        value: "1"
+        value: "200"
       - key: CATCH_REWARD_LIMITED_EDITION
-        value: "1"
+        value: "150"
       - key: CATCH_REWARD_EXOTIC
-        value: "1"
+        value: "100"
       - key: CATCH_REWARD_LEGENDARY
-        value: "1"
+        value: "100"
       - key: CATCH_REWARD_EPIC
-        value: "1"
+        value: "100"
       - key: CATCH_REWARD_RARE
-        value: "1"
+        value: "100"
       - key: CATCH_REWARD_COMMON
-        value: "1"
+        value: "100"
+      - key: FRESH_CATCH_BONUS
+        value: "50"
       - key: SELL_VEHICLE_PRICE
         value: "1"
       - key: COMMAND_SYNC_MODE
