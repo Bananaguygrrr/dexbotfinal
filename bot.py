@@ -100,6 +100,7 @@ except Exception as error:
     os.makedirs(DATA_DIR, exist_ok=True)
 
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
+USER_BALANCES_FILE = os.path.join(DATA_DIR, "user_balances.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
@@ -107,6 +108,7 @@ IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
 MAX_SPAWN_RECORDS = 1000
+INVENTORY_PAGE_SIZE = 20
 FALLBACK_IMAGE_DIRS = (
     os.path.join(SCRIPT_DIR, "images"),
     os.path.join(SCRIPT_DIR, "data", "images"),
@@ -159,6 +161,21 @@ RARITY_COLORS = {
     "common": 0x808080,
 }
 
+
+def _read_money_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(float(os.getenv(name, str(default)).strip())))
+    except (TypeError, ValueError, AttributeError):
+        return max(0, default)
+
+
+CATCH_REWARD_BY_RARITY = {
+    rarity: _read_money_env(f"CATCH_REWARD_{rarity.upper().replace(' ', '_')}", 1)
+    for rarity in RARITY_ORDER
+}
+SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 1)
+MONEY_TRADE_ALIASES = {"money", "cash", "dollar", "dollars", "$"}
+
 EXOTIC_RAINBOW_COLORS = (
     0xFF00D4,  # neon magenta
     0x7A00FF,  # electric purple
@@ -205,6 +222,7 @@ pending_trades: Dict[tuple[int, int], int] = {}
 active_trades: Dict[int, "TradeView"] = {}
 
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+BALANCES_CACHE: Optional[Dict[str, int]] = None
 GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -487,6 +505,14 @@ def format_count(num: Any) -> str:
     return f"{result}{COUNT_SUFFIXES[magnitude]}"
 
 
+def format_money(amount: Any) -> str:
+    try:
+        amount_int = int(amount)
+    except (TypeError, ValueError):
+        amount_int = 0
+    return f"${amount_int:,}"
+
+
 def parse_count(text: Any) -> Optional[int]:
     if not text:
         return None
@@ -647,8 +673,9 @@ def build_help_message() -> str:
         "`/leaderboard` - Show who owns the most vehicles\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
-        "`/tradeadd vehicle_name amount` - Add vehicles to a trade\n"
-        "`/traderemove vehicle_name amount` - Remove vehicles from a trade\n\n"
+        "`/tradeadd item amount` - Add vehicles or money to a trade\n"
+        "`/traderemove item amount` - Remove vehicles or money from a trade\n"
+        "`/sell vehicle_name amount` - Sell vehicles for money\n\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "\n"
@@ -849,6 +876,110 @@ def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
         INVENTORIES_CACHE = inventories
     except Exception as error:
         print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
+
+
+def load_balances() -> Dict[str, int]:
+    global BALANCES_CACHE
+
+    if BALANCES_CACHE is not None:
+        return BALANCES_CACHE
+
+    if not os.path.exists(USER_BALANCES_FILE):
+        BALANCES_CACHE = {}
+        return BALANCES_CACHE
+
+    try:
+        with open(USER_BALANCES_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {USER_BALANCES_FILE}: {error}")
+        BALANCES_CACHE = {}
+        return BALANCES_CACHE
+
+    if not isinstance(raw_data, dict):
+        BALANCES_CACHE = {}
+        save_balances(BALANCES_CACHE)
+        return BALANCES_CACHE
+
+    normalized: Dict[str, int] = {}
+    migrated = False
+    for raw_user_id, raw_balance in raw_data.items():
+        user_id = str(raw_user_id)
+        balance = _coerce_non_negative_int(raw_balance)
+        if balance > 0:
+            normalized[user_id] = balance
+        if user_id != raw_user_id or balance != raw_balance:
+            migrated = True
+
+    BALANCES_CACHE = normalized
+    if migrated:
+        save_balances(BALANCES_CACHE)
+
+    return BALANCES_CACHE
+
+
+def save_balances(balances: Dict[str, int]) -> None:
+    global BALANCES_CACHE
+
+    normalized = {
+        str(user_id): _coerce_non_negative_int(balance)
+        for user_id, balance in balances.items()
+        if _coerce_non_negative_int(balance) > 0
+    }
+
+    try:
+        os.makedirs(os.path.dirname(USER_BALANCES_FILE), exist_ok=True)
+        with open(USER_BALANCES_FILE, "w", encoding="utf-8") as handle:
+            json.dump(normalized, handle, indent=2, sort_keys=True)
+        BALANCES_CACHE = normalized
+    except Exception as error:
+        print(f"Error saving {USER_BALANCES_FILE}: {error}")
+
+
+def get_user_balance(user_id: int) -> int:
+    return _coerce_non_negative_int(load_balances().get(str(user_id), 0))
+
+
+def add_money(user_id: int, amount: int) -> int:
+    amount = _coerce_non_negative_int(amount)
+    if amount <= 0:
+        return get_user_balance(user_id)
+
+    balances = load_balances()
+    user_id_str = str(user_id)
+    balances[user_id_str] = _coerce_non_negative_int(balances.get(user_id_str, 0)) + amount
+    save_balances(balances)
+    return balances[user_id_str]
+
+
+def remove_money(user_id: int, amount: int) -> bool:
+    amount = _coerce_non_negative_int(amount)
+    if amount <= 0:
+        return False
+
+    balances = load_balances()
+    user_id_str = str(user_id)
+    current_balance = _coerce_non_negative_int(balances.get(user_id_str, 0))
+    if current_balance < amount:
+        return False
+
+    remaining = current_balance - amount
+    if remaining > 0:
+        balances[user_id_str] = remaining
+    else:
+        balances.pop(user_id_str, None)
+    save_balances(balances)
+    return True
+
+
+def get_catch_reward_for_rarity(rarity: str) -> int:
+    normalized = str(rarity or "common").strip().lower()
+    return _coerce_non_negative_int(CATCH_REWARD_BY_RARITY.get(normalized, CATCH_REWARD_BY_RARITY["common"]))
+
+
+def is_money_trade_item(item: str) -> bool:
+    normalized = str(item or "").strip().lower()
+    return normalized in MONEY_TRADE_ALIASES
 
 
 def load_spawn_records() -> Dict[str, Dict[str, Any]]:
@@ -1751,10 +1882,13 @@ def create_overview_embed(user: discord.abc.User) -> discord.Embed:
 
     counts = _user_rarity_counts(user_inventory, vehicles)
     total, fresh_total = get_user_inventory_count_breakdown(user_inventory, vehicles)
+    _, unique_total = get_user_inventory_totals(user_inventory, vehicles)
+    money_balance = get_user_balance(user.id)
 
     embed = discord.Embed(title=f"{user.name}'s Inventory", color=discord.Color.blue())
     if total <= 0:
         embed.description = "You have not caught any vehicles yet."
+        embed.set_footer(text=f"Money: {format_money(money_balance)}")
         return embed
 
     lines = [
@@ -1764,8 +1898,10 @@ def create_overview_embed(user: discord.abc.User) -> discord.Embed:
     embed.description = "\n".join(lines)
     embed.set_footer(
         text=(
+            f"Unique vehicles: {format_count(unique_total)} | "
             f"Total vehicles: {format_count(total)} | "
-            f"Fresh vehicles: {format_count(fresh_total)}"
+            f"Fresh vehicles: {format_count(fresh_total)} | "
+            f"Money: {format_money(money_balance)}"
         )
     )
     return embed
@@ -1842,20 +1978,59 @@ class InventoryOverview(discord.ui.View):
 
 
 class RarityInventoryView(discord.ui.View):
-    def __init__(self, target_user: discord.abc.User, rarity: str, owner: discord.abc.User):
+    def __init__(
+        self,
+        target_user: discord.abc.User,
+        rarity: str,
+        owner: discord.abc.User,
+        page: int = 0,
+    ):
         super().__init__(timeout=120)
         self.target_user = target_user
         self.rarity = rarity
         self.owner = owner
         self.vehicle_counts = get_user_rarity_vehicle_counts(target_user.id, rarity)
+        sorted_items = self._sorted_items()
+        self.page_count = max(1, (len(sorted_items) + INVENTORY_PAGE_SIZE - 1) // INVENTORY_PAGE_SIZE)
+        self.page = min(max(0, page), self.page_count - 1)
 
         back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
         back_button.callback = self.back_callback
         self.add_item(back_button)
 
+        prev_button = discord.ui.Button(
+            label="Prev",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page <= 0,
+        )
+        prev_button.callback = self.prev_callback
+        self.add_item(prev_button)
+
+        next_button = discord.ui.Button(
+            label="Next",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page >= self.page_count - 1,
+        )
+        next_button.callback = self.next_callback
+        self.add_item(next_button)
+
+    def _sorted_items(self) -> list[tuple[str, int]]:
+        return sorted(
+            self.vehicle_counts.items(),
+            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
+        )
+
     async def back_callback(self, interaction: discord.Interaction):
         view = InventoryOverview(self.target_user, self.owner)
         await interaction.response.edit_message(embed=create_overview_embed(self.target_user), view=view)
+
+    async def prev_callback(self, interaction: discord.Interaction):
+        view = RarityInventoryView(self.target_user, self.rarity, self.owner, self.page - 1)
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
+
+    async def next_callback(self, interaction: discord.Interaction):
+        view = RarityInventoryView(self.target_user, self.rarity, self.owner, self.page + 1)
+        await interaction.response.edit_message(embed=view.create_embed(), view=view)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner.id:
@@ -1877,14 +2052,13 @@ class RarityInventoryView(discord.ui.View):
             embed.description = "No vehicles of this rarity yet."
             return embed
 
-        sorted_items = sorted(
-            self.vehicle_counts.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
+        sorted_items = self._sorted_items()
+        page_start = self.page * INVENTORY_PAGE_SIZE
+        page_items = sorted_items[page_start : page_start + INVENTORY_PAGE_SIZE]
 
         lines = [
             f"- {format_count(count)} | {display_vehicle_name(vehicle_key)}"
-            for vehicle_key, count in sorted_items[:30]
+            for vehicle_key, count in page_items
         ]
 
         total_unique = len(sorted_items)
@@ -1899,12 +2073,10 @@ class RarityInventoryView(discord.ui.View):
             text=(
                 f"Unique: {total_unique} | "
                 f"Total caught: {format_count(total_caught)} | "
-                f"Fresh vehicles: {format_count(fresh_caught)}"
+                f"Fresh vehicles: {format_count(fresh_caught)} | "
+                f"Page {self.page + 1}/{self.page_count}"
             )
         )
-
-        if total_unique > 30:
-            embed.description += f"\n...and {total_unique - 30} more"
 
         return embed
 
@@ -1924,21 +2096,28 @@ def get_trade_offer_for_user(trade_view: "TradeView", user_id: int) -> Optional[
     return None
 
 
+def get_available_vehicle_counts(user_id: int, current_offer: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    inventories = load_inventories()
+    user_inventory = inventories.get(str(user_id), {})
+    if not isinstance(user_inventory, dict):
+        return {}
+
+    current_offer = current_offer or {}
+    available: Dict[str, int] = {}
+    for vehicle_name, owned_count in user_inventory.items():
+        remaining = _coerce_non_negative_int(owned_count) - _coerce_non_negative_int(current_offer.get(vehicle_name, 0))
+        if remaining > 0:
+            available[vehicle_name] = remaining
+    return available
+
+
 def get_trade_available_vehicles(user_id: int) -> Dict[str, int]:
     trade_view = get_active_trade_for_user(user_id)
     if not trade_view:
         return {}
 
-    inventories = load_inventories()
-    user_inventory = inventories.get(str(user_id), {})
     current_offer = get_trade_offer_for_user(trade_view, user_id) or {}
-
-    available: Dict[str, int] = {}
-    for vehicle_name, owned_count in user_inventory.items():
-        remaining = owned_count - current_offer.get(vehicle_name, 0)
-        if remaining > 0:
-            available[vehicle_name] = remaining
-    return available
+    return get_available_vehicle_counts(user_id, current_offer)
 
 
 class TradeView(discord.ui.View):
@@ -1948,6 +2127,8 @@ class TradeView(discord.ui.View):
         self.user_b = user_b
         self.offer_a: Dict[str, int] = {}
         self.offer_b: Dict[str, int] = {}
+        self.money_offer_a = 0
+        self.money_offer_b = 0
         self.ready_a = False
         self.ready_b = False
         self.cancelled = False
@@ -1957,19 +2138,40 @@ class TradeView(discord.ui.View):
         self.countdown_task: Optional[asyncio.Task] = None
         self.countdown_remaining = 0
 
-    def _format_offer_block(self, offer: Dict[str, int]) -> str:
-        if not offer:
-            return "*No vehicles added yet*"
+    def get_money_offer(self, user_id: int) -> int:
+        if user_id == self.user_a.id:
+            return self.money_offer_a
+        if user_id == self.user_b.id:
+            return self.money_offer_b
+        return 0
+
+    def add_money_offer(self, user_id: int, amount: int) -> int:
+        amount = int(amount)
+        if user_id == self.user_a.id:
+            self.money_offer_a = max(0, self.money_offer_a + amount)
+            return self.money_offer_a
+        if user_id == self.user_b.id:
+            self.money_offer_b = max(0, self.money_offer_b + amount)
+            return self.money_offer_b
+        return 0
+
+    def _format_offer_block(self, offer: Dict[str, int], money_offer: int) -> str:
+        if not offer and money_offer <= 0:
+            return "*No vehicles or money added yet*"
 
         sorted_items = sorted(
             offer.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        lines = [
+        lines = []
+        if money_offer > 0:
+            lines.append(f"\u2022 {format_money(money_offer)}")
+
+        lines.extend(
             f"\u2022 {format_count(count)} | {display_vehicle_name(name)}"
             for name, count in sorted_items[:20]
-        ]
+        )
         if len(sorted_items) > 20:
             lines.append(f"...and {len(sorted_items) - 20} more")
         return "\n".join(lines)
@@ -1979,12 +2181,12 @@ class TradeView(discord.ui.View):
 
         embed.add_field(
             name=f"\U0001F381 {self.user_a.name}'s Offer",
-            value=self._format_offer_block(self.offer_a),
+            value=self._format_offer_block(self.offer_a, self.money_offer_a),
             inline=True,
         )
         embed.add_field(
             name=f"\U0001F381 {self.user_b.name}'s Offer",
-            value=self._format_offer_block(self.offer_b),
+            value=self._format_offer_block(self.offer_b, self.money_offer_b),
             inline=True,
         )
 
@@ -2104,6 +2306,25 @@ class TradeView(discord.ui.View):
         inventories = load_inventories()
         inv_a = inventories.get(str(self.user_a.id), {})
         inv_b = inventories.get(str(self.user_b.id), {})
+        balances = load_balances()
+        balance_a = _coerce_non_negative_int(balances.get(str(self.user_a.id), 0))
+        balance_b = _coerce_non_negative_int(balances.get(str(self.user_b.id), 0))
+
+        if balance_a < self.money_offer_a:
+            channel = interaction.channel if interaction else self.message.channel
+            await channel.send(f"Trade failed: {self.user_a.name} no longer has enough money.")
+            self.cancelled = True
+            self.cancelled_by = f"{self.user_a.name} missing money"
+            await self.update_message()
+            return
+
+        if balance_b < self.money_offer_b:
+            channel = interaction.channel if interaction else self.message.channel
+            await channel.send(f"Trade failed: {self.user_b.name} no longer has enough money.")
+            self.cancelled = True
+            self.cancelled_by = f"{self.user_b.name} missing money"
+            await self.update_message()
+            return
 
         for name, count in self.offer_a.items():
             if inv_a.get(name, 0) < count:
@@ -2135,9 +2356,19 @@ class TradeView(discord.ui.View):
                 del inv_b[name]
             inv_a[name] = inv_a.get(name, 0) + count
 
+        if self.money_offer_a > 0:
+            balances[str(self.user_a.id)] = balance_a - self.money_offer_a
+            balances[str(self.user_b.id)] = balance_b + self.money_offer_a
+            balance_b = balances[str(self.user_b.id)]
+
+        if self.money_offer_b > 0:
+            balances[str(self.user_b.id)] = balance_b - self.money_offer_b
+            balances[str(self.user_a.id)] = balances.get(str(self.user_a.id), 0) + self.money_offer_b
+
         inventories[str(self.user_a.id)] = inv_a
         inventories[str(self.user_b.id)] = inv_b
         save_inventories(inventories)
+        save_balances(balances)
 
         self.completed = True
         await self.update_message()
@@ -2151,10 +2382,82 @@ def register_trade_commands(discord_bot: commands.Bot):
         view = InventoryOverview(target_user, interaction.user)
         await interaction.response.send_message(embed=create_overview_embed(target_user), view=view)
 
-    @discord_bot.tree.command(name="tradeadd", description="Add a vehicle to your active trade offer")
+    @discord_bot.tree.command(name="sell", description="Sell one of your vehicles for money")
+    @app_commands.describe(vehicle_name="The vehicle to sell", amount="How many to sell")
+    async def sell_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
+        if not await safe_defer(interaction, ephemeral=True):
+            return
+
+        parsed_amount = parse_count(amount)
+        if parsed_amount is None or parsed_amount <= 0:
+            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
+            return
+
+        active_trade = get_active_trade_for_user(interaction.user.id)
+        active_offer = get_trade_offer_for_user(active_trade, interaction.user.id) if active_trade else None
+        available_vehicles = get_available_vehicle_counts(interaction.user.id, active_offer)
+        matched_vehicle = (
+            vehicle_name
+            if vehicle_name in available_vehicles
+            else find_best_vehicle_match(available_vehicles.keys(), vehicle_name)
+        )
+        if not matched_vehicle:
+            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your inventory.", ephemeral=True)
+            return
+
+        available = available_vehicles[matched_vehicle]
+        if parsed_amount > available:
+            await safe_send(
+                interaction,
+                f"You do not have enough {display_vehicle_name(matched_vehicle)}. Available: {format_count(available)}",
+                ephemeral=True,
+            )
+            return
+
+        base_name, is_fresh = split_inventory_key(matched_vehicle)
+        removed_amount = remove_vehicle_count(interaction.user.id, base_name, parsed_amount, is_fresh=is_fresh)
+        if removed_amount <= 0:
+            await safe_send(interaction, "Sell failed. Your inventory changed before I could remove that vehicle.", ephemeral=True)
+            return
+
+        earned = removed_amount * SELL_VEHICLE_PRICE
+        add_money(interaction.user.id, earned)
+        await safe_send(
+            interaction,
+            (
+                f"Sold **{format_count(removed_amount)}** x **{display_vehicle_name(matched_vehicle)}** "
+                f"for **{format_money(earned)}**. Balance: **{format_money(get_user_balance(interaction.user.id))}**"
+            ),
+            ephemeral=True,
+        )
+
+    @sell_slash.autocomplete("vehicle_name")
+    async def sell_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+        active_trade = get_active_trade_for_user(interaction.user.id)
+        active_offer = get_trade_offer_for_user(active_trade, interaction.user.id) if active_trade else None
+        available_vehicles = get_available_vehicle_counts(interaction.user.id, active_offer)
+        current_lower = current.lower()
+
+        sorted_items = sorted(
+            available_vehicles.items(),
+            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
+        )
+
+        return [
+            app_commands.Choice(
+                name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
+                value=name,
+            )
+            for name, count in sorted_items
+            if not current_lower
+            or current_lower in name.lower()
+            or current_lower in display_vehicle_name(name).lower()
+        ][:25]
+
+    @discord_bot.tree.command(name="tradeadd", description="Add a vehicle or money to your active trade offer")
     @app_commands.guild_only()
-    @app_commands.describe(vehicle_name="The vehicle to add", amount="How many to add")
-    async def tradeadd_slash(interaction: discord.Interaction, vehicle_name: str, amount: str):
+    @app_commands.describe(item="Vehicle or money to add", amount="How many vehicles or how much money")
+    async def tradeadd_slash(interaction: discord.Interaction, item: str, amount: str = "1"):
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -2172,10 +2475,31 @@ def register_trade_commands(discord_bot: commands.Bot):
             await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
             return
 
+        if is_money_trade_item(item):
+            current_money_offer = trade_view.get_money_offer(interaction.user.id)
+            available_money = get_user_balance(interaction.user.id) - current_money_offer
+            if parsed_amount > available_money:
+                await safe_send(
+                    interaction,
+                    f"You do not have enough money. Available: {format_money(max(0, available_money))}",
+                    ephemeral=True,
+                )
+                return
+
+            trade_view.add_money_offer(interaction.user.id, parsed_amount)
+            trade_view.reset_countdown()
+            await trade_view.update_message()
+            await safe_send(
+                interaction,
+                f"Added **{format_money(parsed_amount)}** to your offer.",
+                ephemeral=True,
+            )
+            return
+
         available_vehicles = get_trade_available_vehicles(interaction.user.id)
-        matched_vehicle = vehicle_name if vehicle_name in available_vehicles else find_best_vehicle_match(available_vehicles.keys(), vehicle_name)
+        matched_vehicle = item if item in available_vehicles else find_best_vehicle_match(available_vehicles.keys(), item)
         if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your inventory.", ephemeral=True)
+            await safe_send(interaction, f"No vehicle matching '{item}' found in your inventory.", ephemeral=True)
             return
 
         available = available_vehicles[matched_vehicle]
@@ -2198,17 +2522,29 @@ def register_trade_commands(discord_bot: commands.Bot):
             ephemeral=True,
         )
 
-    @tradeadd_slash.autocomplete("vehicle_name")
-    async def tradeadd_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+    @tradeadd_slash.autocomplete("item")
+    async def tradeadd_item_autocomplete(interaction: discord.Interaction, current: str):
+        trade_view = get_active_trade_for_user(interaction.user.id)
         available_vehicles = get_trade_available_vehicles(interaction.user.id)
         current_lower = current.lower()
+        choices = []
+
+        if not current_lower or "money".startswith(current_lower) or current_lower in {"$", "cash"}:
+            current_money_offer = trade_view.get_money_offer(interaction.user.id) if trade_view else 0
+            available_money = max(0, get_user_balance(interaction.user.id) - current_money_offer)
+            choices.append(
+                app_commands.Choice(
+                    name=f"Money ({format_money(available_money)} available)",
+                    value="money",
+                )
+            )
 
         sorted_items = sorted(
             available_vehicles.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        return [
+        choices.extend(
             app_commands.Choice(
                 name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
                 value=name,
@@ -2217,12 +2553,13 @@ def register_trade_commands(discord_bot: commands.Bot):
             if not current_lower
             or current_lower in name.lower()
             or current_lower in display_vehicle_name(name).lower()
-        ][:25]
+        )
+        return choices[:25]
 
-    @discord_bot.tree.command(name="traderemove", description="Remove a vehicle from your active trade offer")
+    @discord_bot.tree.command(name="traderemove", description="Remove a vehicle or money from your active trade offer")
     @app_commands.guild_only()
-    @app_commands.describe(vehicle_name="The vehicle to remove", amount="How many to remove")
-    async def traderemove_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
+    @app_commands.describe(item="Vehicle or money to remove", amount="How many vehicles or how much money")
+    async def traderemove_slash(interaction: discord.Interaction, item: str, amount: str = "1"):
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -2236,7 +2573,8 @@ def register_trade_commands(discord_bot: commands.Bot):
             return
 
         current_offer = get_trade_offer_for_user(trade_view, interaction.user.id)
-        if not current_offer:
+        current_money_offer = trade_view.get_money_offer(interaction.user.id)
+        if not current_offer and current_money_offer <= 0:
             await safe_send(interaction, "Your offer is empty.", ephemeral=True)
             return
 
@@ -2245,9 +2583,25 @@ def register_trade_commands(discord_bot: commands.Bot):
             await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
             return
 
-        matched_vehicle = vehicle_name if vehicle_name in current_offer else find_best_vehicle_match(current_offer.keys(), vehicle_name)
+        if is_money_trade_item(item):
+            if current_money_offer <= 0:
+                await safe_send(interaction, "You do not have money in your current offer.", ephemeral=True)
+                return
+
+            amount_to_remove = min(parsed_amount, current_money_offer)
+            trade_view.add_money_offer(interaction.user.id, -amount_to_remove)
+            trade_view.reset_countdown()
+            await trade_view.update_message()
+            await safe_send(
+                interaction,
+                f"Removed **{format_money(amount_to_remove)}** from your offer.",
+                ephemeral=True,
+            )
+            return
+
+        matched_vehicle = item if item in current_offer else find_best_vehicle_match(current_offer.keys(), item)
         if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your current offer.", ephemeral=True)
+            await safe_send(interaction, f"No vehicle matching '{item}' found in your current offer.", ephemeral=True)
             return
 
         amount_to_remove = min(parsed_amount, current_offer[matched_vehicle])
@@ -2263,21 +2617,33 @@ def register_trade_commands(discord_bot: commands.Bot):
             ephemeral=True,
         )
 
-    @traderemove_slash.autocomplete("vehicle_name")
-    async def traderemove_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+    @traderemove_slash.autocomplete("item")
+    async def traderemove_item_autocomplete(interaction: discord.Interaction, current: str):
         trade_view = get_active_trade_for_user(interaction.user.id)
         if not trade_view:
             return []
 
         current_offer = get_trade_offer_for_user(trade_view, interaction.user.id) or {}
         current_lower = current.lower()
+        choices = []
+
+        current_money_offer = trade_view.get_money_offer(interaction.user.id)
+        if current_money_offer > 0 and (
+            not current_lower or "money".startswith(current_lower) or current_lower in {"$", "cash"}
+        ):
+            choices.append(
+                app_commands.Choice(
+                    name=f"Money ({format_money(current_money_offer)} in offer)",
+                    value="money",
+                )
+            )
 
         sorted_items = sorted(
             current_offer.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        return [
+        choices.extend(
             app_commands.Choice(
                 name=f"{display_vehicle_name(name)} ({format_count(count)} in offer)",
                 value=name,
@@ -2286,7 +2652,8 @@ def register_trade_commands(discord_bot: commands.Bot):
             if not current_lower
             or current_lower in name.lower()
             or current_lower in display_vehicle_name(name).lower()
-        ][:25]
+        )
+        return choices[:25]
 
     @discord_bot.tree.command(name="trade", description="Send a trade request to another user")
     @app_commands.guild_only()
@@ -2333,7 +2700,7 @@ def register_trade_commands(discord_bot: commands.Bot):
             view.message = await safe_send(
                 interaction,
                 f"\U0001F91D Trade started between {user.mention} and {interaction.user.mention}.\n"
-                "Use `/tradeadd` to add and `/traderemove` to remove vehicles.",
+                "Use `/tradeadd` to add vehicles or money and `/traderemove` to remove them.",
                 embed=view.create_embed(),
                 view=view,
                 wait=True,
@@ -2386,8 +2753,13 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
+        reward = get_catch_reward_for_rarity(self.view.rarity)
+        if reward > 0:
+            add_money(interaction.user.id, reward)
+        reward_text = f" and earned **{format_money(reward)}**" if reward > 0 else ""
+
         await interaction.response.send_message(
-            f"\U0001F389 {catch_status_emoji}{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
+            f"\U0001F389 {catch_status_emoji}{interaction.user.mention} caught **{caught_label}** (`{display_code}`){reward_text}",
             ephemeral=False,
         )
         add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
