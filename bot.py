@@ -3167,6 +3167,28 @@ def match_user_available_vehicle(user_id: int, query: str) -> Optional[str]:
     return find_best_vehicle_match(available.keys(), query)
 
 
+def build_available_vehicle_choices(user_id: int, current: str) -> list[app_commands.Choice[str]]:
+    available = get_available_vehicle_counts_for_user(user_id)
+    current_lower = str(current or "").lower()
+
+    sorted_items = sorted(
+        available.items(),
+        key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
+    )
+
+    return [
+        app_commands.Choice(
+            name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
+            value=name,
+        )
+        for name, count in sorted_items
+        if not current_lower
+        or current_lower in name.lower()
+        or current_lower in display_vehicle_name(name).lower()
+        or current_lower in display_vehicle_name(name).lower().replace(" ", "_")
+    ][:25]
+
+
 def register_trade_commands(discord_bot: commands.Bot):
     @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
     @app_commands.describe(user="The user whose inventory you want to view")
@@ -3177,16 +3199,31 @@ def register_trade_commands(discord_bot: commands.Bot):
 
     @discord_bot.tree.command(name="shop", description="Open the vehicle coin shop")
     @app_commands.guild_only()
-    @app_commands.describe(action="Buy from the market or sell your vehicles")
+    @app_commands.describe(
+        action="Buy from the market or sell your vehicles",
+        vehicle="Vehicle to list when selling directly",
+        amount="Amount to list when selling directly",
+        price="Price per vehicle when selling directly",
+    )
     @app_commands.choices(
         action=[
             app_commands.Choice(name="buy", value="buy"),
             app_commands.Choice(name="sell", value="sell"),
         ]
     )
-    async def shop_slash(interaction: discord.Interaction, action: app_commands.Choice[str]):
+    async def shop_slash(
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        vehicle: Optional[str] = None,
+        amount: Optional[str] = None,
+        price: Optional[str] = None,
+    ):
         selected_action = str(action.value).lower()
         if selected_action == "buy":
+            if vehicle or amount or price:
+                await safe_send(interaction, "Vehicle, amount, and price are only used with `/shop sell`.", ephemeral=True)
+                return
+
             view = ShopBuyView(interaction.user)
             await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
             try:
@@ -3195,12 +3232,61 @@ def register_trade_commands(discord_bot: commands.Bot):
                 print(f"Error storing shop buy message: {error}")
             return
 
+        direct_values = [vehicle, amount, price]
+        has_direct_sell = any(value not in (None, "") for value in direct_values)
+        if has_direct_sell:
+            if not vehicle or not amount or not price:
+                await safe_send(
+                    interaction,
+                    "For direct selling, use all three fields: `/shop sell vehicle:<name> amount:<amount> price:<price>`.",
+                    ephemeral=True,
+                )
+                return
+
+            if not await safe_defer(interaction, ephemeral=True):
+                return
+
+            parsed_amount = parse_count(amount)
+            parsed_price = parse_count(price)
+            if parsed_amount is None or parsed_amount <= 0:
+                await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
+                return
+            if parsed_price is None or parsed_price <= 0:
+                await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
+                return
+
+            matched_vehicle = match_user_available_vehicle(interaction.user.id, vehicle)
+            if not matched_vehicle:
+                await safe_send(interaction, f"No available vehicle matching '{vehicle}' found.", ephemeral=True)
+                return
+
+            available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
+            if parsed_amount > available_count:
+                await safe_send(
+                    interaction,
+                    f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
+                    ephemeral=True,
+                )
+                return
+
+            ok, message, _ = create_market_listing(interaction.user.id, matched_vehicle, parsed_amount, parsed_price)
+            await safe_send(interaction, message, ephemeral=True)
+            return
+
         view = ShopSellView(interaction.user)
         await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
         try:
             view.message = await interaction.original_response()
         except Exception as error:
             print(f"Error storing shop sell message: {error}")
+
+    @shop_slash.autocomplete("vehicle")
+    async def shop_vehicle_autocomplete(interaction: discord.Interaction, current: str):
+        namespace = getattr(interaction, "namespace", None)
+        action_value = getattr(getattr(namespace, "action", None), "value", getattr(namespace, "action", None))
+        if str(action_value or "").lower() != "sell":
+            return []
+        return build_available_vehicle_choices(interaction.user.id, current)
 
     @discord_bot.tree.command(name="tradeadd", description="Add a vehicle or coins to your active trade offer")
     @app_commands.guild_only()
