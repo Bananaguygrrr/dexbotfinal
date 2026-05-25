@@ -257,6 +257,12 @@ DIGIT_ID_RE = re.compile(r"(\d+)")
 NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
 CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
+CATALOG_AUDIT_ENABLED = os.getenv("CATALOG_AUDIT_ENABLED", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 COUNT_SUFFIXES = (
     "",
@@ -2174,6 +2180,9 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
 
 
 def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
+    if not CATALOG_AUDIT_ENABLED:
+        return
+
     for vehicle_name in CATALOG_AUDIT_VEHICLES:
         vehicle_data = vehicles.get(vehicle_name)
         if not vehicle_data:

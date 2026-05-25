@@ -12,6 +12,8 @@ venv/
 # Local runtime data
 bot.lock
 *.log
+dexbot_boot
+dexbot_boot.exe
 .codex-test/
 data/admin_user_ids.json
 data/bot.lock

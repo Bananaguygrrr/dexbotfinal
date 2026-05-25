@@ -59,11 +59,13 @@ The bot spawns vehicles in configured Discord channels, lets users catch them by
 |-- bot.py               # Main Discord bot, website, catalog, inventory, trading, shop logic
 |-- bot_runner.py        # Production runner with health/status endpoint
 |-- guess_game_patch.py  # Vehicle guessing practice game command
-|-- main.cpp             # C++ Render boot wrapper that starts the Python runner
 |-- data/index.json      # Vehicle catalog used by the bot
 |-- render.yaml          # Render deployment configuration
+|-- .env.example         # Local environment template
 |-- TERMS.md             # Terms of Service
-`-- PRIVACY.md           # Privacy Policy
+|-- PRIVACY.md           # Privacy Policy
+|-- SUPPORT.md           # Support information
+`-- SECURITY.md          # Security reporting information
 ```
 
 ## Configuration
@@ -89,14 +91,10 @@ The important production variables are:
 Run the same lightweight compile check used during deploy:
 
 ```bash
-python -m py_compile bot.py bot_runner.py guess_game_patch.py sitecustomize.py
+python -m py_compile bot.py bot_runner.py guess_game_patch.py
 ```
 
-For Render, the configured build also compiles the C++ launcher:
-
-```bash
-g++ -std=c++17 -O2 -Wall -Wextra -pedantic main.cpp -o dexbot_boot
-```
+Render uses the same compile check, then starts the bot with `python3 bot_runner.py`.
 
 ## Data And Privacy
 
