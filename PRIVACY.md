@@ -1,12 +1,12 @@
-# Military Tycoon Vehicle Dex Bot Privacy Policy
+# Privacy Policy
 
 Last updated: May 25, 2026
 
-This Privacy Policy explains what data Military Tycoon Vehicle Dex Bot stores and how it is used.
+This Privacy Policy explains what Military Tycoon Vehicle Dex Bot stores and how that data is used.
 
-## 1. Data We Store
+## Data Stored By The Bot
 
-The bot may store the following Discord-related data:
+The bot may store:
 
 - Discord user IDs
 - Discord server IDs
@@ -15,55 +15,74 @@ The bot may store the following Discord-related data:
 - vehicle inventory counts
 - fresh vehicle inventory counts
 - coin balances
-- trade offers while trades are active
+- active and completed trade-related data
 - market listings
-- spawn records needed for bot admin checks
-- server settings, such as public or private wrong-name comments
+- spawn records used for bot admin checks
+- server settings, including wrong-name comment visibility
 
-The bot does not need or store passwords, email addresses, private messages, payment information, or Discord tokens.
+The bot does not need or intentionally store:
 
-## 2. Why We Store Data
+- passwords
+- email addresses
+- payment information
+- Discord tokens
+- private direct messages
 
-The bot stores data only to provide its features, including:
+## Why Data Is Stored
+
+Data is stored to provide bot features, including:
 
 - vehicle catching
-- inventories
+- inventory pages
 - fresh vehicle tracking
-- coins
+- coin rewards and balances
 - shop and market listings
 - trades
 - leaderboards
-- admin commands
+- admin support tools
 - server configuration
-- spawn debugging
+- spawn debugging and recovery
 
-## 3. Data Sharing
+## Data Visibility
 
-We do not sell user data.
+Some data is visible through normal bot features.
 
-Some stored data is shown through bot features, such as inventories, leaderboards, trades, and market listings. For example, other users may see your Discord name, vehicle counts, coin rank, or market listings when using bot commands.
+For example:
 
-Data may also be visible to bot admins when needed for moderation, support, debugging, or fixing bugs.
+- inventories may show vehicle counts
+- leaderboards may show vehicle totals or coin ranks
+- market listings may show seller, vehicle, amount, and price
+- trades show the offered vehicles and coins to the users in the trade
 
-## 4. Data Retention
+Bot admins may also view data when needed for support, moderation, debugging, or bug fixes.
 
-Data is kept while the bot needs it for gameplay and server features.
+## Data Sharing
 
-Invalid or removed vehicle entries may be cleaned automatically when the bot starts. Bot admins may also remove or correct data to fix bugs, abuse, or broken catalog entries.
+User data is not sold.
 
-## 5. Data Removal
+Data is used for bot functionality and support. It may be processed by the hosting provider that runs the bot.
 
-You can request removal of your stored user data by contacting the bot owner or support server.
+## Data Retention
+
+Runtime data is kept while it is needed for bot features.
+
+Invalid vehicle entries may be cleaned automatically when the catalog changes. Bot admins may also correct or remove data to fix bugs, abuse, duplicates, or broken entries.
+
+## Data Removal Requests
+
+To request removal of stored user data, contact support.
 
 Support server: https://discord.gg/yWJHqqBRSJ
 
-Removing the bot from a server stops new data from being created for that server, but previously stored data may remain until it is deleted or cleaned.
+Removing the bot from a server stops new data from being created for that server, but previously stored data may remain until it is removed or cleaned.
 
-## 6. Security
+## Security
 
-The bot stores its data in files on its hosting service. Reasonable care is used to protect the data, but no system can be guaranteed completely secure.
+The bot stores runtime data on its hosting service. Reasonable care is used to protect this data, but no system can be guaranteed completely secure.
 
-## 7. Changes
+Never share bot tokens, account credentials, or sensitive information through bot commands.
 
-This policy may be updated when bot features or data storage changes.
+## Policy Changes
+
+This policy may be updated when bot features, hosting, or data storage behavior changes.
 

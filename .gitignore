@@ -12,3 +12,11 @@ venv/
 # Local runtime data
 bot.lock
 *.log
+.codex-test/
+data/admin_user_ids.json
+data/bot.lock
+data/guild_channel_settings.json
+data/market_listings.json
+data/spawn_records.json
+data/user_balances.json
+data/user_inventories.json
