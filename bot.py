@@ -190,7 +190,7 @@ CATCH_REWARD_BY_RARITY = {
     for rarity in RARITY_ORDER
 }
 FRESH_CATCH_BONUS = _read_money_env("FRESH_CATCH_BONUS", 50)
-SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 1)
+SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 100)
 MONEY_TRADE_ALIASES = {"money", "cash", "coin", "coins", "dollar", "dollars", "$"}
 COIN_EMOJI = os.getenv("COIN_EMOJI", "\U0001FA99").strip() or "\U0001FA99"
 
@@ -242,7 +242,7 @@ active_trades: Dict[int, "TradeView"] = {}
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 BALANCES_CACHE: Optional[Dict[str, int]] = None
 MARKET_LISTINGS_CACHE: Optional[list[Dict[str, Any]]] = None
-GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
@@ -693,15 +693,17 @@ def build_help_message() -> str:
         "`/help` - Show this help message\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
-        "`/leaderboard` - Show who owns the most vehicles\n"
+        "`/leaderboard` - Show vehicle and coin leaderboards\n"
         "`/shop buy` - Search and buy vehicles from other players\n"
-        "`/shop sell` - Sell vehicles on the market or instantly for base price\n"
+        "`/shop sell market vehicle amount price` - List vehicles on the player market\n"
+        f"`/shop sell base_price vehicle amount` - Sell vehicles instantly for {format_price(SELL_VEHICLE_PRICE)} each\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
         "`/tradeadd item amount` - Add vehicles or coins to a trade\n"
         "`/traderemove item amount` - Remove vehicles or coins from a trade\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
+        "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
         "\n"
         "**Bot Admins**\n"
         "`!list` - Show vehicles missing pictures\n"
@@ -712,7 +714,8 @@ def build_help_message() -> str:
         "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
-        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n\n"
+        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
+        "`!addmoney @user amount` - Add coins to a user\n\n"
         "**Rarities**\n"
         "`???` - 0.01%\n"
         "`Limited Edition` - 0.5%\n"
@@ -1210,6 +1213,36 @@ def create_market_listing(seller_id: int, vehicle_key: str, count: int, price: i
     return True, f"Listed {format_count(count)} x {get_listing_display_name(listing)} for {format_price(price)} each.", listing
 
 
+def sell_vehicle_to_shop(user_id: int, vehicle_key: str, count: int) -> tuple[bool, str]:
+    count = _coerce_non_negative_int(count)
+    if count <= 0:
+        return False, "Enter a positive amount to sell."
+
+    vehicle_name, is_fresh = split_inventory_key(vehicle_key)
+    vehicle_name = canonical_vehicle_name(vehicle_name)
+    if vehicle_name not in get_vehicle_map():
+        return False, "That vehicle is no longer in the catalog."
+
+    inventory_key = make_inventory_key(vehicle_name, is_fresh)
+    available_count = get_available_vehicle_counts_for_user(user_id).get(inventory_key, 0)
+    if count > available_count:
+        return False, f"You only have {format_count(available_count)} available {display_vehicle_name(inventory_key)}."
+
+    removed_amount = remove_vehicle_count(user_id, vehicle_name, count, is_fresh=is_fresh)
+    if removed_amount <= 0:
+        return False, "Sell failed. Your inventory changed before I could remove that vehicle."
+
+    earned = removed_amount * SELL_VEHICLE_PRICE
+    add_money(user_id, earned)
+    return (
+        True,
+        (
+            f"Sold **{format_count(removed_amount)}** x **{display_vehicle_name(inventory_key)}** "
+            f"for **{format_price(earned)}**. Balance: **{format_money(get_user_balance(user_id))}**"
+        ),
+    )
+
+
 def buy_market_listing(buyer_id: int, listing_id: str, count: int) -> tuple[bool, str]:
     count = _coerce_non_negative_int(count)
     if count <= 0:
@@ -1523,7 +1556,10 @@ async def resolve_leaderboard_user_label(guild: Optional[discord.Guild], user_id
         return f"User {user_id}"
 
 
-async def create_leaderboard_embed(guild: Optional[discord.Guild], viewer_id: Optional[int] = None) -> discord.Embed:
+async def _create_vehicle_leaderboard_embed(
+    guild: Optional[discord.Guild],
+    viewer_id: Optional[int] = None,
+) -> discord.Embed:
     inventories = load_inventories()
     vehicles = get_vehicle_map()
     leaderboard_rows: list[tuple[int, int, int]] = []
@@ -1583,6 +1619,106 @@ async def create_leaderboard_embed(guild: Optional[discord.Guild], viewer_id: Op
     return embed
 
 
+async def _create_money_leaderboard_embed(
+    guild: Optional[discord.Guild],
+    viewer_id: Optional[int] = None,
+) -> discord.Embed:
+    balances = load_balances()
+    leaderboard_rows: list[tuple[int, int]] = []
+
+    for raw_user_id, raw_balance in balances.items():
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            continue
+
+        balance = _coerce_non_negative_int(raw_balance)
+        if balance <= 0:
+            continue
+
+        leaderboard_rows.append((balance, user_id))
+
+    leaderboard_rows.sort(key=lambda row: (-row[0], row[1]))
+
+    embed = discord.Embed(title="Money Leaderboard", color=discord.Color.green())
+    if not leaderboard_rows:
+        embed.description = "No one has coins yet."
+        if viewer_id is not None:
+            embed.description += "\n\nYour rank is not ranked yet."
+        return embed
+
+    lines: list[str] = []
+    for position, (balance, user_id) in enumerate(leaderboard_rows[:10], start=1):
+        label = discord.utils.escape_markdown(await resolve_leaderboard_user_label(guild, user_id))
+        lines.append(f"**{position}.** {label} - **{format_money(balance)}**")
+
+    if viewer_id is not None:
+        viewer_rank: Optional[int] = None
+        viewer_balance = 0
+        for position, (balance, user_id) in enumerate(leaderboard_rows, start=1):
+            if user_id == viewer_id:
+                viewer_rank = position
+                viewer_balance = balance
+                break
+
+        lines.append("")
+        if viewer_rank is None:
+            lines.append("Your rank is not ranked yet.")
+        else:
+            lines.append(
+                f"Your rank is **#{format_count(viewer_rank)}** with **{format_money(viewer_balance)}**."
+            )
+
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"Ranked {format_count(len(leaderboard_rows))} players by coin balance")
+    return embed
+
+
+async def create_leaderboard_embed(
+    guild: Optional[discord.Guild],
+    viewer_id: Optional[int] = None,
+    mode: str = "vehicles",
+) -> discord.Embed:
+    if str(mode or "").lower() == "money":
+        return await _create_money_leaderboard_embed(guild, viewer_id)
+    return await _create_vehicle_leaderboard_embed(guild, viewer_id)
+
+
+class LeaderboardModeButton(discord.ui.Button):
+    def __init__(self, leaderboard_view: "LeaderboardView", mode: str, label: str):
+        super().__init__(
+            label=label,
+            style=discord.ButtonStyle.primary if leaderboard_view.mode == mode else discord.ButtonStyle.secondary,
+            disabled=leaderboard_view.mode == mode,
+        )
+        self.leaderboard_view = leaderboard_view
+        self.mode = mode
+
+    async def callback(self, interaction: discord.Interaction):
+        view = LeaderboardView(self.leaderboard_view.owner, self.mode)
+        embed = await create_leaderboard_embed(interaction.guild, interaction.user.id, self.mode)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, owner: discord.abc.User, mode: str = "vehicles"):
+        super().__init__(timeout=120)
+        self.owner = owner
+        self.mode = "money" if str(mode or "").lower() == "money" else "vehicles"
+
+        self.add_item(LeaderboardModeButton(self, "vehicles", "Vehicles"))
+        self.add_item(LeaderboardModeButton(self, "money", "Money"))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner.id:
+            await interaction.response.send_message(
+                "Only the person who used the command can use these buttons.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+
 def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
     return add_vehicle_count(user_id, vehicle_name, 1, is_fresh=is_fresh)
 
@@ -1634,7 +1770,7 @@ def remove_vehicle_count(user_id: int, vehicle_name: str, count: int, is_fresh: 
     return amount_removed
 
 
-def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
+def load_guild_channel_settings() -> Dict[str, Dict[str, Any]]:
     global GUILD_CHANNEL_SETTINGS_CACHE
 
     if GUILD_CHANNEL_SETTINGS_CACHE is not None:
@@ -1656,13 +1792,13 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
         GUILD_CHANNEL_SETTINGS_CACHE = {}
         return GUILD_CHANNEL_SETTINGS_CACHE
 
-    normalized: Dict[str, Dict[str, int]] = {}
+    normalized: Dict[str, Dict[str, Any]] = {}
     for raw_guild_id, raw_settings in raw_data.items():
         guild_id = str(raw_guild_id)
         if not isinstance(raw_settings, dict):
             continue
 
-        parsed_settings: Dict[str, int] = {}
+        parsed_settings: Dict[str, Any] = {}
         for key in ("dex_channel_id",):
             value = raw_settings.get(key)
             try:
@@ -1672,6 +1808,15 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
             if parsed_value > 0:
                 parsed_settings[key] = parsed_value
 
+        if "bot_comment_public" in raw_settings:
+            raw_public = raw_settings.get("bot_comment_public")
+            if isinstance(raw_public, bool):
+                parsed_settings["bot_comment_public"] = raw_public
+            else:
+                parsed_public = parse_bool_true_false(str(raw_public))
+                if parsed_public is not None:
+                    parsed_settings["bot_comment_public"] = parsed_public
+
         if parsed_settings:
             normalized[guild_id] = parsed_settings
 
@@ -1679,7 +1824,7 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
     return GUILD_CHANNEL_SETTINGS_CACHE
 
 
-def save_guild_channel_settings(settings: Dict[str, Dict[str, int]]) -> None:
+def save_guild_channel_settings(settings: Dict[str, Dict[str, Any]]) -> None:
     global GUILD_CHANNEL_SETTINGS_CACHE
 
     try:
@@ -1705,6 +1850,20 @@ def get_guild_channel_setting(guild_id: int, key: str) -> Optional[int]:
     return parsed if parsed > 0 else None
 
 
+def get_guild_bool_setting(guild_id: int, key: str, default: bool = False) -> bool:
+    settings = load_guild_channel_settings()
+    guild_settings = settings.get(str(guild_id), {})
+    if not isinstance(guild_settings, dict):
+        return default
+
+    value = guild_settings.get(key)
+    if isinstance(value, bool):
+        return value
+
+    parsed = parse_bool_true_false(str(value))
+    return default if parsed is None else parsed
+
+
 def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
     settings = load_guild_channel_settings()
     guild_key = str(guild_id)
@@ -1715,6 +1874,24 @@ def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
     guild_settings[key] = int(channel_id)
     settings[guild_key] = guild_settings
     save_guild_channel_settings(settings)
+
+
+def set_guild_bool_setting(guild_id: int, key: str, value: bool) -> None:
+    settings = load_guild_channel_settings()
+    guild_key = str(guild_id)
+    guild_settings = settings.get(guild_key, {})
+    if not isinstance(guild_settings, dict):
+        guild_settings = {}
+
+    guild_settings[key] = bool(value)
+    settings[guild_key] = guild_settings
+    save_guild_channel_settings(settings)
+
+
+def wrong_guess_comments_are_public(guild_id: Optional[int]) -> bool:
+    if guild_id is None:
+        return True
+    return get_guild_bool_setting(guild_id, "bot_comment_public", default=True)
 
 
 def get_configured_text_channel(guild: discord.Guild, key: str) -> Optional[discord.TextChannel]:
@@ -2937,31 +3114,8 @@ class BaseSellModal(discord.ui.Modal, title="Sell for base price"):
             await safe_send(interaction, f"No available vehicle matching '{self.vehicle_name.value}' found.", ephemeral=True)
             return
 
-        available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
-        if parsed_amount > available_count:
-            await safe_send(
-                interaction,
-                f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
-                ephemeral=True,
-            )
-            return
-
-        base_name, is_fresh = split_inventory_key(matched_vehicle)
-        removed_amount = remove_vehicle_count(interaction.user.id, base_name, parsed_amount, is_fresh=is_fresh)
-        if removed_amount <= 0:
-            await safe_send(interaction, "Sell failed. Your inventory changed before I could remove that vehicle.", ephemeral=True)
-            return
-
-        earned = removed_amount * SELL_VEHICLE_PRICE
-        add_money(interaction.user.id, earned)
-        await safe_send(
-            interaction,
-            (
-                f"Sold **{format_count(removed_amount)}** x **{display_vehicle_name(matched_vehicle)}** "
-                f"for **{format_price(earned)}**. Balance: **{format_money(get_user_balance(interaction.user.id))}**"
-            ),
-            ephemeral=True,
-        )
+        _ok, message = sell_vehicle_to_shop(interaction.user.id, matched_vehicle, parsed_amount)
+        await safe_send(interaction, message, ephemeral=True)
         await self.sell_view.refresh_message()
 
 
@@ -3201,27 +3355,37 @@ def register_trade_commands(discord_bot: commands.Bot):
     @app_commands.guild_only()
     @app_commands.describe(
         action="Buy from the market or sell your vehicles",
-        vehicle="Vehicle to list when selling directly",
-        amount="Amount to list when selling directly",
-        price="Price per vehicle when selling directly",
+        sell_type="Use market to list for players, or base_price to sell instantly to the shop",
+        vehicle="Vehicle to sell",
+        amount="Amount to sell",
+        price="Market price per vehicle. Only used with sell_type: market",
     )
     @app_commands.choices(
         action=[
             app_commands.Choice(name="buy", value="buy"),
             app_commands.Choice(name="sell", value="sell"),
-        ]
+        ],
+        sell_type=[
+            app_commands.Choice(name="market", value="market"),
+            app_commands.Choice(name="shop (base price)", value="base_price"),
+        ],
     )
     async def shop_slash(
         interaction: discord.Interaction,
         action: app_commands.Choice[str],
+        sell_type: Optional[str] = None,
         vehicle: Optional[str] = None,
         amount: Optional[str] = None,
         price: Optional[str] = None,
     ):
         selected_action = str(action.value).lower()
         if selected_action == "buy":
-            if vehicle or amount or price:
-                await safe_send(interaction, "Vehicle, amount, and price are only used with `/shop sell`.", ephemeral=True)
+            if sell_type or vehicle or amount or price:
+                await safe_send(
+                    interaction,
+                    "Sell type, vehicle, amount, and price are only used with `/shop sell`.",
+                    ephemeral=True,
+                )
                 return
 
             view = ShopBuyView(interaction.user)
@@ -3232,27 +3396,50 @@ def register_trade_commands(discord_bot: commands.Bot):
                 print(f"Error storing shop buy message: {error}")
             return
 
+        selected_sell_type = str(sell_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if selected_sell_type in {"shop", "base", "baseprice"}:
+            selected_sell_type = "base_price"
+
         direct_values = [vehicle, amount, price]
         has_direct_sell = any(value not in (None, "") for value in direct_values)
-        if has_direct_sell:
-            if not vehicle or not amount or not price:
+        if has_direct_sell or selected_sell_type:
+            if not selected_sell_type:
+                selected_sell_type = "market"
+
+            if selected_sell_type not in {"market", "base_price"}:
+                await safe_send(interaction, "Choose `market` or `base_price` for the sell type.", ephemeral=True)
+                return
+
+            if selected_sell_type == "market" and (not vehicle or not amount or not price):
                 await safe_send(
                     interaction,
-                    "For direct selling, use all three fields: `/shop sell vehicle:<name> amount:<amount> price:<price>`.",
+                    "For market selling, use `/shop sell sell_type:market vehicle:<name> amount:<amount> price:<price>`.",
                     ephemeral=True,
                 )
                 return
+
+            if selected_sell_type == "base_price":
+                if not vehicle or not amount:
+                    await safe_send(
+                        interaction,
+                        "For base price selling, use `/shop sell sell_type:base_price vehicle:<name> amount:<amount>`.",
+                        ephemeral=True,
+                    )
+                    return
+                if price:
+                    await safe_send(
+                        interaction,
+                        f"Do not set a price for base price selling. The shop pays {format_price(SELL_VEHICLE_PRICE)} each.",
+                        ephemeral=True,
+                    )
+                    return
 
             if not await safe_defer(interaction, ephemeral=True):
                 return
 
             parsed_amount = parse_count(amount)
-            parsed_price = parse_count(price)
             if parsed_amount is None or parsed_amount <= 0:
                 await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-                return
-            if parsed_price is None or parsed_price <= 0:
-                await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
                 return
 
             matched_vehicle = match_user_available_vehicle(interaction.user.id, vehicle)
@@ -3260,13 +3447,14 @@ def register_trade_commands(discord_bot: commands.Bot):
                 await safe_send(interaction, f"No available vehicle matching '{vehicle}' found.", ephemeral=True)
                 return
 
-            available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
-            if parsed_amount > available_count:
-                await safe_send(
-                    interaction,
-                    f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
-                    ephemeral=True,
-                )
+            if selected_sell_type == "base_price":
+                _ok, message = sell_vehicle_to_shop(interaction.user.id, matched_vehicle, parsed_amount)
+                await safe_send(interaction, message, ephemeral=True)
+                return
+
+            parsed_price = parse_count(price)
+            if parsed_price is None or parsed_price <= 0:
+                await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
                 return
 
             ok, message, _ = create_market_listing(interaction.user.id, matched_vehicle, parsed_amount, parsed_price)
@@ -3574,7 +3762,11 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
         guessed_name = normalize_name(str(self.guess.value))
         if guessed_name != normalize_name(self.correct_name):
-            await interaction.response.send_message(f"{interaction.user.mention} wrong name.", ephemeral=False)
+            public_comment = wrong_guess_comments_are_public(self.view.guild_id)
+            await interaction.response.send_message(
+                f"{interaction.user.mention} wrong name.",
+                ephemeral=not public_comment,
+            )
             return
 
         self.view.caught = True
@@ -4564,14 +4756,15 @@ async def help_slash(interaction: discord.Interaction):
     await safe_send(interaction, build_help_message(), ephemeral=True)
 
 
-@bot.tree.command(name="leaderboard", description="Show who owns the most vehicles")
+@bot.tree.command(name="leaderboard", description="Show vehicle and coin leaderboards")
 @app_commands.guild_only()
 async def leaderboard_slash(interaction: discord.Interaction):
     if not await safe_defer(interaction):
         return
 
-    embed = await create_leaderboard_embed(interaction.guild, interaction.user.id)
-    await safe_send(interaction, embed=embed)
+    view = LeaderboardView(interaction.user, "vehicles")
+    embed = await create_leaderboard_embed(interaction.guild, interaction.user.id, "vehicles")
+    await safe_send(interaction, embed=embed, view=view)
 
 @bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
 @app_commands.describe(vehicle_name="The name of the vehicle to show")
@@ -4663,6 +4856,28 @@ async def dexchannel_slash(interaction: discord.Interaction, channel: discord.Te
 
     set_guild_channel_setting(interaction.guild.id, "dex_channel_id", channel.id)
     await safe_send(interaction, f"Dex channel set to {channel.mention}.", ephemeral=True)
+
+
+@bot.tree.command(name="botcomment", description="Set whether wrong vehicle-name comments are public")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(public="True shows wrong-name comments to everyone. False shows them only to the guesser")
+async def botcomment_slash(interaction: discord.Interaction, public: bool):
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+
+    if not interaction.permissions.manage_guild:
+        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
+        return
+
+    set_guild_bool_setting(interaction.guild.id, "bot_comment_public", public)
+    visibility_text = "everyone" if public else "only the user who guessed"
+    await safe_send(
+        interaction,
+        f"Wrong-name comments will now be shown to **{visibility_text}**.",
+        ephemeral=True,
+    )
 
 
 @bot.tree.error
@@ -4889,6 +5104,35 @@ async def on_message(message: discord.Message):
         if spawned_count <= 0:
             await message.channel.send("Event spawn failed. Check channel permissions and vehicle data.")
             return
+        return
+
+    if command == "!addmoney":
+        if not has_admin_access(message):
+            return
+
+        if not message.guild:
+            await message.channel.send("This command can only be used in a server.")
+            return
+
+        if len(parts) < 3:
+            await message.channel.send("Usage: `!addmoney @user amount`")
+            return
+
+        target_user = await resolve_user_from_token(parts[1], message.guild)
+        if target_user is None:
+            await message.channel.send("Could not resolve the target user. Mention a user or provide a user ID.")
+            return
+
+        amount = parse_count(parts[2])
+        if amount is None or amount <= 0:
+            await message.channel.send("Invalid amount. Use a positive number (for example: `100`, `1k`, `50k`).")
+            return
+
+        new_balance = add_money(target_user.id, amount)
+        await message.channel.send(
+            f"Added **{format_money(amount)}** to {target_user.mention}. "
+            f"New balance: **{format_money(new_balance)}**."
+        )
         return
 
     if command in {"!addinventory", "!removeinventory"}:
