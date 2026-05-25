@@ -39,7 +39,6 @@ Data is stored to provide bot features, including:
 - shop and market listings
 - trades
 - leaderboards
-- admin support tools
 - server configuration
 - spawn debugging and recovery
 
@@ -85,4 +84,3 @@ Never share bot tokens, account credentials, or sensitive information through bo
 ## Policy Changes
 
 This policy may be updated when bot features, hosting, or data storage behavior changes.
-

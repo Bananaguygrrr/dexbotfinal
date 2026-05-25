@@ -13,7 +13,6 @@ The bot spawns vehicles in configured Discord channels, lets users catch them by
 - Player-to-player trades with vehicles and coins
 - Market listings and instant base-price selling
 - Vehicle and money leaderboards
-- Admin tools for catalog checks, inventory fixes, money fixes, and test spawns
 - Server-level settings for spawn channels and wrong-name comment visibility
 - Public status website and health endpoint
 
@@ -38,19 +37,6 @@ The bot spawns vehicles in configured Discord channels, lets users catch them by
 | --- | --- |
 | `/dexchannel #channel` | Set the channel used for vehicle spawns |
 | `/botcomment public:true/false` | Choose whether wrong-name comments are public or private |
-
-## Bot Admin Commands
-
-| Command | Description |
-| --- | --- |
-| `!list` | List vehicles without picture links |
-| `!vehicles` | Show total caught vehicles and fresh vehicles |
-| `!check <message_id>` | Show the hidden vehicle name for a spawn message |
-| `!testspawn [special] [true/false]` | Spawn a test vehicle |
-| `!event <count>` | Spawn an event wave |
-| `!addinventory @user vehicle_name count true/false` | Add normal or fresh inventory |
-| `!removeinventory @user vehicle_name count true/false` | Remove normal or fresh inventory |
-| `!addmoney @user amount` | Add coins to a user |
 
 ## Project Layout
 
