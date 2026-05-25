@@ -1695,9 +1695,20 @@ class LeaderboardModeButton(discord.ui.Button):
         self.mode = mode
 
     async def callback(self, interaction: discord.Interaction):
+        if not await safe_defer(interaction):
+            return
+
         view = LeaderboardView(self.leaderboard_view.owner, self.mode)
-        embed = await create_leaderboard_embed(interaction.guild, interaction.user.id, self.mode)
-        await interaction.response.edit_message(embed=embed, view=view)
+        embed = await create_leaderboard_embed(interaction.guild, self.leaderboard_view.owner.id, self.mode)
+        try:
+            await interaction.edit_original_response(embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException) as error:
+            print(f"Error editing leaderboard message after button click: {error}")
+            if interaction.message:
+                try:
+                    await interaction.message.edit(embed=embed, view=view)
+                except Exception as fallback_error:
+                    print(f"Fallback leaderboard message edit failed: {fallback_error}")
 
 
 class LeaderboardView(discord.ui.View):
@@ -1717,6 +1728,15 @@ class LeaderboardView(discord.ui.View):
             )
             return False
         return True
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item[Any],
+    ) -> None:
+        print(f"Leaderboard button error on {getattr(item, 'label', 'unknown')}: {error}")
+        await safe_send(interaction, "Leaderboard button failed. Please try `/leaderboard` again.", ephemeral=True)
 
 
 def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
