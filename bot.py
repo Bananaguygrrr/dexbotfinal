@@ -130,6 +130,7 @@ except Exception as error:
     IMAGES_DIR = ""
 
 RARITY_ORDER = (
+    "art work",
     "specials",
     "limited edition",
     "exotic",
@@ -140,6 +141,7 @@ RARITY_ORDER = (
 )
 
 RARITY_WEIGHTS = {
+    "art work": 0,
     "specials": 0.01,
     "limited edition": 0.5,
     "exotic": 4,
@@ -150,6 +152,7 @@ RARITY_WEIGHTS = {
 }
 
 EVENT_RARITY_WEIGHTS = {
+    "art work": 0,
     "specials": 1,
     "limited edition": 10,
     "exotic": 20,
@@ -160,6 +163,7 @@ EVENT_RARITY_WEIGHTS = {
 }
 
 RARITY_COLORS = {
+    "art work": 0x222222,
     "specials": 0x00FF9D,
     "limited edition": 0x8B0000,
     "exotic": 0xFF00D4,
@@ -171,6 +175,7 @@ RARITY_COLORS = {
 
 
 DEFAULT_CATCH_REWARDS = {
+    "art work": 0,
     "specials": 200,
     "limited edition": 150,
     "exotic": 100,
@@ -219,6 +224,7 @@ SPECIAL_RAINBOW_COLORS = (
 )
 
 RARITY_BUTTON_STYLE = {
+    "art work": discord.ButtonStyle.secondary,
     "specials": discord.ButtonStyle.secondary,
     "limited edition": discord.ButtonStyle.danger,
     "exotic": discord.ButtonStyle.success,
@@ -269,6 +275,7 @@ CATALOG_AUDIT_ENABLED = os.getenv("CATALOG_AUDIT_ENABLED", "0").strip().lower() 
     "yes",
     "on",
 }
+UNRELEASED_RARITIES = {"art work"}
 
 COUNT_SUFFIXES = (
     "",
@@ -503,7 +510,8 @@ def refresh_vehicle_aliases() -> Dict[str, str]:
 
 def display_vehicle_name(name_or_key: str) -> str:
     base_name, is_fresh = split_inventory_key(name_or_key)
-    label = base_name.replace("-", "_")
+    vehicle_data = VEHICLES_CACHE.get(base_name, {})
+    label = str(vehicle_data.get("display_name") or base_name.replace("-", "_"))
     return f"{label} [Fresh]" if is_fresh else label
 
 
@@ -693,8 +701,10 @@ def has_admin_access(message: discord.Message) -> bool:
 
 def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
     normalized = str(rarity or "").strip().lower()
+    if normalized in UNRELEASED_RARITIES:
+        return "???"
     if normalized == "specials":
-        return "Specials" if reveal_specials else "???"
+        return "Specials"
     return normalized.title()
 
 
@@ -740,7 +750,7 @@ def build_help_message() -> str:
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
         "`!addmoney @user amount` - Add coins to a user\n\n"
         "**Rarities**\n"
-        "`???` - 0.01%\n"
+        "`Specials` - 0.01%\n"
         "`Limited Edition` - 0.5%\n"
         "`Exotic` - 4%\n"
         "`Legendary` - 8%\n"
@@ -1531,7 +1541,7 @@ def build_missing_vehicle_list_pages() -> list[str]:
     missing_vehicle_names = [
         display_vehicle_name(vehicle_name)
         for vehicle_name, vehicle_data in vehicles.items()
-        if not _vehicle_is_spawnable(vehicle_data)
+        if not _vehicle_has_picture(vehicle_data)
     ]
     missing_vehicle_names.sort(key=str.lower)
 
@@ -2033,6 +2043,10 @@ def _merge_vehicle_entry(
 
     existing["rarity"] = _rarer_rarity(existing.get("rarity"), vehicle_data.get("rarity"))
 
+    for metadata_key in ("display_name", "spawnable", "showable"):
+        if metadata_key in vehicle_data and (metadata_key not in existing or not is_alias):
+            existing[metadata_key] = vehicle_data[metadata_key]
+
 
 def load_vehicles() -> Dict[str, Dict[str, Any]]:
     global VEHICLES_CACHE, VEHICLES_CACHE_MTIME, VEHICLES_CACHE_PATH
@@ -2074,6 +2088,9 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
         image_url = ""
         rarity = "common"
         code = None
+        display_name = ""
+        spawnable: Optional[bool] = None
+        showable: Optional[bool] = None
 
         if isinstance(raw_value, dict):
             image_url = str(raw_value.get("pic_link") or raw_value.get("url") or "").strip()
@@ -2081,6 +2098,11 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
             rarity = rarity_value if rarity_value in RARITY_WEIGHTS else "common"
             if raw_value.get("code") is not None:
                 code = str(raw_value.get("code"))
+            display_name = str(raw_value.get("display_name") or raw_value.get("name") or "").strip()
+            if raw_value.get("spawnable") is not None:
+                spawnable = parse_bool_true_false(str(raw_value.get("spawnable")))
+            if raw_value.get("showable") is not None:
+                showable = parse_bool_true_false(str(raw_value.get("showable")))
         else:
             image_url = str(raw_value).strip()
 
@@ -2090,6 +2112,12 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
         }
         if code:
             vehicle_data["code"] = code
+        if display_name:
+            vehicle_data["display_name"] = display_name
+        if spawnable is not None:
+            vehicle_data["spawnable"] = spawnable
+        if showable is not None:
+            vehicle_data["showable"] = showable
 
         local_path = _resolve_local_image(vehicle_name)
         if not local_path and is_alias:
@@ -2211,8 +2239,26 @@ def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
         print(f"Catalog audit: {vehicle_name} rarity={rarity} pic={has_pic}")
 
 
-def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
+def _vehicle_has_picture(vehicle_data: Dict[str, Any]) -> bool:
     return bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
+
+
+def _vehicle_is_showable(vehicle_data: Dict[str, Any]) -> bool:
+    rarity = str(vehicle_data.get("rarity", "common")).strip().lower()
+    if rarity in UNRELEASED_RARITIES:
+        return False
+    if vehicle_data.get("showable") is False:
+        return False
+    return True
+
+
+def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
+    rarity = str(vehicle_data.get("rarity", "common")).strip().lower()
+    if rarity in UNRELEASED_RARITIES:
+        return False
+    if vehicle_data.get("spawnable") is False:
+        return False
+    return _vehicle_has_picture(vehicle_data)
 
 
 def get_random_vehicle(
@@ -4883,6 +4929,13 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
         return
 
     vehicle_data = vehicles[matched_vehicle]
+    if not _vehicle_is_showable(vehicle_data):
+        await interaction.response.send_message(
+            "This vehicle has not been released yet.",
+            ephemeral=True,
+        )
+        return
+
     rarity = str(vehicle_data.get("rarity", "common")).lower()
     local_path = vehicle_data.get("local_path")
     image_url = vehicle_data.get("url")
@@ -4916,7 +4969,7 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
 async def show_vehicle_autocomplete(interaction: discord.Interaction, current: str):
     vehicles = get_vehicle_map()
     current_lower = current.lower()
-    vehicle_names = sorted(vehicles.keys())
+    vehicle_names = sorted(name for name, data in vehicles.items() if _vehicle_is_showable(data))
 
     return [
         app_commands.Choice(name=name.replace("-", "_"), value=name)

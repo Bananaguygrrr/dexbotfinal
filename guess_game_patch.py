@@ -55,6 +55,8 @@ def _guess_pool(dexbot: Any) -> list[tuple[str, dict[str, Any]]]:
     for name, data in vehicles.items():
         if not isinstance(data, dict):
             continue
+        if hasattr(dexbot, "_vehicle_is_spawnable") and not dexbot._vehicle_is_spawnable(data):
+            continue
         source_type, source_value = _image_source(dexbot, data)
         if source_type and source_value:
             pool.append((name, data))

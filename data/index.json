@@ -1899,5 +1899,18 @@
     "zumwalt-x": {
         "pic_link": "https://cdn.discordapp.com/attachments/1493613804129616014/1493640923513360447/zumwalt-x.png?ex=69dfb502&is=69de6382&hm=e81a0d7d11a74f5a9d0e76a79728794162a9f5f5f9dbd7cf8ae38390e257240a&",
         "rarity": "Limited Edition"
+    },
+    "le-x-1-mustang": {
+        "pic_link": "https://media.discordapp.net/attachments/1498720195429142648/1509199122815647865/image.png?ex=6a184eb6&is=6a16fd36&hm=14afa9514d420e9082a1eb1e4b19141a8c21cdef22a1ad8ec8392360fc4be09e&=&format=webp&quality=lossless",
+        "rarity": "specials",
+        "display_name": "LE X-1 Mustang",
+        "spawnable": false
+    },
+    "artwork-unreleased-1": {
+        "pic_link": "https://media.discordapp.net/attachments/1509199822819688559/1509199836665352423/image.png?ex=6a184f60&is=6a16fde0&hm=8e5e0cb91a122c99db8af289477b094bd7fbfc4103b888113d8c6ebfec1063c5&=&format=webp&quality=lossless",
+        "rarity": "art work",
+        "display_name": "???",
+        "spawnable": false,
+        "showable": false
     }
 }
