@@ -141,7 +141,7 @@ RARITY_ORDER = (
 )
 
 RARITY_WEIGHTS = {
-    "art work": 0,
+    "art work": 0.5,
     "specials": 0.01,
     "limited edition": 0.5,
     "exotic": 4,
@@ -152,7 +152,7 @@ RARITY_WEIGHTS = {
 }
 
 EVENT_RARITY_WEIGHTS = {
-    "art work": 0,
+    "art work": 10,
     "specials": 1,
     "limited edition": 10,
     "exotic": 20,
@@ -175,7 +175,7 @@ RARITY_COLORS = {
 
 
 DEFAULT_CATCH_REWARDS = {
-    "art work": 0,
+    "art work": 150,
     "specials": 200,
     "limited edition": 150,
     "exotic": 100,

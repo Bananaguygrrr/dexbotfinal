@@ -1914,7 +1914,7 @@
             "artwork-unreleased-1",
             "galactic darkstar"
         ],
-        "spawnable": false,
+        "spawnable": true,
         "showable": true
     }
 }
