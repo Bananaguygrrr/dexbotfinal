@@ -4356,20 +4356,20 @@ def _website_status_payload() -> Dict[str, Any]:
 
 def build_about_embed() -> discord.Embed:
     vehicles = get_vehicle_map()
-    total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
+    total_vehicle_count, _ = get_global_inventory_totals(vehicles)
     uptime_text = format_uptime(int(time.time()) - BOT_STARTED_AT)
     guild_count = len(bot.guilds) if bot.is_ready() else 0
     player_count = len(load_inventories())
 
     lines = [
         "Military Tycoon vehicle dex and inventory bot.",
-        "Catch vehicles, collect fresh versions, trade, sell, and practice guessing.",
+        "Catch vehicles, trade, sell, and practice guessing.",
         "",
         f"*Running version **{BOT_VERSION}**.*",
         f"The bot has been online for **{uptime_text}**.",
         "",
         f"**{format_count(len(vehicles))}** vehicles to collect",
-        f"**{format_count(total_vehicle_count)}** vehicles caught (**{format_count(fresh_vehicle_count)}** fresh)",
+        f"**{format_count(total_vehicle_count)}** vehicles caught",
         f"**{format_count(player_count)}** players with inventories",
         f"**{format_count(guild_count)}** servers playing",
         "",
