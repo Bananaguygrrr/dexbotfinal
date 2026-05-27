@@ -275,7 +275,6 @@ CATALOG_AUDIT_ENABLED = os.getenv("CATALOG_AUDIT_ENABLED", "0").strip().lower() 
     "yes",
     "on",
 }
-UNRELEASED_RARITIES = {"art work"}
 
 COUNT_SUFFIXES = (
     "",
@@ -701,8 +700,6 @@ def has_admin_access(message: discord.Message) -> bool:
 
 def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
     normalized = str(rarity or "").strip().lower()
-    if normalized in UNRELEASED_RARITIES:
-        return "???"
     if normalized == "specials":
         return "Specials"
     return normalized.title()
@@ -2244,18 +2241,12 @@ def _vehicle_has_picture(vehicle_data: Dict[str, Any]) -> bool:
 
 
 def _vehicle_is_showable(vehicle_data: Dict[str, Any]) -> bool:
-    rarity = str(vehicle_data.get("rarity", "common")).strip().lower()
-    if rarity in UNRELEASED_RARITIES:
-        return False
     if vehicle_data.get("showable") is False:
         return False
     return True
 
 
 def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
-    rarity = str(vehicle_data.get("rarity", "common")).strip().lower()
-    if rarity in UNRELEASED_RARITIES:
-        return False
     if vehicle_data.get("spawnable") is False:
         return False
     return _vehicle_has_picture(vehicle_data)

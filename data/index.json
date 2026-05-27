@@ -1906,11 +1906,15 @@
         "display_name": "LE X-1 Mustang",
         "spawnable": false
     },
-    "artwork-unreleased-1": {
+    "galactic-darkstar": {
         "pic_link": "https://media.discordapp.net/attachments/1509199822819688559/1509199836665352423/image.png?ex=6a184f60&is=6a16fde0&hm=8e5e0cb91a122c99db8af289477b094bd7fbfc4103b888113d8c6ebfec1063c5&=&format=webp&quality=lossless",
         "rarity": "art work",
-        "display_name": "???",
+        "display_name": "Galactic Darkstar",
+        "aliases": [
+            "artwork-unreleased-1",
+            "galactic darkstar"
+        ],
         "spawnable": false,
-        "showable": false
+        "showable": true
     }
 }
