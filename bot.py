@@ -52,6 +52,12 @@ INVITE_PERMISSIONS = os.getenv("INVITE_PERMISSIONS", "2147561408").strip()
 WEBSITE_TITLE = "Military Tycoon Vehicle Dex Bot"
 WEBSITE_BACKGROUND_URL = os.getenv("WEBSITE_BACKGROUND_URL", "").strip()
 SERVER_INVITE_URL = os.getenv("SERVER_INVITE_URL", "https://discord.gg/yWJHqqBRSJ").strip()
+BOT_VERSION = os.getenv("BOT_VERSION", "Beta 1.2.6").strip() or "Beta 1.2.6"
+BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME", "nissan_gtr_r35_nismo").strip() or "nissan_gtr_r35_nismo"
+DEFAULT_SOURCE_CODE_URL = "https://github.com/Bananaguygrrr/dexbotfinal"
+SOURCE_CODE_URL = os.getenv("SOURCE_CODE_URL", DEFAULT_SOURCE_CODE_URL).strip() or DEFAULT_SOURCE_CODE_URL
+TERMS_URL = os.getenv("TERMS_URL", f"{SOURCE_CODE_URL}/blob/main/TERMS.md").strip() or f"{SOURCE_CODE_URL}/blob/main/TERMS.md"
+PRIVACY_URL = os.getenv("PRIVACY_URL", f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md").strip() or f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md"
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -692,11 +698,22 @@ def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
     return normalized.title()
 
 
+def format_uptime(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    days, remainder = divmod(seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    if days:
+        return f"{days} days, {hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def build_help_message() -> str:
     return (
         "**MT Vehicle Bot Commands:**\n\n"
         "**Commands Users Can Use**\n"
         "`/help` - Show this help message\n"
+        "`/about` - Show bot info, stats, and links\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/leaderboard` - Show vehicle and coin leaderboards\n"
@@ -4300,6 +4317,58 @@ def _website_status_payload() -> Dict[str, Any]:
     }
 
 
+def build_about_embed() -> discord.Embed:
+    vehicles = get_vehicle_map()
+    total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
+    uptime_text = format_uptime(int(time.time()) - BOT_STARTED_AT)
+    guild_count = len(bot.guilds) if bot.is_ready() else 0
+    player_count = len(load_inventories())
+
+    lines = [
+        "Military Tycoon vehicle dex and inventory bot.",
+        "Catch vehicles, collect fresh versions, trade, sell, and practice guessing.",
+        "",
+        f"*Running version **{BOT_VERSION}**.*",
+        f"The bot has been online for **{uptime_text}**.",
+        "",
+        f"**{format_count(len(vehicles))}** vehicles to collect",
+        f"**{format_count(total_vehicle_count)}** vehicles caught (**{format_count(fresh_vehicle_count)}** fresh)",
+        f"**{format_count(player_count)}** players with inventories",
+        f"**{format_count(guild_count)}** servers playing",
+        "",
+        f"This instance is owned by **{BOT_OWNER_NAME}**.",
+    ]
+
+    link_parts = []
+    invite_url = _bot_invite_url()
+    if invite_url:
+        link_parts.append(f"[Invite me]({invite_url})")
+    if SERVER_INVITE_URL:
+        link_parts.append(f"[Discord server]({SERVER_INVITE_URL})")
+    if SOURCE_CODE_URL:
+        link_parts.append(f"[Source code]({SOURCE_CODE_URL})")
+    if link_parts:
+        lines.extend(["", " - ".join(link_parts)])
+
+    policy_parts = []
+    if TERMS_URL:
+        policy_parts.append(f"[Terms of Service]({TERMS_URL})")
+    if PRIVACY_URL:
+        policy_parts.append(f"[Privacy Policy]({PRIVACY_URL})")
+    if policy_parts:
+        lines.append(" - ".join(policy_parts))
+
+    embed = discord.Embed(
+        title="Military Tycoon Vehicle Dex Bot",
+        description="\n".join(lines),
+        color=discord.Color.blue(),
+    )
+    if bot.user and bot.user.display_avatar:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+    embed.set_footer(text=f"discord.py {discord.__version__}")
+    return embed
+
+
 def _render_website() -> bytes:
     status = _website_status_payload()
     is_online = bool(status["online"])
@@ -4783,6 +4852,11 @@ register_trade_commands(bot)
 @bot.tree.command(name="help", description="Show MT vehicle bot commands")
 async def help_slash(interaction: discord.Interaction):
     await safe_send(interaction, build_help_message(), ephemeral=True)
+
+
+@bot.tree.command(name="about", description="Show bot info, stats, and links")
+async def about_slash(interaction: discord.Interaction):
+    await safe_send(interaction, embed=build_about_embed())
 
 
 @bot.tree.command(name="leaderboard", description="Show vehicle and coin leaderboards")

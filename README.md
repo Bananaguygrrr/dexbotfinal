@@ -21,6 +21,7 @@ The bot spawns vehicles in configured Discord channels, lets users catch them by
 | Command | Description |
 | --- | --- |
 | `/help` | Show the bot command list |
+| `/about` | Show bot information, stats, and links |
 | `/show vehicle_name` | Show a vehicle image, rarity, and global counts |
 | `/inventory [user]` | Show inventory, fresh totals, and coin balance |
 | `/leaderboard` | Switch between vehicle and money leaderboards |
