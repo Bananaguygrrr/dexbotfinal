@@ -152,7 +152,7 @@ RARITY_WEIGHTS = {
 }
 
 EVENT_RARITY_WEIGHTS = {
-    "art work": 10,
+    "art work": 3.0928,
     "specials": 1,
     "limited edition": 10,
     "exotic": 20,
