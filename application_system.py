@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from typing import Any, Dict, Optional
@@ -102,29 +103,62 @@ def cleanup_application_task(session_id: str, task: asyncio.Task) -> None:
     ACTIVE_SESSIONS.pop(session_id, None)
 
 
+def default_state() -> Dict[str, Any]:
+    return {"guilds": {}}
+
+
+def validate_state(data: Any) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        return default_state()
+    guilds = data.get("guilds")
+    if not isinstance(guilds, dict):
+        data["guilds"] = {}
+    return data
+
+
+def read_state_file(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return validate_state(json.load(handle))
+
+
 def load_state() -> Dict[str, Any]:
     if not STATE_FILE:
-        return {"guilds": {}}
+        return default_state()
 
+    backup_path = f"{STATE_FILE}.bak"
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        data = read_state_file(STATE_FILE)
     except FileNotFoundError:
-        return {"guilds": {}}
+        try:
+            data = read_state_file(backup_path)
+        except FileNotFoundError:
+            return default_state()
+        except Exception as error:
+            print(f"Failed to load backup application state {backup_path}: {error}")
+            return default_state()
+        print(f"Loaded application state backup from {backup_path}.")
     except Exception as error:
         print(f"Failed to load {STATE_FILE}: {error}")
-        return {"guilds": {}}
+        try:
+            data = read_state_file(backup_path)
+        except Exception as backup_error:
+            print(f"Failed to load backup application state {backup_path}: {backup_error}")
+            return default_state()
+        print(f"Recovered application state from backup {backup_path}.")
 
-    if not isinstance(data, dict):
-        return {"guilds": {}}
-    data.setdefault("guilds", {})
-    return data
+    return validate_state(data)
 
 
 def save_state() -> None:
     if not STATE_FILE:
         return
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    backup_path = f"{STATE_FILE}.bak"
+    if os.path.exists(STATE_FILE):
+        try:
+            shutil.copy2(STATE_FILE, backup_path)
+        except OSError as error:
+            print(f"Failed to refresh application state backup {backup_path}: {error}")
     temp_path = f"{STATE_FILE}.tmp"
     with open(temp_path, "w", encoding="utf-8") as handle:
         json.dump(STATE, handle, indent=2)
@@ -1077,8 +1111,17 @@ def setup_application_system(discord_bot: commands.Bot, data_dir: str) -> None:
         return
 
     BOT = discord_bot
-    STATE_FILE = os.path.join(data_dir, "applications.json")
+    configured_state_file = os.getenv("APPLICATION_STATE_FILE", "").strip()
+    if configured_state_file:
+        STATE_FILE = (
+            configured_state_file
+            if os.path.isabs(configured_state_file)
+            else os.path.join(data_dir, configured_state_file)
+        )
+    else:
+        STATE_FILE = os.path.join(data_dir, "applications.json")
     STATE = load_state()
+    print(f"Application settings file: {os.path.abspath(STATE_FILE)}")
 
     commands_to_add = (
         createpanel_command,
