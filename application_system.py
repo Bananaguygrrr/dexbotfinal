@@ -61,6 +61,22 @@ def format_user(user_id: int) -> str:
     return f"<@{user_id}> (`{user_id}`)"
 
 
+def bot_channel_permission_errors(channel: discord.TextChannel) -> list[str]:
+    if BOT is None or BOT.user is None:
+        return ["bot is not ready"]
+    bot_member = channel.guild.me or channel.guild.get_member(BOT.user.id)
+    if bot_member is None:
+        return ["bot member could not be resolved"]
+    permissions = channel.permissions_for(bot_member)
+    checks = (
+        ("View Channel", permissions.view_channel),
+        ("Send Messages", permissions.send_messages),
+        ("Embed Links", permissions.embed_links),
+        ("Read Message History", permissions.read_message_history),
+    )
+    return [name for name, allowed in checks if not allowed]
+
+
 def prune_application_sessions(user_id: Optional[int] = None) -> int:
     now = utc_now()
     removed = 0
@@ -271,14 +287,23 @@ async def send_applicant_dm(user_id: int, *, content: Optional[str] = None, embe
         pass
 
 
-async def post_application_log(guild: discord.Guild, panel: Dict[str, Any], submission: Dict[str, Any], text: str) -> None:
+async def post_application_log(guild: discord.Guild, panel: Dict[str, Any], submission: Dict[str, Any], text: str) -> bool:
     guild_state = get_guild_state(guild.id)
     channel_id = int(guild_state.get("log_channel_id") or 0)
     if not channel_id:
-        return
+        print(f"Application log skipped for guild {guild.id}: no log channel configured.")
+        return False
     channel = await resolve_text_channel(guild, channel_id)
     if not channel:
-        return
+        print(f"Application log skipped for guild {guild.id}: channel {channel_id} was not found.")
+        return False
+    missing_permissions = bot_channel_permission_errors(channel)
+    if missing_permissions:
+        print(
+            f"Application log skipped for guild {guild.id}: missing permissions in "
+            f"#{channel.name}: {', '.join(missing_permissions)}"
+        )
+        return False
     embed = discord.Embed(
         title="Application log",
         description=text,
@@ -288,17 +313,31 @@ async def post_application_log(guild: discord.Guild, panel: Dict[str, Any], subm
     embed.add_field(name="Applicant", value=format_user(int(submission["user_id"])), inline=False)
     embed.add_field(name="Panel", value=panel.get("name", submission.get("panel_key", "application")), inline=True)
     embed.add_field(name="Status", value=str(submission.get("status", "pending")).title(), inline=True)
-    await channel.send(embed=embed)
+    try:
+        await channel.send(embed=embed)
+        return True
+    except discord.HTTPException as error:
+        print(f"Application log failed for guild {guild.id} in channel {channel.id}: {error}")
+        return False
 
 
-async def post_or_update_submission(guild: discord.Guild, panel: Dict[str, Any], submission: Dict[str, Any]) -> None:
+async def post_or_update_submission(guild: discord.Guild, panel: Dict[str, Any], submission: Dict[str, Any]) -> bool:
     guild_state = get_guild_state(guild.id)
     log_channel_id = int(guild_state.get("log_channel_id") or 0)
     if not log_channel_id:
-        return
+        print(f"Application submission skipped for guild {guild.id}: no log channel configured.")
+        return False
     channel = await resolve_text_channel(guild, log_channel_id)
     if not channel:
-        return
+        print(f"Application submission skipped for guild {guild.id}: channel {log_channel_id} was not found.")
+        return False
+    missing_permissions = bot_channel_permission_errors(channel)
+    if missing_permissions:
+        print(
+            f"Application submission skipped for guild {guild.id}: missing permissions in "
+            f"#{channel.name}: {', '.join(missing_permissions)}"
+        )
+        return False
 
     embed = build_submission_embed(guild, panel, submission)
     view = ApplicationReviewView(guild.id, submission["id"], disabled=submission.get("status") != "pending")
@@ -307,14 +346,21 @@ async def post_or_update_submission(guild: discord.Guild, panel: Dict[str, Any],
         try:
             message = await channel.fetch_message(int(submission["review_message_id"]))
             await message.edit(embed=embed, view=view)
-            return
-        except discord.HTTPException:
+            return True
+        except discord.HTTPException as error:
+            print(f"Application submission update failed for guild {guild.id}: {error}")
             pass
 
-    message = await channel.send(embed=embed, view=view)
-    submission["review_channel_id"] = channel.id
-    submission["review_message_id"] = message.id
-    save_state()
+    try:
+        message = await channel.send(embed=embed, view=view)
+    except discord.HTTPException as error:
+        print(f"Application submission send failed for guild {guild.id} in channel {channel.id}: {error}")
+        return False
+    else:
+        submission["review_channel_id"] = channel.id
+        submission["review_message_id"] = message.id
+        save_state()
+        return True
 
 
 async def refresh_application_message(guild: discord.Guild) -> bool:
@@ -677,8 +723,19 @@ async def run_application_session(session_id: str) -> None:
             color=discord.Color.green(),
         )
     )
-    await post_or_update_submission(guild, panel, submission)
-    await post_application_log(guild, panel, submission, "A new application was submitted.")
+    posted_review = await post_or_update_submission(guild, panel, submission)
+    posted_log = await post_application_log(guild, panel, submission, "A new application was submitted.")
+    if not posted_review and not posted_log:
+        await dm_channel.send(
+            embed=discord.Embed(
+                title="Application log warning",
+                description=(
+                    "Your application was saved, but I could not post it to the server log channel. "
+                    "Please tell a server admin to run `/applicationlog` again in a channel where I can send embeds."
+                ),
+                color=discord.Color.orange(),
+            )
+        )
 
 
 async def handle_review(
@@ -905,9 +962,31 @@ async def deletequestion_command(interaction: discord.Interaction, panel: str, q
 async def applicationlog_command(interaction: discord.Interaction, channel: discord.TextChannel):
     if not await require_application_admin(interaction) or not interaction.guild_id:
         return
+    await interaction.response.defer(ephemeral=True)
+    missing_permissions = bot_channel_permission_errors(channel)
+    if missing_permissions:
+        await interaction.followup.send(
+            f"I cannot use {channel.mention} for application logs yet. Missing: {', '.join(missing_permissions)}.",
+            ephemeral=True,
+        )
+        return
+    test_embed = discord.Embed(
+        title="Application log connected",
+        description="New applications and review updates will be posted here.",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow(),
+    )
+    try:
+        await channel.send(embed=test_embed)
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"I could not send a test log message in {channel.mention}: `{truncate(error, 180)}`",
+            ephemeral=True,
+        )
+        return
     get_guild_state(interaction.guild_id)["log_channel_id"] = channel.id
     save_state()
-    await interaction.response.send_message(f"Application log channel set to {channel.mention}.", ephemeral=True)
+    await interaction.followup.send(f"Application log channel set to {channel.mention}.", ephemeral=True)
 
 
 @app_commands.command(name="applicationtext", description="Set the text on the application dropdown panel")
@@ -929,11 +1008,29 @@ async def application_command(interaction: discord.Interaction, channel: discord
     if not guild_state.get("panels"):
         await interaction.response.send_message("Create at least one panel first with `/createpanel`.", ephemeral=True)
         return
-    message = await channel.send(embed=build_application_panel_embed(interaction.guild), view=ApplicationSelectView(interaction.guild.id))
+    await interaction.response.defer(ephemeral=True)
+    missing_permissions = bot_channel_permission_errors(channel)
+    if missing_permissions:
+        await interaction.followup.send(
+            f"I cannot post the application panel in {channel.mention}. Missing: {', '.join(missing_permissions)}.",
+            ephemeral=True,
+        )
+        return
+    try:
+        message = await channel.send(
+            embed=build_application_panel_embed(interaction.guild),
+            view=ApplicationSelectView(interaction.guild.id),
+        )
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"I could not post the application panel in {channel.mention}: `{truncate(error, 180)}`",
+            ephemeral=True,
+        )
+        return
     guild_state["application_channel_id"] = channel.id
     guild_state["application_message_id"] = message.id
     save_state()
-    await interaction.response.send_message(f"Application panel posted in {channel.mention}.", ephemeral=True)
+    await interaction.followup.send(f"Application panel posted in {channel.mention}.", ephemeral=True)
 
 
 @app_commands.command(name="applicationhistory", description="Find all applications for a user")
