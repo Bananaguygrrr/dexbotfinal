@@ -20,6 +20,8 @@ from discord.errors import HTTPException, NotFound
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
+from application_system import setup_application_system
+
 try:
     import fcntl
 except ImportError:
@@ -241,6 +243,7 @@ SPECIAL_CATCH_EMOJI = "\U0001F31F"
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+setup_application_system(bot, DATA_DIR)
 
 BOT_ONLINE = False
 BOT_STARTED_AT = int(time.time())
