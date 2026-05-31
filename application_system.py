@@ -15,6 +15,7 @@ from discord.ext import commands
 
 
 APPLICATION_TIMEOUT_SECONDS = max(300, int(os.getenv("APPLICATION_TIMEOUT_SECONDS", "10800")))
+APPLICATION_START_TIMEOUT_SECONDS = max(60, min(900, APPLICATION_TIMEOUT_SECONDS))
 DEFAULT_PANEL_TEXT = "Select an option to begin!"
 FORM_NAME_RE = re.compile(r"[^a-z0-9]+")
 STATE_FILE = ""
@@ -58,6 +59,31 @@ def format_duration(seconds: int) -> str:
 
 def format_user(user_id: int) -> str:
     return f"<@{user_id}> (`{user_id}`)"
+
+
+def prune_application_sessions(user_id: Optional[int] = None) -> int:
+    now = utc_now()
+    removed = 0
+    for session_id, session in list(ACTIVE_SESSIONS.items()):
+        if user_id is not None and int(session.get("user_id") or 0) != int(user_id):
+            continue
+        created_at = int(session.get("created_at") or now)
+        start_timeout = not session.get("started") and now - created_at >= APPLICATION_START_TIMEOUT_SECONDS
+        full_timeout = now - created_at >= APPLICATION_TIMEOUT_SECONDS
+        if start_timeout or full_timeout:
+            ACTIVE_SESSIONS.pop(session_id, None)
+            removed += 1
+    return removed
+
+
+def cleanup_application_task(session_id: str, task: asyncio.Task) -> None:
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        error = None
+    if error:
+        print(f"Application session {session_id} crashed: {error}")
+    ACTIVE_SESSIONS.pop(session_id, None)
 
 
 def load_state() -> Dict[str, Any]:
@@ -388,7 +414,8 @@ class ApplicationStartView(discord.ui.View):
             return
         session["started"] = True
         await interaction.response.edit_message(view=None)
-        asyncio.create_task(run_application_session(self.session_id))
+        task = asyncio.create_task(run_application_session(self.session_id))
+        task.add_done_callback(lambda done_task: cleanup_application_task(self.session_id, done_task))
 
     async def cancel_button(self, interaction: discord.Interaction) -> None:
         session = ACTIVE_SESSIONS.pop(self.session_id, None)
@@ -496,7 +523,8 @@ async def start_application_from_interaction(interaction: discord.Interaction, p
         await interaction.response.send_message("This application has no questions yet.", ephemeral=True)
         return
 
-    if any(session.get("user_id") == interaction.user.id for session in ACTIVE_SESSIONS.values()):
+    prune_application_sessions(interaction.user.id)
+    if any(int(session.get("user_id") or 0) == interaction.user.id for session in ACTIVE_SESSIONS.values()):
         await interaction.response.send_message("You already have an application open in DMs.", ephemeral=True)
         return
 
@@ -640,6 +668,7 @@ async def run_application_session(session_id: str) -> None:
     }
     get_guild_state(guild_id)["submissions"][submission_id] = submission
     save_state()
+    ACTIVE_SESSIONS.pop(session_id, None)
 
     await dm_channel.send(
         embed=discord.Embed(
@@ -650,7 +679,6 @@ async def run_application_session(session_id: str) -> None:
     )
     await post_or_update_submission(guild, panel, submission)
     await post_application_log(guild, panel, submission, "A new application was submitted.")
-    ACTIVE_SESSIONS.pop(session_id, None)
 
 
 async def handle_review(
