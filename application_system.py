@@ -20,6 +20,7 @@ APPLICATION_START_TIMEOUT_SECONDS = max(60, min(900, APPLICATION_TIMEOUT_SECONDS
 DEFAULT_PANEL_TEXT = "Select an option to begin!"
 FORM_NAME_RE = re.compile(r"[^a-z0-9]+")
 STATE_FILE = ""
+STATE_DIR = ""
 STATE: Dict[str, Any] = {"guilds": {}}
 BOT: Optional[commands.Bot] = None
 REGISTERED = False
@@ -116,53 +117,109 @@ def validate_state(data: Any) -> Dict[str, Any]:
     return data
 
 
+def validate_guild_state(data: Any) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("panel_text", DEFAULT_PANEL_TEXT)
+    panels = data.get("panels")
+    if not isinstance(panels, dict):
+        data["panels"] = {}
+    submissions = data.get("submissions")
+    if not isinstance(submissions, dict):
+        data["submissions"] = {}
+    return data
+
+
 def read_state_file(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as handle:
         return validate_state(json.load(handle))
 
 
+def read_guild_state_file(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return validate_guild_state(json.load(handle))
+
+
+def write_json_with_backup(path: str, data: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup_path = f"{path}.bak"
+    if os.path.exists(path):
+        try:
+            shutil.copy2(path, backup_path)
+        except OSError as error:
+            print(f"Failed to refresh backup {backup_path}: {error}")
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+    os.replace(temp_path, path)
+
+
 def load_state() -> Dict[str, Any]:
-    if not STATE_FILE:
+    if not STATE_FILE and not STATE_DIR:
         return default_state()
 
+    loaded_from_legacy = False
+    data = default_state()
     backup_path = f"{STATE_FILE}.bak"
-    try:
-        data = read_state_file(STATE_FILE)
-    except FileNotFoundError:
+    if STATE_FILE:
         try:
-            data = read_state_file(backup_path)
+            data = read_state_file(STATE_FILE)
+            loaded_from_legacy = True
         except FileNotFoundError:
-            return default_state()
+            try:
+                data = read_state_file(backup_path)
+                loaded_from_legacy = True
+            except FileNotFoundError:
+                data = default_state()
+            except Exception as error:
+                print(f"Failed to load backup application state {backup_path}: {error}")
+                data = default_state()
         except Exception as error:
-            print(f"Failed to load backup application state {backup_path}: {error}")
-            return default_state()
-        print(f"Loaded application state backup from {backup_path}.")
-    except Exception as error:
-        print(f"Failed to load {STATE_FILE}: {error}")
-        try:
-            data = read_state_file(backup_path)
-        except Exception as backup_error:
-            print(f"Failed to load backup application state {backup_path}: {backup_error}")
-            return default_state()
-        print(f"Recovered application state from backup {backup_path}.")
+            print(f"Failed to load {STATE_FILE}: {error}")
+            try:
+                data = read_state_file(backup_path)
+                loaded_from_legacy = True
+            except Exception as backup_error:
+                print(f"Failed to load backup application state {backup_path}: {backup_error}")
+                data = default_state()
+            else:
+                print(f"Recovered application state from backup {backup_path}.")
 
-    return validate_state(data)
+    data = validate_state(data)
+
+    if STATE_DIR and os.path.isdir(STATE_DIR):
+        for entry in os.scandir(STATE_DIR):
+            if not entry.is_file() or not entry.name.endswith(".json"):
+                continue
+            guild_id = entry.name[:-5]
+            if not guild_id.isdigit():
+                continue
+            try:
+                data["guilds"][guild_id] = read_guild_state_file(entry.path)
+            except Exception as error:
+                backup_file = f"{entry.path}.bak"
+                try:
+                    data["guilds"][guild_id] = read_guild_state_file(backup_file)
+                except Exception as backup_error:
+                    print(f"Failed to load application state for guild {guild_id}: {error}; backup failed: {backup_error}")
+                else:
+                    print(f"Recovered application state for guild {guild_id} from backup.")
+
+    if loaded_from_legacy and STATE_DIR:
+        print("Loaded legacy application state; it will be migrated into per-server files on save.")
+    return data
 
 
 def save_state() -> None:
-    if not STATE_FILE:
+    if STATE_DIR:
+        for guild_id, guild_state in validate_state(STATE).get("guilds", {}).items():
+            safe_guild_id = re.sub(r"[^0-9]", "", str(guild_id))
+            if not safe_guild_id:
+                continue
+            write_json_with_backup(os.path.join(STATE_DIR, f"{safe_guild_id}.json"), validate_guild_state(guild_state))
         return
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    backup_path = f"{STATE_FILE}.bak"
-    if os.path.exists(STATE_FILE):
-        try:
-            shutil.copy2(STATE_FILE, backup_path)
-        except OSError as error:
-            print(f"Failed to refresh application state backup {backup_path}: {error}")
-    temp_path = f"{STATE_FILE}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(STATE, handle, indent=2)
-    os.replace(temp_path, STATE_FILE)
+    if STATE_FILE:
+        write_json_with_backup(STATE_FILE, validate_state(STATE))
 
 
 def get_guild_state(guild_id: int) -> Dict[str, Any]:
@@ -288,7 +345,7 @@ def build_submission_embed(guild: discord.Guild, panel: Dict[str, Any], submissi
     if len(answers) > 20:
         embed.add_field(
             name="More answers",
-            value="This application has more than 20 answers. The full data is saved in applications.json.",
+            value="This application has more than 20 answers. The full data is saved in the application data file.",
             inline=False,
         )
 
@@ -1106,7 +1163,7 @@ async def application_ready_listener() -> None:
 
 
 def setup_application_system(discord_bot: commands.Bot, data_dir: str) -> None:
-    global BOT, REGISTERED, STATE, STATE_FILE
+    global BOT, REGISTERED, STATE, STATE_FILE, STATE_DIR
     if REGISTERED:
         return
 
@@ -1120,8 +1177,18 @@ def setup_application_system(discord_bot: commands.Bot, data_dir: str) -> None:
         )
     else:
         STATE_FILE = os.path.join(data_dir, "applications.json")
+    configured_state_dir = os.getenv("APPLICATION_STATE_DIR", "").strip()
+    STATE_DIR = (
+        configured_state_dir
+        if configured_state_dir and os.path.isabs(configured_state_dir)
+        else os.path.join(data_dir, configured_state_dir or "applications")
+    )
     STATE = load_state()
-    print(f"Application settings file: {os.path.abspath(STATE_FILE)}")
+    if STATE_DIR:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        save_state()
+    print(f"Application legacy import file: {os.path.abspath(STATE_FILE)}")
+    print(f"Application per-server settings directory: {os.path.abspath(STATE_DIR)}")
 
     commands_to_add = (
         createpanel_command,

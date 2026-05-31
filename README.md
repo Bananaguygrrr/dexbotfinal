@@ -69,7 +69,8 @@ The important production variables are:
 | `EVENT_FRESH_SPAWN_CHANCE` | Event fresh spawn chance |
 | `EVENT_SPAWN_DESPAWN_SECONDS` | Event spawn timeout |
 | `SELL_VEHICLE_PRICE` | Instant shop sell price per vehicle |
-| `APPLICATION_STATE_FILE` | Optional custom path for application panel/question storage |
+| `APPLICATION_STATE_DIR` | Optional custom directory for per-server application panel/question storage |
+| `APPLICATION_STATE_FILE` | Optional legacy import path for old combined application storage |
 | `APPLICATION_TIMEOUT_SECONDS` | Time users have to finish an application |
 | `COMMAND_SYNC_MODE` | Slash command sync mode, usually `global` |
 
@@ -87,7 +88,7 @@ Render uses the same compile check, then starts the bot with `python3 bot_runner
 
 Runtime inventories, balances, market listings, spawn records, application panels, application questions, application submissions, and server settings are stored in the configured data directory. These runtime files should not be committed to Git.
 
-Application settings are saved to `applications.json` inside `DATA_DIR` by default. The bot also keeps `applications.json.bak` as a recovery backup. On Render, keep `DATA_DIR` on the persistent disk, usually `/var/data`, so deploys do not reset server setup.
+Application settings are saved per server inside `DATA_DIR/applications/` by default, for example `applications/123456789012345678.json`. Each server file also gets a `.bak` recovery backup. Old combined `applications.json` data is imported automatically, but new changes are written per server. On Render, keep `DATA_DIR` on the persistent disk, usually `/var/data`, so deploys do not reset server setup.
 
 See [Terms of Service](TERMS.md) and [Privacy Policy](PRIVACY.md) for public Discord application links.
 
