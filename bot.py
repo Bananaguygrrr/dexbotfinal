@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import builtins
+import hmac
 import json
 import os
 import random
@@ -13,6 +14,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any, Dict, Iterable, Optional
+from urllib.parse import parse_qs, quote, urlparse
 
 import discord
 from discord import app_commands
@@ -20,6 +22,7 @@ from discord.errors import HTTPException, NotFound
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
+import application_system
 from application_system import setup_application_system
 
 try:
@@ -60,6 +63,12 @@ DEFAULT_SOURCE_CODE_URL = "https://github.com/Bananaguygrrr/dexbotfinal"
 SOURCE_CODE_URL = os.getenv("SOURCE_CODE_URL", DEFAULT_SOURCE_CODE_URL).strip() or DEFAULT_SOURCE_CODE_URL
 TERMS_URL = os.getenv("TERMS_URL", f"{SOURCE_CODE_URL}/blob/main/TERMS.md").strip() or f"{SOURCE_CODE_URL}/blob/main/TERMS.md"
 PRIVACY_URL = os.getenv("PRIVACY_URL", f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md").strip() or f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md"
+APPLICATION_DASHBOARD_TOKEN = (
+    os.getenv("APPLICATION_DASHBOARD_TOKEN")
+    or os.getenv("DASHBOARD_TOKEN")
+    or ""
+).strip()
+APPLICATION_DASHBOARD_COOKIE = "dex_app_dashboard"
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -4796,17 +4805,652 @@ def _render_website() -> bytes:
     return html.encode("utf-8")
 
 
+def _form_value(form: Dict[str, list[str]], key: str, default: str = "") -> str:
+    return (form.get(key, [default])[0] or default).strip()
+
+
+def _parse_int_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _dashboard_cookie_token(headers: Any) -> str:
+    cookie_header = str(headers.get("Cookie") or "")
+    for cookie in cookie_header.split(";"):
+        name, separator, value = cookie.strip().partition("=")
+        if separator and name == APPLICATION_DASHBOARD_COOKIE:
+            return value.strip()
+    return ""
+
+
+def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
+    if not APPLICATION_DASHBOARD_TOKEN:
+        return False
+    candidates = [
+        _form_value(params, "token"),
+        _dashboard_cookie_token(headers),
+    ]
+    return any(candidate and hmac.compare_digest(candidate, APPLICATION_DASHBOARD_TOKEN) for candidate in candidates)
+
+
+def _dashboard_url(guild_id: Optional[int] = None, notice: str = "") -> str:
+    query = []
+    if guild_id:
+        query.append(f"guild_id={guild_id}")
+    if notice:
+        query.append(f"notice={quote(notice)}")
+    return "/applications" + (f"?{'&'.join(query)}" if query else "")
+
+
+def _dashboard_role_options(guild: discord.Guild, selected_role_id: int) -> str:
+    options = [
+        f'<option value="0"{"" if selected_role_id else " selected"}>No accepted role</option>'
+    ]
+    roles = [role for role in guild.roles if not role.is_default()]
+    roles.sort(key=lambda role: role.position, reverse=True)
+    for role in roles:
+        selected = " selected" if role.id == selected_role_id else ""
+        managed = " (managed)" if role.managed else ""
+        options.append(
+            f'<option value="{role.id}"{selected}>{escape(role.name)}{managed}</option>'
+        )
+    return "\n".join(options)
+
+
+def _dashboard_channel_options(guild: discord.Guild, selected_channel_id: int, *, include_empty: bool = True) -> str:
+    options = []
+    if include_empty:
+        options.append(f'<option value="0"{"" if selected_channel_id else " selected"}>Not set</option>')
+    channels = sorted(
+        guild.text_channels,
+        key=lambda channel: ((channel.category.name if channel.category else ""), channel.position, channel.name.lower()),
+    )
+    for channel in channels:
+        selected = " selected" if channel.id == selected_channel_id else ""
+        category = f"{channel.category.name} / " if channel.category else ""
+        options.append(
+            f'<option value="{channel.id}"{selected}>{escape(category)}#{escape(channel.name)}</option>'
+        )
+    return "\n".join(options)
+
+
+async def _dashboard_post_application_panel(guild_id: int, channel_id: int) -> str:
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return "That server is not loaded by the bot."
+    channel = await application_system.resolve_text_channel(guild, channel_id)
+    if channel is None:
+        return "That application channel was not found."
+    missing_permissions = application_system.bot_channel_permission_errors(channel)
+    if missing_permissions:
+        return f"Cannot post in #{channel.name}. Missing: {', '.join(missing_permissions)}."
+
+    guild_state = application_system.get_guild_state(guild.id)
+    if not guild_state.get("panels"):
+        return "Create at least one panel before posting."
+
+    existing_message_id = int(guild_state.get("application_message_id") or 0)
+    existing_channel_id = int(guild_state.get("application_channel_id") or 0)
+    if existing_message_id and existing_channel_id == channel.id:
+        try:
+            message = await channel.fetch_message(existing_message_id)
+            await message.edit(
+                embed=application_system.build_application_panel_embed(guild),
+                view=application_system.ApplicationSelectView(guild.id),
+            )
+            return f"Application panel updated in #{channel.name}."
+        except discord.HTTPException:
+            pass
+
+    try:
+        message = await channel.send(
+            embed=application_system.build_application_panel_embed(guild),
+            view=application_system.ApplicationSelectView(guild.id),
+        )
+    except discord.HTTPException as error:
+        return f"Could not post panel: {truncate(error, 160)}"
+
+    guild_state["application_channel_id"] = channel.id
+    guild_state["application_message_id"] = message.id
+    application_system.save_state()
+    return f"Application panel posted in #{channel.name}."
+
+
+def _run_dashboard_coro(coro: Any) -> str:
+    if bot.loop.is_closed():
+        return "Bot event loop is closed."
+    try:
+        return asyncio.run_coroutine_threadsafe(coro, bot.loop).result(timeout=30)
+    except Exception as error:
+        return f"Dashboard action failed: {truncate(error, 180)}"
+
+
+def _dashboard_page(title: str, body: str) -> bytes:
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)} - Military Tycoon Dex</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0b0f0c;
+      --panel: #171d18;
+      --panel-2: #20271f;
+      --line: rgba(245, 238, 216, 0.18);
+      --text: #f7f1df;
+      --muted: rgba(247, 241, 223, 0.72);
+      --accent: #d1a85f;
+      --green: #2ecc71;
+      --red: #f45b69;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        linear-gradient(135deg, rgba(11, 15, 12, .96), rgba(25, 33, 26, .88)),
+        radial-gradient(circle at 18% 10%, rgba(209, 168, 95, .24), transparent 32%),
+        radial-gradient(circle at 92% 14%, rgba(74, 95, 56, .38), transparent 30%);
+      color: var(--text);
+      min-height: 100vh;
+    }}
+    header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px clamp(18px, 4vw, 44px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(10, 13, 11, .72);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(12px);
+    }}
+    main {{
+      width: min(1220px, 100%);
+      margin: 0 auto;
+      padding: 26px clamp(14px, 3vw, 36px) 56px;
+    }}
+    h1, h2, h3 {{ margin: 0 0 12px; letter-spacing: 0; }}
+    p {{ color: var(--muted); line-height: 1.5; }}
+    a {{ color: var(--accent); }}
+    .grid {{
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }}
+    .card {{
+      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)), var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 20px 48px rgba(0,0,0,.28);
+    }}
+    .stack {{ display: grid; gap: 14px; }}
+    .row {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
+    label {{ display: block; font-weight: 700; font-size: 13px; color: var(--muted); margin-bottom: 6px; }}
+    input, textarea, select {{
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #101510;
+      color: var(--text);
+      padding: 10px 11px;
+      font: inherit;
+    }}
+    textarea {{ min-height: 84px; resize: vertical; }}
+    button, .button {{
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 7px;
+      background: var(--accent);
+      color: #10100c;
+      padding: 10px 14px;
+      font-weight: 900;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 40px;
+    }}
+    button.secondary, .button.secondary {{ background: #2d362d; color: var(--text); }}
+    button.danger {{ background: var(--red); color: white; }}
+    button.green {{ background: var(--green); color: #071007; }}
+    .notice {{
+      border: 1px solid rgba(209,168,95,.48);
+      background: rgba(209,168,95,.12);
+      color: #ffe0a1;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+    }}
+    .muted {{ color: var(--muted); }}
+    .panel {{
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 14px;
+    }}
+    .question {{
+      border-left: 3px solid var(--accent);
+      padding: 12px;
+      background: rgba(0,0,0,.16);
+      border-radius: 6px;
+      margin-top: 10px;
+    }}
+    .two {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+    .three {{ display: grid; grid-template-columns: 1fr 1fr 140px; gap: 10px; align-items: end; }}
+    .pill {{
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      gap: 6px;
+    }}
+    @media (max-width: 850px) {{
+      .grid, .two, .three {{ grid-template-columns: 1fr; }}
+      header {{ position: static; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <strong>Military Tycoon Dex</strong>
+      <span class="pill">Application dashboard</span>
+    </div>
+    <a class="button secondary" href="/">Website</a>
+  </header>
+  <main>{body}</main>
+</body>
+</html>"""
+    return html.encode("utf-8")
+
+
+def _render_dashboard_login(error: str = "") -> bytes:
+    if not APPLICATION_DASHBOARD_TOKEN:
+        return _dashboard_page(
+            "Dashboard disabled",
+            """
+            <section class="card">
+              <h1>Application dashboard disabled</h1>
+              <p>Set the <code>APPLICATION_DASHBOARD_TOKEN</code> environment variable on Render, then redeploy.</p>
+            </section>
+            """,
+        )
+    error_html = f'<div class="notice">{escape(error)}</div>' if error else ""
+    return _dashboard_page(
+        "Dashboard login",
+        f"""
+        <section class="card" style="max-width:520px;margin:8vh auto 0;">
+          <h1>Application dashboard</h1>
+          <p>Enter the private dashboard token to manage panels, questions, log channels, and accept roles.</p>
+          {error_html}
+          <form method="post" action="/applications">
+            <input type="hidden" name="action" value="login">
+            <label>Dashboard token</label>
+            <input name="token" type="password" autocomplete="current-password" required>
+            <div class="row" style="margin-top:14px;">
+              <button type="submit">Open dashboard</button>
+            </div>
+          </form>
+        </section>
+        """,
+    )
+
+
+def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
+    if not bot.is_ready():
+        return _dashboard_page("Dashboard", '<section class="card"><h1>Bot is starting</h1><p>Try again in a moment.</p></section>')
+
+    guilds = sorted(bot.guilds, key=lambda item: item.name.lower())
+    if not guilds:
+        return _dashboard_page("Dashboard", '<section class="card"><h1>No servers loaded</h1><p>The bot is not in any servers yet.</p></section>')
+
+    requested_guild_id = _parse_int_value(_form_value(params, "guild_id"), guilds[0].id)
+    guild = bot.get_guild(requested_guild_id) or guilds[0]
+    guild_state = application_system.get_guild_state(guild.id)
+    panels = guild_state.setdefault("panels", {})
+    selected_log_channel = int(guild_state.get("log_channel_id") or 0)
+    selected_panel_channel = int(guild_state.get("application_channel_id") or 0)
+    notice = _form_value(params, "notice")
+
+    guild_options = "\n".join(
+        f'<option value="{server.id}"{" selected" if server.id == guild.id else ""}>{escape(server.name)}</option>'
+        for server in guilds
+    )
+    notice_html = f'<div class="notice">{escape(notice)}</div>' if notice else ""
+
+    panel_blocks = []
+    for panel_key, panel in sorted(panels.items()):
+        questions = panel.get("questions") if isinstance(panel.get("questions"), list) else []
+        enabled_checked = " checked" if panel.get("enabled", True) else ""
+        accepted_role_id = int(panel.get("accepted_role_id") or 0)
+        question_blocks = []
+        for index, raw_question in enumerate(questions, start=1):
+            question = application_system.normalize_question(raw_question)
+            choice_text = ", ".join(question.get("options", [])) if question.get("type") == "select" else ""
+            question_blocks.append(
+                f"""
+                <div class="question">
+                  <form method="post" action="/applications">
+                    <input type="hidden" name="action" value="edit_question">
+                    <input type="hidden" name="guild_id" value="{guild.id}">
+                    <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                    <input type="hidden" name="question_number" value="{index}">
+                    <label>Question {index}</label>
+                    <textarea name="text" required>{escape(question.get("text", ""))}</textarea>
+                    <label>Dropdown choices <span class="muted">(blank = text answer, comma separated = selection)</span></label>
+                    <input name="choices" value="{escape(choice_text)}" placeholder="yes, no">
+                    <div class="row" style="margin-top:10px;">
+                      <button type="submit">Save question</button>
+                    </div>
+                  </form>
+                  <form method="post" action="/applications">
+                    <input type="hidden" name="action" value="delete_question">
+                    <input type="hidden" name="guild_id" value="{guild.id}">
+                    <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                    <input type="hidden" name="question_number" value="{index}">
+                    <div class="row" style="margin-top:8px;">
+                      <button class="danger" type="submit">Delete</button>
+                    </div>
+                  </form>
+                </div>
+                """
+            )
+
+        panel_blocks.append(
+            f"""
+            <section class="panel">
+              <form method="post" action="/applications">
+                <input type="hidden" name="action" value="update_panel">
+                <input type="hidden" name="guild_id" value="{guild.id}">
+                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                <div class="two">
+                  <div>
+                    <label>Panel name</label>
+                    <input name="name" value="{escape(panel.get("name", panel_key))}" required>
+                  </div>
+                  <div>
+                    <label>Dropdown description</label>
+                    <input name="description" value="{escape(panel.get("description", "Start this application."))}">
+                  </div>
+                </div>
+                <div class="two" style="margin-top:10px;">
+                  <div>
+                    <label>Role given when accepted</label>
+                    <select name="accepted_role_id">{_dashboard_role_options(guild, accepted_role_id)}</select>
+                  </div>
+                  <div>
+                    <label>Open in dropdown</label>
+                    <div class="row" style="min-height:40px;">
+                      <input style="width:auto;" type="checkbox" name="enabled" value="1"{enabled_checked}>
+                      <span class="muted">Users can start this application</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="row" style="margin-top:12px;">
+                  <button type="submit">Save panel</button>
+                </div>
+              </form>
+              <form method="post" action="/applications">
+                <input type="hidden" name="action" value="delete_panel">
+                <input type="hidden" name="guild_id" value="{guild.id}">
+                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                <div class="row" style="margin-top:8px;">
+                  <button class="danger" type="submit">Delete panel</button>
+                </div>
+              </form>
+              <h3 style="margin-top:18px;">Questions</h3>
+              {''.join(question_blocks) if question_blocks else '<p>No questions yet.</p>'}
+              <form class="card" style="margin-top:12px;box-shadow:none;" method="post" action="/applications">
+                <input type="hidden" name="action" value="add_question">
+                <input type="hidden" name="guild_id" value="{guild.id}">
+                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                <div class="three">
+                  <div>
+                    <label>New question</label>
+                    <input name="text" placeholder="Question text" required>
+                  </div>
+                  <div>
+                    <label>Dropdown choices</label>
+                    <input name="choices" placeholder="Leave blank, or: yes, no">
+                  </div>
+                  <div>
+                    <label>Number</label>
+                    <input name="question_number" type="number" min="1" value="{len(questions) + 1}">
+                  </div>
+                </div>
+                <div class="row" style="margin-top:10px;">
+                  <button type="submit">Add question</button>
+                </div>
+              </form>
+            </section>
+            """
+        )
+
+    body = f"""
+    {notice_html}
+    <div class="grid">
+      <aside class="stack">
+        <section class="card">
+          <h2>Server</h2>
+          <form method="get" action="/applications">
+            <label>Choose server</label>
+            <select name="guild_id" onchange="this.form.submit()">{guild_options}</select>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Panel settings</h2>
+          <form method="post" action="/applications">
+            <input type="hidden" name="action" value="settings">
+            <input type="hidden" name="guild_id" value="{guild.id}">
+            <label>Panel text</label>
+            <textarea name="panel_text">{escape(guild_state.get("panel_text") or application_system.DEFAULT_PANEL_TEXT)}</textarea>
+            <label>Application log channel</label>
+            <select name="log_channel_id">{_dashboard_channel_options(guild, selected_log_channel)}</select>
+            <label>Application panel channel</label>
+            <select name="application_channel_id">{_dashboard_channel_options(guild, selected_panel_channel)}</select>
+            <div class="row" style="margin-top:12px;">
+              <button type="submit">Save settings</button>
+            </div>
+          </form>
+          <form method="post" action="/applications">
+            <input type="hidden" name="action" value="post_panel">
+            <input type="hidden" name="guild_id" value="{guild.id}">
+            <div class="row" style="margin-top:8px;">
+              <button class="green" type="submit">Post / update panel</button>
+            </div>
+          </form>
+          <p class="muted">The bot needs Send Messages and Embed Links in those channels.</p>
+        </section>
+        <section class="card">
+          <h2>Create panel</h2>
+          <form method="post" action="/applications">
+            <input type="hidden" name="action" value="create_panel">
+            <input type="hidden" name="guild_id" value="{guild.id}">
+            <label>Name</label>
+            <input name="name" placeholder="Moderation team" required>
+            <label>Description</label>
+            <input name="description" placeholder="Apply for the moderation team">
+            <div class="row" style="margin-top:12px;">
+              <button type="submit">Create</button>
+            </div>
+          </form>
+        </section>
+      </aside>
+      <section class="card">
+        <h1>{escape(guild.name)} applications</h1>
+        <p>Create panels, edit questions, add dropdown answers, and choose the role users get when accepted.</p>
+        {''.join(panel_blocks) if panel_blocks else '<p>No panels yet. Create one on the left.</p>'}
+      </section>
+    </div>
+    """
+    return _dashboard_page("Application dashboard", body)
+
+
+def _handle_application_dashboard_post(form: Dict[str, list[str]]) -> tuple[int, str, Optional[str]]:
+    action = _form_value(form, "action")
+    if action == "login":
+        token = _form_value(form, "token")
+        if APPLICATION_DASHBOARD_TOKEN and hmac.compare_digest(token, APPLICATION_DASHBOARD_TOKEN):
+            return 302, _dashboard_url(), token
+        return 401, "Wrong dashboard token.", None
+
+    guild_id = _parse_int_value(_form_value(form, "guild_id"))
+    guild = bot.get_guild(guild_id) if guild_id else None
+    if guild is None:
+        return 400, "Unknown server.", None
+    guild_state = application_system.get_guild_state(guild.id)
+    panels = guild_state.setdefault("panels", {})
+    notice = "Saved."
+
+    if action == "settings":
+        guild_state["panel_text"] = _form_value(form, "panel_text", application_system.DEFAULT_PANEL_TEXT)[:1000]
+        guild_state["log_channel_id"] = _parse_int_value(_form_value(form, "log_channel_id"))
+        guild_state["application_channel_id"] = _parse_int_value(_form_value(form, "application_channel_id"))
+    elif action == "post_panel":
+        channel_id = _parse_int_value(_form_value(form, "application_channel_id")) or int(guild_state.get("application_channel_id") or 0)
+        if not channel_id:
+            notice = "Choose an application panel channel first."
+        else:
+            notice = _run_dashboard_coro(_dashboard_post_application_panel(guild.id, channel_id))
+    elif action == "create_panel":
+        name = _form_value(form, "name")[:100]
+        panel_key = application_system.normalize_panel_key(name)
+        if not panel_key:
+            notice = "Panel name cannot be empty."
+        elif panel_key in panels:
+            notice = "That panel already exists."
+        else:
+            panels[panel_key] = {
+                "name": name,
+                "description": _form_value(form, "description", "Start this application.")[:100],
+                "questions": [],
+                "enabled": True,
+                "accepted_role_id": None,
+                "created_at": int(time.time()),
+                "created_by": "dashboard",
+            }
+            notice = f"Created panel {panel_key}."
+    elif action == "update_panel":
+        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
+        panel = panels.get(panel_key)
+        if not panel:
+            notice = "Unknown panel."
+        else:
+            panel["name"] = _form_value(form, "name", panel_key)[:100]
+            panel["description"] = _form_value(form, "description", "Start this application.")[:100]
+            panel["enabled"] = "enabled" in form
+            panel["accepted_role_id"] = _parse_int_value(_form_value(form, "accepted_role_id")) or None
+            notice = f"Updated panel {panel_key}."
+    elif action == "delete_panel":
+        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
+        if panel_key in panels:
+            del panels[panel_key]
+            notice = f"Deleted panel {panel_key}."
+        else:
+            notice = "Unknown panel."
+    elif action in {"add_question", "edit_question", "delete_question"}:
+        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
+        panel = panels.get(panel_key)
+        if not panel:
+            notice = "Unknown panel."
+        else:
+            questions = panel.setdefault("questions", [])
+            question_number = max(1, _parse_int_value(_form_value(form, "question_number"), len(questions) + 1))
+            if action == "delete_question":
+                if 1 <= question_number <= len(questions):
+                    questions.pop(question_number - 1)
+                    notice = "Question deleted and questions were renumbered."
+                else:
+                    notice = "That question number does not exist."
+            else:
+                text = _form_value(form, "text")[:300]
+                if not text:
+                    notice = "Question cannot be empty."
+                else:
+                    choices = _form_value(form, "choices")
+                    parsed_choices = application_system.parse_question_choices(choices)
+                    if parsed_choices is not None and len(parsed_choices) == 1:
+                        notice = "Selection questions need at least 2 choices."
+                    elif action == "add_question":
+                        insert_index = min(max(0, question_number - 1), len(questions))
+                        questions.insert(insert_index, application_system.make_question_value(text, choices))
+                        notice = "Question added and questions were renumbered."
+                    elif 1 <= question_number <= len(questions):
+                        questions[question_number - 1] = application_system.make_question_value(text, choices, questions[question_number - 1])
+                        notice = "Question updated."
+                    else:
+                        notice = "That question number does not exist."
+    else:
+        notice = "Unknown dashboard action."
+
+    application_system.save_state()
+    return 302, _dashboard_url(guild.id, notice), None
+
+
 class _WebsiteHandler(BaseHTTPRequestHandler):
+    def _send_body(self, status_code: int, body: bytes, content_type: str) -> None:
+        self.send_response(status_code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirect(self, location: str, *, set_token_cookie: Optional[str] = None, clear_cookie: bool = False) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        if set_token_cookie:
+            self.send_header(
+                "Set-Cookie",
+                f"{APPLICATION_DASHBOARD_COOKIE}={set_token_cookie}; Path=/applications; "
+                "HttpOnly; SameSite=Lax; Max-Age=2592000",
+            )
+        if clear_cookie:
+            self.send_header(
+                "Set-Cookie",
+                f"{APPLICATION_DASHBOARD_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
+            )
+        self.end_headers()
+
     def do_GET(self):
+        parsed_path = urlparse(self.path)
+        params = parse_qs(parsed_path.query, keep_blank_values=True)
+
+        if parsed_path.path.startswith("/applications/logout"):
+            self._redirect("/applications", clear_cookie=True)
+            return
+
+        if parsed_path.path.startswith("/applications"):
+            if not _dashboard_authorized(params, self.headers):
+                body = _render_dashboard_login()
+                self._send_body(200, body, "text/html; charset=utf-8")
+                return
+
+            token_from_url = _form_value(params, "token")
+            if token_from_url and APPLICATION_DASHBOARD_TOKEN and hmac.compare_digest(token_from_url, APPLICATION_DASHBOARD_TOKEN):
+                self._redirect(_dashboard_url(_parse_int_value(_form_value(params, "guild_id"))), set_token_cookie=token_from_url)
+                return
+
+            body = _render_application_dashboard(params)
+            self._send_body(200, body, "text/html; charset=utf-8")
+            return
+
         if self.path.startswith("/status"):
             payload = _website_status_payload()
             body = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_body(200, body, "application/json; charset=utf-8")
             return
 
         if self.path.startswith("/invite"):
@@ -4835,12 +5479,35 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
             return
 
         body = _render_website()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_body(200, body, "text/html; charset=utf-8")
+
+    def do_POST(self):
+        parsed_path = urlparse(self.path)
+        if not parsed_path.path.startswith("/applications"):
+            self._send_body(404, b"Not Found", "text/plain; charset=utf-8")
+            return
+
+        try:
+            content_length = min(int(self.headers.get("Content-Length", "0")), 262_144)
+        except ValueError:
+            content_length = 0
+        form = parse_qs(
+            self.rfile.read(content_length).decode("utf-8", errors="replace"),
+            keep_blank_values=True,
+        )
+        action = _form_value(form, "action")
+        if action != "login" and not _dashboard_authorized(form, self.headers):
+            body = _render_dashboard_login("Please log in again.")
+            self._send_body(401, body, "text/html; charset=utf-8")
+            return
+
+        status_code, result, token_cookie = _handle_application_dashboard_post(form)
+        if status_code == 302:
+            self._redirect(result, set_token_cookie=token_cookie)
+            return
+
+        body = _render_dashboard_login(result)
+        self._send_body(status_code, body, "text/html; charset=utf-8")
 
     def log_message(self, format, *args):
         return
