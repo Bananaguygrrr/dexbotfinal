@@ -284,11 +284,74 @@ async def resolve_text_channel(guild: discord.Guild, channel_id: int) -> Optiona
     return channel if isinstance(channel, discord.TextChannel) else None
 
 
-def panel_questions(panel: Dict[str, Any]) -> list[str]:
+def parse_question_choices(choices: Optional[str]) -> Optional[list[str]]:
+    if choices is None:
+        return None
+    raw = choices.strip()
+    if raw.lower() in {"clear", "none", "text"}:
+        return []
+    separator = "|" if "|" in raw else ","
+    options: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(separator):
+        option = part.strip()
+        if not option:
+            continue
+        normalized = option.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        options.append(option[:100])
+        if len(options) >= 25:
+            break
+    return options
+
+
+def normalize_question(question: Any) -> Dict[str, Any]:
+    if isinstance(question, dict):
+        text = str(question.get("text") or question.get("question") or "").strip()
+        raw_options = question.get("options") if isinstance(question.get("options"), list) else []
+        options = []
+        seen: set[str] = set()
+        for raw_option in raw_options:
+            option = str(raw_option or "").strip()
+            if not option:
+                continue
+            normalized = option.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            options.append(option[:100])
+            if len(options) >= 25:
+                break
+        if str(question.get("type", "")).lower() == "select" and len(options) >= 2:
+            return {"type": "select", "text": text[:300], "options": options}
+        return {"type": "text", "text": text[:300], "options": []}
+    return {"type": "text", "text": str(question or "").strip()[:300], "options": []}
+
+
+def question_text(question: Any) -> str:
+    return normalize_question(question).get("text", "")
+
+
+def make_question_value(text: str, choices: Optional[str], existing_question: Any = None) -> Any:
+    question = text.strip()[:300]
+    parsed_choices = parse_question_choices(choices)
+    if parsed_choices is None and existing_question is not None:
+        existing = normalize_question(existing_question)
+        if existing.get("type") == "select":
+            return {"type": "select", "text": question, "options": existing.get("options", [])}
+    if parsed_choices:
+        return {"type": "select", "text": question, "options": parsed_choices}
+    return question
+
+
+def panel_questions(panel: Dict[str, Any]) -> list[Dict[str, Any]]:
     questions = panel.get("questions")
     if not isinstance(questions, list):
         return []
-    return [str(question).strip() for question in questions if str(question).strip()]
+    normalized_questions = [normalize_question(question) for question in questions]
+    return [question for question in normalized_questions if question.get("text")]
 
 
 def build_application_panel_embed(guild: discord.Guild) -> discord.Embed:
@@ -304,16 +367,19 @@ def build_application_panel_embed(guild: discord.Guild) -> discord.Embed:
     return embed
 
 
-def build_question_embed(panel: Dict[str, Any], index: int, total: int, question: str) -> discord.Embed:
+def build_question_embed(panel: Dict[str, Any], index: int, total: int, question: Dict[str, Any]) -> discord.Embed:
     title = panel.get("name", "Application")
     if not title.lower().endswith("application"):
         title = f"{title} Application"
     embed = discord.Embed(
         title=truncate(title, 256),
-        description=f"**{index}/{total}. {question}**",
+        description=f"**{index}/{total}. {question.get('text', '')}**",
         color=discord.Color.blue(),
     )
-    embed.set_footer(text="To answer this question, please send a message to the bot with your response.")
+    if question.get("type") == "select":
+        embed.set_footer(text="To answer this question, please select an option from the dropdown below.")
+    else:
+        embed.set_footer(text="To answer this question, please send a message to the bot with your response.")
     return embed
 
 
@@ -519,6 +585,61 @@ class ApplicationSelectView(discord.ui.View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=None)
         self.add_item(ApplicationSelect(guild_id))
+
+
+class ApplicationQuestionSelect(discord.ui.Select):
+    def __init__(self, session_id: str, user_id: int, options: list[str]):
+        self.session_id = session_id
+        self.user_id = user_id
+        select_options = [
+            discord.SelectOption(label=truncate(option, 100), value=str(index))
+            for index, option in enumerate(options[:25])
+        ]
+        super().__init__(
+            placeholder="Select an option...",
+            min_values=1,
+            max_values=1,
+            options=select_options,
+            custom_id=f"dexapp:qselect:{session_id}:{stable_suffix('|'.join(options))}",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, ApplicationQuestionSelectView):
+            await interaction.response.send_message("This question is no longer active.", ephemeral=True)
+            return
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("This application question is not yours.", ephemeral=True)
+            return
+        if view.answer_future.done():
+            await interaction.response.send_message("This question was already answered.", ephemeral=True)
+            return
+        try:
+            selected_index = int(self.values[0])
+            answer = view.options[selected_index]
+        except (ValueError, IndexError):
+            await interaction.response.send_message("That option is not valid anymore.", ephemeral=True)
+            return
+        for child in view.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=view)
+        view.answer_future.set_result(answer)
+        view.stop()
+
+
+class ApplicationQuestionSelectView(discord.ui.View):
+    def __init__(self, session_id: str, user_id: int, options: list[str], timeout_seconds: int):
+        super().__init__(timeout=max(1, timeout_seconds))
+        self.options = options[:25]
+        self.answer_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self.add_item(ApplicationQuestionSelect(session_id, user_id, self.options))
+
+    async def wait_for_answer(self) -> str:
+        return await self.answer_future
+
+    async def on_timeout(self) -> None:
+        if not self.answer_future.done():
+            self.answer_future.set_exception(asyncio.TimeoutError())
 
 
 class ApplicationStartView(discord.ui.View):
@@ -752,7 +873,8 @@ async def run_application_session(session_id: str) -> None:
             ACTIVE_SESSIONS.pop(session_id, None)
             return
 
-        await dm_channel.send(embed=build_question_embed(panel, index, len(questions), question))
+        question_data = normalize_question(question)
+        embed = build_question_embed(panel, index, len(questions), question_data)
 
         def check(message: discord.Message) -> bool:
             return (
@@ -761,20 +883,37 @@ async def run_application_session(session_id: str) -> None:
                 and not message.author.bot
             )
 
-        try:
-            message = await BOT.wait_for("message", check=check, timeout=remaining_time)
-        except asyncio.TimeoutError:
-            await dm_channel.send(
-                embed=discord.Embed(
-                    title="Application expired",
-                    description="You did not complete the application in time.",
-                    color=discord.Color.red(),
+        if question_data.get("type") == "select":
+            view = ApplicationQuestionSelectView(session_id, user_id, question_data.get("options", []), remaining_time)
+            await dm_channel.send(embed=embed, view=view)
+            try:
+                answer = await asyncio.wait_for(view.wait_for_answer(), timeout=remaining_time)
+            except asyncio.TimeoutError:
+                await dm_channel.send(
+                    embed=discord.Embed(
+                        title="Application expired",
+                        description="You did not complete the application in time.",
+                        color=discord.Color.red(),
+                    )
                 )
-            )
-            ACTIVE_SESSIONS.pop(session_id, None)
-            return
+                ACTIVE_SESSIONS.pop(session_id, None)
+                return
+        else:
+            await dm_channel.send(embed=embed)
+            try:
+                message = await BOT.wait_for("message", check=check, timeout=remaining_time)
+            except asyncio.TimeoutError:
+                await dm_channel.send(
+                    embed=discord.Embed(
+                        title="Application expired",
+                        description="You did not complete the application in time.",
+                        color=discord.Color.red(),
+                    )
+                )
+                ACTIVE_SESSIONS.pop(session_id, None)
+                return
+            answer = message.content.strip()
 
-        answer = message.content.strip()
         if answer.lower() in {"cancel", "stop"}:
             await dm_channel.send(
                 embed=discord.Embed(
@@ -786,7 +925,7 @@ async def run_application_session(session_id: str) -> None:
             ACTIVE_SESSIONS.pop(session_id, None)
             return
 
-        answers.append({"question": question, "answer": answer or "No answer"})
+        answers.append({"question": question_data.get("text", ""), "answer": answer or "No answer"})
 
     member = guild.get_member(user_id)
     username = str(member or user)
@@ -991,8 +1130,17 @@ async def deletepanel_command(interaction: discord.Interaction, panel: str):
 
 
 @app_commands.command(name="addquestion", description="Add a question at a specific number")
+@app_commands.describe(
+    choices="Optional dropdown choices separated by commas or |, for example: yes,no",
+)
 @app_commands.autocomplete(panel=panel_autocomplete)
-async def addquestion_command(interaction: discord.Interaction, panel: str, question_number: int, text: str):
+async def addquestion_command(
+    interaction: discord.Interaction,
+    panel: str,
+    question_number: int,
+    text: str,
+    choices: Optional[str] = None,
+):
     if not await require_application_admin(interaction) or not interaction.guild_id:
         return
     panel_data = get_panel(interaction.guild_id, normalize_panel_key(panel))
@@ -1003,16 +1151,33 @@ async def addquestion_command(interaction: discord.Interaction, panel: str, ques
     if not question:
         await interaction.response.send_message("Question cannot be empty.", ephemeral=True)
         return
+    parsed_choices = parse_question_choices(choices)
+    if parsed_choices is not None and len(parsed_choices) == 1:
+        await interaction.response.send_message("Selection questions need at least 2 choices.", ephemeral=True)
+        return
     questions = panel_data.setdefault("questions", [])
     insert_index = min(max(0, question_number - 1), len(questions))
-    questions.insert(insert_index, question[:300])
+    questions.insert(insert_index, make_question_value(question, choices))
     save_state()
-    await interaction.response.send_message(f"Added question `{insert_index + 1}`. Questions were renumbered.", ephemeral=True)
+    question_kind = "selection question" if parsed_choices else "question"
+    await interaction.response.send_message(
+        f"Added {question_kind} `{insert_index + 1}`. Questions were renumbered.",
+        ephemeral=True,
+    )
 
 
 @app_commands.command(name="editquestion", description="Edit a question by number")
+@app_commands.describe(
+    choices="Optional dropdown choices separated by commas or |. Use clear/text/none to make it a text question.",
+)
 @app_commands.autocomplete(panel=panel_autocomplete)
-async def editquestion_command(interaction: discord.Interaction, panel: str, question_number: int, text: str):
+async def editquestion_command(
+    interaction: discord.Interaction,
+    panel: str,
+    question_number: int,
+    text: str,
+    choices: Optional[str] = None,
+):
     if not await require_application_admin(interaction) or not interaction.guild_id:
         return
     panel_data = get_panel(interaction.guild_id, normalize_panel_key(panel))
@@ -1023,7 +1188,15 @@ async def editquestion_command(interaction: discord.Interaction, panel: str, que
     if question_number < 1 or question_number > len(questions):
         await interaction.response.send_message("That question number does not exist.", ephemeral=True)
         return
-    questions[question_number - 1] = text.strip()[:300]
+    question = text.strip()
+    if not question:
+        await interaction.response.send_message("Question cannot be empty.", ephemeral=True)
+        return
+    parsed_choices = parse_question_choices(choices)
+    if parsed_choices is not None and len(parsed_choices) == 1:
+        await interaction.response.send_message("Selection questions need at least 2 choices.", ephemeral=True)
+        return
+    questions[question_number - 1] = make_question_value(question, choices, questions[question_number - 1])
     save_state()
     await interaction.response.send_message(f"Edited question `{question_number}`.", ephemeral=True)
 
@@ -1044,7 +1217,7 @@ async def deletequestion_command(interaction: discord.Interaction, panel: str, q
     removed = questions.pop(question_number - 1)
     save_state()
     await interaction.response.send_message(
-        f"Deleted question `{question_number}`: {truncate(removed, 120)}\nQuestions were renumbered.",
+        f"Deleted question `{question_number}`: {truncate(question_text(removed), 120)}\nQuestions were renumbered.",
         ephemeral=True,
     )
 
