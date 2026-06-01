@@ -8,13 +8,15 @@ import json
 import os
 import random
 import re
+import secrets
 import sys
 import time
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any, Dict, Iterable, Optional
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import discord
 from discord import app_commands
@@ -69,6 +71,18 @@ APPLICATION_DASHBOARD_TOKEN = (
     or ""
 ).strip()
 APPLICATION_DASHBOARD_COOKIE = "dex_app_dashboard"
+APPLICATION_DASHBOARD_SESSION_COOKIE = "dex_app_session"
+APPLICATION_DASHBOARD_BASE_URL = (
+    os.getenv("APPLICATION_DASHBOARD_BASE_URL")
+    or os.getenv("DASHBOARD_BASE_URL")
+    or os.getenv("PUBLIC_BASE_URL")
+    or "https://dexbotfinal.onrender.com"
+).strip().rstrip("/")
+DISCORD_CLIENT_SECRET = (
+    os.getenv("DISCORD_CLIENT_SECRET")
+    or os.getenv("CLIENT_SECRET")
+    or ""
+).strip()
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -4816,16 +4830,123 @@ def _parse_int_value(value: Any, default: int = 0) -> int:
         return default
 
 
-def _dashboard_cookie_token(headers: Any) -> str:
+def _dashboard_cookie_value(headers: Any, cookie_name: str) -> str:
     cookie_header = str(headers.get("Cookie") or "")
     for cookie in cookie_header.split(";"):
         name, separator, value = cookie.strip().partition("=")
-        if separator and name == APPLICATION_DASHBOARD_COOKIE:
+        if separator and name == cookie_name:
             return value.strip()
     return ""
 
 
-def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
+def _dashboard_cookie_token(headers: Any) -> str:
+    return _dashboard_cookie_value(headers, APPLICATION_DASHBOARD_COOKIE)
+
+
+def _dashboard_secret() -> str:
+    return APPLICATION_DASHBOARD_TOKEN or TOKEN
+
+
+def _dashboard_sign(value: str) -> str:
+    secret = _dashboard_secret()
+    if not secret:
+        return ""
+    return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), "sha256").hexdigest()
+
+
+def _dashboard_pack(payload: Dict[str, Any]) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    value = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = _dashboard_sign(value)
+    return f"{value}.{signature}" if signature else ""
+
+
+def _dashboard_unpack(value: str) -> Dict[str, Any]:
+    if not value or "." not in value:
+        return {}
+    payload, signature = value.rsplit(".", 1)
+    expected_signature = _dashboard_sign(payload)
+    if not expected_signature or not hmac.compare_digest(signature, expected_signature):
+        return {}
+    try:
+        padded = payload + ("=" * (-len(payload) % 4))
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        parsed = json.loads(decoded.decode("utf-8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _dashboard_oauth_enabled() -> bool:
+    return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and APPLICATION_DASHBOARD_BASE_URL)
+
+
+def _dashboard_oauth_redirect_uri() -> str:
+    return f"{APPLICATION_DASHBOARD_BASE_URL}/applications/callback"
+
+
+def _dashboard_make_state() -> str:
+    return _dashboard_pack({"ts": int(time.time()), "nonce": secrets.token_urlsafe(16)})
+
+
+def _dashboard_state_valid(state: str) -> bool:
+    payload = _dashboard_unpack(state)
+    try:
+        created_at = int(payload.get("ts") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(created_at and time.time() - created_at <= 600)
+
+
+def _dashboard_discord_login_url() -> str:
+    if not _dashboard_oauth_enabled():
+        return ""
+    query = urlencode(
+        {
+            "client_id": DISCORD_CLIENT_ID,
+            "redirect_uri": _dashboard_oauth_redirect_uri(),
+            "response_type": "code",
+            "scope": "identify guilds",
+            "state": _dashboard_make_state(),
+        }
+    )
+    return f"https://discord.com/oauth2/authorize?{query}"
+
+
+def _dashboard_session_payload(headers: Any) -> Dict[str, Any]:
+    payload = _dashboard_unpack(_dashboard_cookie_value(headers, APPLICATION_DASHBOARD_SESSION_COOKIE))
+    try:
+        expires_at = int(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if not expires_at or expires_at < int(time.time()):
+        return {}
+    return payload
+
+
+def _dashboard_session_user_id(headers: Any) -> int:
+    payload = _dashboard_session_payload(headers)
+    try:
+        return int(payload.get("uid") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _dashboard_session_admin_guild_ids(headers: Any) -> set[int]:
+    payload = _dashboard_session_payload(headers)
+    guild_ids = payload.get("guild_ids")
+    if not isinstance(guild_ids, list):
+        return set()
+    normalized: set[int] = set()
+    for raw_guild_id in guild_ids:
+        try:
+            normalized.add(int(raw_guild_id))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def _dashboard_owner_token_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
     if not APPLICATION_DASHBOARD_TOKEN:
         return False
     candidates = [
@@ -4833,6 +4954,103 @@ def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
         _dashboard_cookie_token(headers),
     ]
     return any(candidate and hmac.compare_digest(candidate, APPLICATION_DASHBOARD_TOKEN) for candidate in candidates)
+
+
+def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
+    return bool(_dashboard_owner_token_authorized(params, headers) or _dashboard_session_payload(headers))
+
+
+def _dashboard_can_manage_guild(guild_id: int, params: Dict[str, list[str]], headers: Any) -> bool:
+    if _dashboard_owner_token_authorized(params, headers):
+        return True
+    user_id = _dashboard_session_user_id(headers)
+    if user_id in load_admin_user_ids():
+        return True
+    return guild_id in _dashboard_session_admin_guild_ids(headers)
+
+
+def _dashboard_visible_guilds(params: Dict[str, list[str]], headers: Any) -> list[discord.Guild]:
+    guilds = sorted(bot.guilds, key=lambda item: item.name.lower())
+    return [guild for guild in guilds if _dashboard_can_manage_guild(guild.id, params, headers)]
+
+
+def _dashboard_oauth_request(url: str, *, data: Optional[Dict[str, str]] = None, token: str = "") -> Any:
+    encoded_data = urlencode(data).encode("utf-8") if data is not None else None
+    headers = {"Content-Type": "application/x-www-form-urlencoded"} if data is not None else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, data=encoded_data, headers=headers, method="POST" if data is not None else "GET")
+    with urlopen(request, timeout=15) as response:
+        raw_body = response.read().decode("utf-8")
+    return json.loads(raw_body)
+
+
+def _handle_dashboard_oauth_callback(params: Dict[str, list[str]]) -> tuple[int, str, Optional[str]]:
+    if not _dashboard_oauth_enabled():
+        return 400, "Discord login is not configured. Set DISCORD_CLIENT_SECRET on Render.", None
+    if not _dashboard_state_valid(_form_value(params, "state")):
+        return 400, "Discord login expired. Please try again.", None
+    code = _form_value(params, "code")
+    if not code:
+        return 400, "Discord did not return a login code.", None
+    try:
+        token_payload = _dashboard_oauth_request(
+            "https://discord.com/api/oauth2/token",
+            data={
+                "client_id": DISCORD_CLIENT_ID,
+                "client_secret": DISCORD_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": _dashboard_oauth_redirect_uri(),
+            },
+        )
+        if not isinstance(token_payload, dict):
+            return 401, "Discord login failed: invalid token response.", None
+        access_token = str(token_payload.get("access_token") or "")
+        if not access_token:
+            return 401, "Discord login failed: missing access token.", None
+        user_payload = _dashboard_oauth_request("https://discord.com/api/users/@me", token=access_token)
+        guilds_payload = _dashboard_oauth_request("https://discord.com/api/users/@me/guilds", token=access_token)
+    except Exception as error:
+        return 502, f"Discord login failed: {truncate(error, 180)}", None
+
+    if not isinstance(user_payload, dict):
+        return 401, "Discord login failed: invalid user response.", None
+    try:
+        user_id = int(user_payload.get("id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    if not user_id:
+        return 401, "Discord login failed: missing user id.", None
+
+    bot_guild_ids = {guild.id for guild in bot.guilds}
+    admin_guild_ids: set[int] = set()
+    if user_id in load_admin_user_ids():
+        admin_guild_ids = set(bot_guild_ids)
+    elif isinstance(guilds_payload, list):
+        for guild_payload in guilds_payload:
+            try:
+                guild_id = int(guild_payload.get("id") or 0)
+                permissions = int(guild_payload.get("permissions") or 0)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            has_admin_access = bool(permissions & 0x8 or permissions & 0x20)
+            if guild_id in bot_guild_ids and has_admin_access:
+                admin_guild_ids.add(guild_id)
+
+    if not admin_guild_ids:
+        return 403, "You are not an admin in any server that uses this bot.", None
+
+    username = str(user_payload.get("global_name") or user_payload.get("username") or "Discord admin")
+    session_cookie = _dashboard_pack(
+        {
+            "uid": user_id,
+            "name": username[:80],
+            "guild_ids": sorted(admin_guild_ids),
+            "exp": int(time.time()) + 7 * 24 * 60 * 60,
+        }
+    )
+    return 302, _dashboard_url(sorted(admin_guild_ids)[0]), session_cookie
 
 
 def _dashboard_url(guild_id: Optional[int] = None, notice: str = "") -> str:
@@ -5056,19 +5274,84 @@ def _dashboard_page(title: str, body: str) -> bytes:
       font-size: 12px;
       gap: 6px;
     }}
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+    }}
+    .brand-mark {{
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: inline-grid;
+      place-items: center;
+      background: linear-gradient(135deg, #76e4b0, #d1a85f);
+      color: #10100c;
+      font-weight: 1000;
+    }}
+    .dashboard-hero {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 18px;
+    }}
+    .stat-row {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .stat {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(0,0,0,.16);
+    }}
+    .stat strong {{
+      display: block;
+      font-size: 22px;
+      margin-top: 4px;
+    }}
+    .nav-list {{
+      display: grid;
+      gap: 8px;
+    }}
+    .nav-item {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(255,255,255,.03);
+    }}
+    .nav-item strong {{ display: block; }}
+    .admin-lock {{
+      border-color: rgba(46,204,113,.42);
+      background: rgba(46,204,113,.1);
+      color: #b9ffd6;
+    }}
+    .token-note {{
+      border-color: rgba(244,91,105,.38);
+      background: rgba(244,91,105,.08);
+      color: #ffd4da;
+    }}
     @media (max-width: 850px) {{
-      .grid, .two, .three {{ grid-template-columns: 1fr; }}
+      .grid, .two, .three, .dashboard-hero, .stat-row {{ grid-template-columns: 1fr; }}
       header {{ position: static; }}
     }}
   </style>
 </head>
 <body>
   <header>
-    <div>
-      <strong>Military Tycoon Dex</strong>
-      <span class="pill">Application dashboard</span>
+    <div class="brand">
+      <span class="brand-mark">D</span>
+      <span>Military Tycoon Dex</span>
+      <span class="pill">Admin applications</span>
     </div>
-    <a class="button secondary" href="/">Website</a>
+    <div class="row">
+      <a class="button secondary" href="/">Website</a>
+      <a class="button secondary" href="/applications/logout">Logout</a>
+    </div>
   </header>
   <main>{body}</main>
 </body>
@@ -5077,52 +5360,92 @@ def _dashboard_page(title: str, body: str) -> bytes:
 
 
 def _render_dashboard_login(error: str = "") -> bytes:
-    if not APPLICATION_DASHBOARD_TOKEN:
+    discord_login_url = _dashboard_discord_login_url()
+    if not APPLICATION_DASHBOARD_TOKEN and not discord_login_url:
         return _dashboard_page(
             "Dashboard disabled",
             """
             <section class="card">
               <h1>Application dashboard disabled</h1>
-              <p>Set the <code>APPLICATION_DASHBOARD_TOKEN</code> environment variable on Render, then redeploy.</p>
+              <p>Set <code>DISCORD_CLIENT_SECRET</code> for Discord admin login or <code>APPLICATION_DASHBOARD_TOKEN</code> for owner fallback access.</p>
             </section>
             """,
         )
     error_html = f'<div class="notice">{escape(error)}</div>' if error else ""
+    discord_html = (
+        f"""
+        <a class="button green" style="width:100%;margin-top:14px;" href="{escape(discord_login_url)}">
+          Log in with Discord
+        </a>
+        <p class="muted">Only Discord users with Manage Server or Administrator can edit that server.</p>
+        """
+        if discord_login_url
+        else f"""
+        <div class="notice token-note">
+          Discord admin login is not configured yet. Set <code>DISCORD_CLIENT_SECRET</code> and add this redirect URL in the Discord Developer Portal:
+          <br><code>{escape(_dashboard_oauth_redirect_uri())}</code>
+        </div>
+        """
+    )
+    token_html = (
+        f"""
+        <details style="margin-top:16px;">
+          <summary class="muted" style="cursor:pointer;font-weight:800;">Owner token fallback</summary>
+          <form method="post" action="/applications" style="margin-top:12px;">
+            <input type="hidden" name="action" value="login">
+            <label>Owner dashboard token</label>
+            <input name="token" type="password" autocomplete="current-password" required>
+            <div class="row" style="margin-top:14px;">
+              <button type="submit">Open owner dashboard</button>
+            </div>
+          </form>
+        </details>
+        """
+        if APPLICATION_DASHBOARD_TOKEN
+        else ""
+    )
     return _dashboard_page(
         "Dashboard login",
         f"""
-        <section class="card" style="max-width:520px;margin:8vh auto 0;">
-          <h1>Application dashboard</h1>
-          <p>Enter the private dashboard token to manage panels, questions, log channels, and accept roles.</p>
+        <section class="card" style="max-width:560px;margin:8vh auto 0;">
+          <span class="pill admin-lock">Admin only</span>
+          <h1 style="margin-top:12px;">Applications dashboard</h1>
+          <p>Manage application panels like Appy: create panels, add text or dropdown questions, set log channels, and choose accept roles.</p>
           {error_html}
-          <form method="post" action="/applications">
-            <input type="hidden" name="action" value="login">
-            <label>Dashboard token</label>
-            <input name="token" type="password" autocomplete="current-password" required>
-            <div class="row" style="margin-top:14px;">
-              <button type="submit">Open dashboard</button>
-            </div>
-          </form>
+          {discord_html}
+          {token_html}
         </section>
         """,
     )
 
 
-def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
+def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = None) -> bytes:
+    headers = headers or {}
     if not bot.is_ready():
         return _dashboard_page("Dashboard", '<section class="card"><h1>Bot is starting</h1><p>Try again in a moment.</p></section>')
 
-    guilds = sorted(bot.guilds, key=lambda item: item.name.lower())
+    guilds = _dashboard_visible_guilds(params, headers)
     if not guilds:
-        return _dashboard_page("Dashboard", '<section class="card"><h1>No servers loaded</h1><p>The bot is not in any servers yet.</p></section>')
+        return _dashboard_page(
+            "Dashboard",
+            '<section class="card"><h1>No manageable servers</h1><p>Log in with a Discord account that has Manage Server or Administrator in a server where the bot is installed.</p></section>',
+        )
 
     requested_guild_id = _parse_int_value(_form_value(params, "guild_id"), guilds[0].id)
-    guild = bot.get_guild(requested_guild_id) or guilds[0]
+    guild = next((server for server in guilds if server.id == requested_guild_id), guilds[0])
     guild_state = application_system.get_guild_state(guild.id)
     panels = guild_state.setdefault("panels", {})
     selected_log_channel = int(guild_state.get("log_channel_id") or 0)
     selected_panel_channel = int(guild_state.get("application_channel_id") or 0)
     notice = _form_value(params, "notice")
+    session_payload = _dashboard_session_payload(headers)
+    account_name = str(session_payload.get("name") or "Owner token")
+    access_label = "Owner fallback" if _dashboard_owner_token_authorized(params, headers) else "Discord admin"
+    question_total = sum(
+        len(panel.get("questions", [])) if isinstance(panel.get("questions"), list) else 0
+        for panel in panels.values()
+        if isinstance(panel, dict)
+    )
 
     guild_options = "\n".join(
         f'<option value="{server.id}"{" selected" if server.id == guild.id else ""}>{escape(server.name)}</option>'
@@ -5240,6 +5563,22 @@ def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
 
     body = f"""
     {notice_html}
+    <section class="card dashboard-hero">
+      <div>
+        <span class="pill admin-lock">{escape(access_label)}</span>
+        <h1 style="font-size:clamp(34px,5vw,64px);margin-top:12px;">Applications</h1>
+        <p>Configure Appy-style application panels for <strong>{escape(guild.name)}</strong>. Users apply in DMs, staff reviews go to your log channel, and accepted applicants can receive a role automatically.</p>
+        <div class="stat-row">
+          <div class="stat"><span class="muted">Panels</span><strong>{len(panels)}</strong></div>
+          <div class="stat"><span class="muted">Questions</span><strong>{question_total}</strong></div>
+          <div class="stat"><span class="muted">Admin</span><strong style="font-size:18px;">{escape(account_name)}</strong></div>
+        </div>
+      </div>
+      <div class="nav-list" style="min-width:230px;">
+        <div class="nav-item admin-lock"><strong>Admin locked</strong><span class="muted">Discord admins only, or owner token fallback.</span></div>
+        <div class="nav-item"><strong>DM application flow</strong><span class="muted">Text and dropdown questions are supported.</span></div>
+      </div>
+    </section>
     <div class="grid">
       <aside class="stack">
         <section class="card">
@@ -5250,15 +5589,15 @@ def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
           </form>
         </section>
         <section class="card">
-          <h2>Panel settings</h2>
+          <h2>Application panel</h2>
           <form method="post" action="/applications">
             <input type="hidden" name="action" value="settings">
             <input type="hidden" name="guild_id" value="{guild.id}">
-            <label>Panel text</label>
+            <label>Intro text</label>
             <textarea name="panel_text">{escape(guild_state.get("panel_text") or application_system.DEFAULT_PANEL_TEXT)}</textarea>
-            <label>Application log channel</label>
+            <label>Review log channel</label>
             <select name="log_channel_id">{_dashboard_channel_options(guild, selected_log_channel)}</select>
-            <label>Application panel channel</label>
+            <label>Public panel channel</label>
             <select name="application_channel_id">{_dashboard_channel_options(guild, selected_panel_channel)}</select>
             <div class="row" style="margin-top:12px;">
               <button type="submit">Save settings</button>
@@ -5271,16 +5610,16 @@ def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
               <button class="green" type="submit">Post / update panel</button>
             </div>
           </form>
-          <p class="muted">The bot needs Send Messages and Embed Links in those channels.</p>
+          <p class="muted">The bot needs Send Messages, Embed Links, and Read Message History in those channels.</p>
         </section>
         <section class="card">
-          <h2>Create panel</h2>
+          <h2>Create application</h2>
           <form method="post" action="/applications">
             <input type="hidden" name="action" value="create_panel">
             <input type="hidden" name="guild_id" value="{guild.id}">
             <label>Name</label>
             <input name="name" placeholder="Moderation team" required>
-            <label>Description</label>
+            <label>Dropdown description</label>
             <input name="description" placeholder="Apply for the moderation team">
             <div class="row" style="margin-top:12px;">
               <button type="submit">Create</button>
@@ -5289,16 +5628,21 @@ def _render_application_dashboard(params: Dict[str, list[str]]) -> bytes:
         </section>
       </aside>
       <section class="card">
-        <h1>{escape(guild.name)} applications</h1>
-        <p>Create panels, edit questions, add dropdown answers, and choose the role users get when accepted.</p>
-        {''.join(panel_blocks) if panel_blocks else '<p>No panels yet. Create one on the left.</p>'}
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <h2>Applications for {escape(guild.name)}</h2>
+            <p class="muted">Edit the dropdown entries, questions, and accept-role behavior.</p>
+          </div>
+        </div>
+        {''.join(panel_blocks) if panel_blocks else '<p>No applications yet. Create one on the left.</p>'}
       </section>
     </div>
     """
     return _dashboard_page("Application dashboard", body)
 
 
-def _handle_application_dashboard_post(form: Dict[str, list[str]]) -> tuple[int, str, Optional[str]]:
+def _handle_application_dashboard_post(form: Dict[str, list[str]], headers: Any = None) -> tuple[int, str, Optional[str]]:
+    headers = headers or {}
     action = _form_value(form, "action")
     if action == "login":
         token = _form_value(form, "token")
@@ -5310,6 +5654,8 @@ def _handle_application_dashboard_post(form: Dict[str, list[str]]) -> tuple[int,
     guild = bot.get_guild(guild_id) if guild_id else None
     if guild is None:
         return 400, "Unknown server.", None
+    if not _dashboard_can_manage_guild(guild.id, form, headers):
+        return 403, "You are not an admin for that server.", None
     guild_state = application_system.get_guild_state(guild.id)
     panels = guild_state.setdefault("panels", {})
     notice = "Saved."
@@ -5408,7 +5754,14 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _redirect(self, location: str, *, set_token_cookie: Optional[str] = None, clear_cookie: bool = False) -> None:
+    def _redirect(
+        self,
+        location: str,
+        *,
+        set_token_cookie: Optional[str] = None,
+        set_session_cookie: Optional[str] = None,
+        clear_cookie: bool = False,
+    ) -> None:
         self.send_response(302)
         self.send_header("Location", location)
         if set_token_cookie:
@@ -5417,10 +5770,20 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
                 f"{APPLICATION_DASHBOARD_COOKIE}={set_token_cookie}; Path=/applications; "
                 "HttpOnly; SameSite=Lax; Max-Age=2592000",
             )
+        if set_session_cookie:
+            self.send_header(
+                "Set-Cookie",
+                f"{APPLICATION_DASHBOARD_SESSION_COOKIE}={set_session_cookie}; Path=/applications; "
+                "HttpOnly; SameSite=Lax; Max-Age=604800",
+            )
         if clear_cookie:
             self.send_header(
                 "Set-Cookie",
                 f"{APPLICATION_DASHBOARD_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
+            )
+            self.send_header(
+                "Set-Cookie",
+                f"{APPLICATION_DASHBOARD_SESSION_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
             )
         self.end_headers()
 
@@ -5432,18 +5795,33 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
             self._redirect("/applications", clear_cookie=True)
             return
 
+        if parsed_path.path.startswith("/applications/login"):
+            login_url = _dashboard_discord_login_url()
+            if not login_url:
+                self._send_body(
+                    400,
+                    _render_dashboard_login("Discord login is not configured yet."),
+                    "text/html; charset=utf-8",
+                )
+                return
+            self._redirect(login_url)
+            return
+
+        if parsed_path.path.startswith("/applications/callback"):
+            status_code, result, session_cookie = _handle_dashboard_oauth_callback(params)
+            if status_code == 302:
+                self._redirect(result, set_session_cookie=session_cookie)
+                return
+            self._send_body(status_code, _render_dashboard_login(result), "text/html; charset=utf-8")
+            return
+
         if parsed_path.path.startswith("/applications"):
             if not _dashboard_authorized(params, self.headers):
                 body = _render_dashboard_login()
                 self._send_body(200, body, "text/html; charset=utf-8")
                 return
 
-            token_from_url = _form_value(params, "token")
-            if token_from_url and APPLICATION_DASHBOARD_TOKEN and hmac.compare_digest(token_from_url, APPLICATION_DASHBOARD_TOKEN):
-                self._redirect(_dashboard_url(_parse_int_value(_form_value(params, "guild_id"))), set_token_cookie=token_from_url)
-                return
-
-            body = _render_application_dashboard(params)
+            body = _render_application_dashboard(params, self.headers)
             self._send_body(200, body, "text/html; charset=utf-8")
             return
 
@@ -5501,7 +5879,7 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
             self._send_body(401, body, "text/html; charset=utf-8")
             return
 
-        status_code, result, token_cookie = _handle_application_dashboard_post(form)
+        status_code, result, token_cookie = _handle_application_dashboard_post(form, self.headers)
         if status_code == 302:
             self._redirect(result, set_token_cookie=token_cookie)
             return

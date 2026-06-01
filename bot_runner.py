@@ -90,7 +90,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self._send_body(200, body, "application/json; charset=utf-8")
 
-    def _redirect(self, location: str, *, set_token_cookie: str | None = None, clear_cookie: bool = False) -> None:
+    def _redirect(
+        self,
+        location: str,
+        *,
+        set_token_cookie: str | None = None,
+        set_session_cookie: str | None = None,
+        clear_cookie: bool = False,
+    ) -> None:
         self.send_response(302)
         self.send_header("Location", location)
         if set_token_cookie:
@@ -99,10 +106,20 @@ class HealthHandler(BaseHTTPRequestHandler):
                 f"{dexbot.APPLICATION_DASHBOARD_COOKIE}={set_token_cookie}; Path=/applications; "
                 "HttpOnly; SameSite=Lax; Max-Age=2592000",
             )
+        if set_session_cookie:
+            self.send_header(
+                "Set-Cookie",
+                f"{dexbot.APPLICATION_DASHBOARD_SESSION_COOKIE}={set_session_cookie}; Path=/applications; "
+                "HttpOnly; SameSite=Lax; Max-Age=604800",
+            )
         if clear_cookie:
             self.send_header(
                 "Set-Cookie",
                 f"{dexbot.APPLICATION_DASHBOARD_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
+            )
+            self.send_header(
+                "Set-Cookie",
+                f"{dexbot.APPLICATION_DASHBOARD_SESSION_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
             )
         self.end_headers()
 
@@ -116,20 +133,29 @@ class HealthHandler(BaseHTTPRequestHandler):
         if path == "/applications/logout":
             self._redirect("/applications", clear_cookie=True)
             return
+        if path == "/applications/login":
+            login_url = dexbot._dashboard_discord_login_url()
+            if not login_url:
+                self._send_body(
+                    400,
+                    dexbot._render_dashboard_login("Discord login is not configured yet."),
+                    "text/html; charset=utf-8",
+                )
+                return
+            self._redirect(login_url)
+            return
+        if path == "/applications/callback":
+            status_code, result, session_cookie = dexbot._handle_dashboard_oauth_callback(params)
+            if status_code == 302:
+                self._redirect(result, set_session_cookie=session_cookie)
+                return
+            self._send_body(status_code, dexbot._render_dashboard_login(result), "text/html; charset=utf-8")
+            return
         if path == "/applications":
             if not dexbot._dashboard_authorized(params, self.headers):
                 self._send_body(200, dexbot._render_dashboard_login(), "text/html; charset=utf-8")
                 return
-            token_from_url = dexbot._form_value(params, "token")
-            if (
-                token_from_url
-                and dexbot.APPLICATION_DASHBOARD_TOKEN
-                and dexbot.hmac.compare_digest(token_from_url, dexbot.APPLICATION_DASHBOARD_TOKEN)
-            ):
-                guild_id = dexbot._parse_int_value(dexbot._form_value(params, "guild_id"))
-                self._redirect(dexbot._dashboard_url(guild_id), set_token_cookie=token_from_url)
-                return
-            self._send_body(200, dexbot._render_application_dashboard(params), "text/html; charset=utf-8")
+            self._send_body(200, dexbot._render_application_dashboard(params, self.headers), "text/html; charset=utf-8")
             return
         if path == "/invite":
             invite_url = dexbot._bot_invite_url()
@@ -169,7 +195,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self._send_body(401, dexbot._render_dashboard_login("Please log in again."), "text/html; charset=utf-8")
             return
 
-        status_code, result, token_cookie = dexbot._handle_application_dashboard_post(form)
+        status_code, result, token_cookie = dexbot._handle_application_dashboard_post(form, self.headers)
         if status_code == 302:
             self._redirect(result, set_token_cookie=token_cookie)
             return

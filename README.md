@@ -15,6 +15,7 @@ The bot spawns vehicles in configured Discord channels, lets users catch them by
 - Vehicle and money leaderboards
 - Server-level settings for spawn channels and wrong-name comment visibility
 - Public status website and health endpoint
+- Appy-style application dashboard for server admins
 
 ## Main User Commands
 
@@ -72,7 +73,17 @@ The important production variables are:
 | `APPLICATION_STATE_DIR` | Optional custom directory for per-server application panel/question storage |
 | `APPLICATION_STATE_FILE` | Optional legacy import path for old combined application storage |
 | `APPLICATION_TIMEOUT_SECONDS` | Time users have to finish an application |
+| `DISCORD_CLIENT_ID` | Discord application/client ID used for invite links and dashboard OAuth |
+| `DISCORD_CLIENT_SECRET` | Enables Discord admin login for the application dashboard |
+| `APPLICATION_DASHBOARD_BASE_URL` | Public bot URL used for the dashboard OAuth redirect, for example `https://dexbotfinal.onrender.com` |
+| `APPLICATION_DASHBOARD_TOKEN` | Private owner fallback token for the dashboard |
 | `COMMAND_SYNC_MODE` | Slash command sync mode, usually `global` |
+
+For Discord admin login, add this redirect URL in the Discord Developer Portal:
+
+```text
+https://dexbotfinal.onrender.com/applications/callback
+```
 
 ## Local Checks
 
