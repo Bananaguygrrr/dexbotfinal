@@ -4550,8 +4550,9 @@ def _render_website() -> bytes:
       min-height: 72px;
       display: flex;
       align-items: center;
-      justify-content: flex-start;
-      padding: 18px clamp(18px, 4vw, 46px);
+      justify-content: space-between;
+      gap: 22px;
+      padding: 14px clamp(18px, 4vw, 46px);
       background: rgba(8, 11, 10, 0.72);
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       backdrop-filter: blur(14px);
@@ -4577,6 +4578,77 @@ def _render_website() -> bytes:
       border: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.08);
       font-size: 11px;
+    }}
+    .nav {{
+      display: flex;
+      align-items: center;
+      gap: clamp(14px, 2.4vw, 34px);
+      flex: 1;
+      justify-content: center;
+      min-width: 0;
+    }}
+    .nav a {{
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 900;
+      font-size: 15px;
+      line-height: 1;
+      padding: 10px 0;
+      border-bottom: 3px solid transparent;
+      white-space: nowrap;
+      opacity: 0.9;
+    }}
+    .nav a:hover,
+    .nav a.active {{
+      color: #21ffd0;
+      border-bottom-color: #21ffd0;
+      opacity: 1;
+    }}
+    .top-actions {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: flex-end;
+      min-width: max-content;
+    }}
+    .top-login {{
+      border: 1px solid rgba(33, 255, 208, 0.45);
+      background: rgba(33, 255, 208, 0.12);
+      color: #d9fff8;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-weight: 900;
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    .user-chip {{
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text);
+      font-weight: 900;
+      white-space: nowrap;
+    }}
+    .user-chip img,
+    .user-avatar {{
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }}
+    .plan-badge {{
+      display: inline-flex;
+      align-items: center;
+      width: max-content;
+      border-radius: 6px;
+      background: #22b9ff;
+      color: #fff;
+      padding: 3px 7px;
+      font-size: 11px;
+      font-weight: 1000;
+      margin-top: 2px;
     }}
     main {{
       position: relative;
@@ -4736,7 +4808,17 @@ def _render_website() -> bytes:
     @media (max-width: 760px) {{
       .topbar {{
         align-items: center;
+        flex-wrap: wrap;
       }}
+      .nav {{
+        order: 3;
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }}
+      .top-actions {{ margin-left: auto; }}
+      .user-chip .user-text {{ display: none; }}
       main {{ padding: 28px; }}
       .hero {{
         flex-direction: column;
@@ -4757,6 +4839,23 @@ def _render_website() -> bytes:
       {brand_icon_html}
       <span>Military Tycoon Dex</span>
     </a>
+    <nav class="nav" aria-label="Main navigation">
+      <a class="active" href="/">Home</a>
+      <a href="/status">Status</a>
+      <a href="/applications">Applications</a>
+      <a href="/discord">Support</a>
+      <a href="/invite">Invite</a>
+    </nav>
+    <div class="top-actions">
+      <a class="top-login" href="/applications">Login</a>
+      <div class="user-chip" title="Dashboard access is for server admins">
+        {brand_icon_html}
+        <span class="user-text">
+          <span>{escape(BOT_OWNER_NAME)}</span><br>
+          <span class="plan-badge">Free</span>
+        </span>
+      </div>
+    </div>
   </header>
   <main>
     <section class="hero">
