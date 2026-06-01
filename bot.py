@@ -708,6 +708,26 @@ def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
     return normalized.title()
 
 
+def parse_testspawn_rarity(value: str) -> Optional[str]:
+    normalized = re.sub(r"[\s_-]+", " ", str(value or "").strip().lower()).strip()
+    compact = normalized.replace(" ", "")
+    aliases = {
+        "art": "art work",
+        "artwork": "art work",
+        "special": "specials",
+        "specials": "specials",
+        "le": "limited edition",
+        "limited": "limited edition",
+        "limitededition": "limited edition",
+    }
+    if compact in aliases:
+        return aliases[compact]
+    for rarity in RARITY_ORDER:
+        if normalized == rarity or compact == rarity.replace(" ", ""):
+            return rarity
+    return None
+
+
 def format_uptime(seconds: int) -> str:
     seconds = max(0, int(seconds))
     days, remainder = divmod(seconds, 86_400)
@@ -744,7 +764,7 @@ def build_help_message() -> str:
         "`!check <message_id>` - Show the hidden vehicle name for a spawn message\n"
         "`!testspawn` - Spawn a test vehicle\n"
         "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
+        "`!testspawn rarity [true|false]` - Spawn a test vehicle from any rarity\n"
         f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
         "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
         "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
@@ -5159,37 +5179,38 @@ async def on_message(message: discord.Message):
             return
 
         forced_fresh = None
-        force_special = False
+        forced_rarity = None
         testspawn_usage = (
             "Usage: `!testspawn`, `!testspawn true|false`, "
-            "or `!testspawn special [true|false]`"
+            "or `!testspawn rarity [true|false]`\n"
+            "Rarities: art, special, le, exotic, legendary, epic, rare, common"
         )
         testspawn_args = [part.lower() for part in parts[1:]]
         if len(testspawn_args) > 2:
             await message.channel.send(testspawn_usage)
             return
 
-        if testspawn_args:
-            if testspawn_args[0] == "special":
-                force_special = True
-                if len(testspawn_args) == 2:
-                    parsed_fresh = parse_bool_true_false(testspawn_args[1])
-                    if parsed_fresh is None:
-                        await message.channel.send(testspawn_usage)
-                        return
-                    forced_fresh = parsed_fresh
-            else:
-                if len(testspawn_args) != 1:
-                    await message.channel.send(testspawn_usage)
-                    return
-
-                parsed_fresh = parse_bool_true_false(testspawn_args[0])
-                if parsed_fresh is None:
+        for testspawn_arg in testspawn_args:
+            parsed_fresh = parse_bool_true_false(testspawn_arg)
+            if parsed_fresh is not None:
+                if forced_fresh is not None:
                     await message.channel.send(testspawn_usage)
                     return
                 forced_fresh = parsed_fresh
+                continue
 
-        rarity_weights = {"specials": 1} if force_special else None
+            parsed_rarity = parse_testspawn_rarity(testspawn_arg)
+            if parsed_rarity:
+                if forced_rarity is not None:
+                    await message.channel.send(testspawn_usage)
+                    return
+                forced_rarity = parsed_rarity
+                continue
+
+            await message.channel.send(testspawn_usage)
+            return
+
+        rarity_weights = {forced_rarity: 1} if forced_rarity else None
         vehicles = get_vehicle_map()
         spawned = await spawn_vehicle(
             vehicles,
@@ -5199,22 +5220,23 @@ async def on_message(message: discord.Message):
             rarity_weights=rarity_weights,
         )
         if spawned:
-            if force_special and forced_fresh is not None:
+            details = []
+            if forced_rarity:
+                details.append(f"rarity: {display_rarity_name(forced_rarity)}")
+            if forced_fresh is not None:
+                details.append(f"fresh forced: {'true' if forced_fresh else 'false'}")
+            if details:
                 await message.channel.send(
-                    "Special test spawn sent successfully "
-                    f"(fresh forced: {'true' if forced_fresh else 'false'})."
-                )
-            elif force_special:
-                await message.channel.send("Special test spawn sent successfully.")
-            elif forced_fresh is not None:
-                await message.channel.send(
-                    f"Test spawn sent successfully (fresh forced: {'true' if forced_fresh else 'false'})."
+                    f"Test spawn sent successfully ({', '.join(details)})."
                 )
             else:
                 await message.channel.send("Test spawn sent successfully.")
         else:
-            if force_special:
-                await message.channel.send("Special test spawn failed. Check special vehicle data and images.")
+            if forced_rarity:
+                await message.channel.send(
+                    f"{display_rarity_name(forced_rarity)} test spawn failed. "
+                    "Check vehicle data, images, and spawnable settings for that rarity."
+                )
                 return
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
         return

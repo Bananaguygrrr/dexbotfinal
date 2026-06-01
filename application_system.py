@@ -79,6 +79,31 @@ def bot_channel_permission_errors(channel: discord.TextChannel) -> list[str]:
     return [name for name, allowed in checks if not allowed]
 
 
+def bot_can_manage_role(guild: discord.Guild, role: discord.Role) -> tuple[bool, str]:
+    if BOT is None or BOT.user is None:
+        return False, "bot is not ready"
+    if role.is_default():
+        return False, "that is the @everyone role"
+    if role.managed:
+        return False, "that role is managed by an integration"
+    bot_member = guild.me or guild.get_member(BOT.user.id)
+    if bot_member is None:
+        return False, "bot member could not be resolved"
+    if not bot_member.guild_permissions.manage_roles:
+        return False, "I need the Manage Roles permission"
+    if role >= bot_member.top_role:
+        return False, "that role must be below my highest role"
+    return True, ""
+
+
+def member_can_configure_role(member: discord.Member, role: discord.Role) -> bool:
+    if member.guild.owner_id == member.id:
+        return True
+    if member.guild_permissions.administrator:
+        return True
+    return member.guild_permissions.manage_roles and role < member.top_role
+
+
 def prune_application_sessions(user_id: Optional[int] = None) -> int:
     now = utc_now()
     removed = 0
@@ -444,6 +469,31 @@ async def send_applicant_dm(user_id: int, *, content: Optional[str] = None, embe
         pass
 
 
+async def grant_panel_accept_role(guild: discord.Guild, panel: Dict[str, Any], user_id: int) -> tuple[bool, str]:
+    role_id = int(panel.get("accepted_role_id") or 0)
+    if not role_id:
+        return False, ""
+    role = guild.get_role(role_id)
+    if role is None:
+        return False, "Accepted role is missing. Set it again with `/applicationrole`."
+    allowed, reason = bot_can_manage_role(guild, role)
+    if not allowed:
+        return False, f"Could not give {role.mention}: {reason}."
+    member = guild.get_member(user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.HTTPException:
+            return False, "Could not give the accepted role because the applicant is not in this server."
+    if role in member.roles:
+        return True, f"{role.mention} was already on the applicant."
+    try:
+        await member.add_roles(role, reason="Application accepted")
+    except discord.HTTPException as error:
+        return False, f"Could not give {role.mention}: `{truncate(error, 160)}`"
+    return True, f"Gave {role.mention} to the applicant."
+
+
 async def post_application_log(guild: discord.Guild, panel: Dict[str, Any], submission: Dict[str, Any], text: str) -> bool:
     guild_state = get_guild_state(guild.id)
     channel_id = int(guild_state.get("log_channel_id") or 0)
@@ -518,6 +568,101 @@ async def post_or_update_submission(guild: discord.Guild, panel: Dict[str, Any],
         submission["review_message_id"] = message.id
         save_state()
         return True
+
+
+def ticket_channel_name(member: discord.Member, submission_id: str) -> str:
+    base = FORM_NAME_RE.sub("-", member.name.lower()).strip("-") or "user"
+    return truncate(f"app-{base}-{submission_id[:5]}", 90).strip("-")
+
+
+async def open_application_ticket(interaction: discord.Interaction, guild_id: int, submission_id: str) -> None:
+    if not interaction.guild or interaction.guild_id != guild_id:
+        await interaction.response.send_message("This ticket button belongs to another server.", ephemeral=True)
+        return
+    if not await require_application_admin(interaction):
+        return
+    if BOT is None or BOT.user is None:
+        await interaction.response.send_message("Application system is not ready.", ephemeral=True)
+        return
+
+    submission = get_submission(guild_id, submission_id)
+    if not submission:
+        await interaction.response.send_message("That submission no longer exists.", ephemeral=True)
+        return
+    panel = get_panel(guild_id, submission.get("panel_key", ""))
+    if not panel:
+        await interaction.response.send_message("The panel for this submission no longer exists.", ephemeral=True)
+        return
+
+    existing_channel_id = int(submission.get("ticket_channel_id") or 0)
+    existing_channel = interaction.guild.get_channel(existing_channel_id) if existing_channel_id else None
+    if isinstance(existing_channel, discord.TextChannel):
+        await interaction.response.send_message(f"Ticket already exists: {existing_channel.mention}", ephemeral=True)
+        return
+
+    bot_member = interaction.guild.me or interaction.guild.get_member(BOT.user.id)
+    if bot_member is None:
+        await interaction.response.send_message("I could not resolve my server member.", ephemeral=True)
+        return
+    if not bot_member.guild_permissions.manage_channels:
+        await interaction.response.send_message("I need the Manage Channels permission to open tickets.", ephemeral=True)
+        return
+
+    applicant = interaction.guild.get_member(int(submission["user_id"]))
+    if applicant is None:
+        try:
+            applicant = await interaction.guild.fetch_member(int(submission["user_id"]))
+        except discord.HTTPException:
+            await interaction.response.send_message("The applicant is not in this server anymore.", ephemeral=True)
+            return
+
+    reviewer = interaction.user if isinstance(interaction.user, discord.Member) else None
+    overwrites: Dict[Any, discord.PermissionOverwrite] = {
+        interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        bot_member: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            embed_links=True,
+            read_message_history=True,
+            manage_channels=True,
+        ),
+        applicant: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            embed_links=True,
+            read_message_history=True,
+            attach_files=True,
+        ),
+    }
+    if reviewer:
+        overwrites[reviewer] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            embed_links=True,
+            read_message_history=True,
+            attach_files=True,
+        )
+
+    category = interaction.channel.category if isinstance(interaction.channel, discord.TextChannel) else None
+    await interaction.response.defer(ephemeral=True)
+    try:
+        ticket = await interaction.guild.create_text_channel(
+            name=ticket_channel_name(applicant, submission_id),
+            category=category,
+            overwrites=overwrites,
+            reason=f"Application ticket for {submission_id}",
+        )
+        await ticket.send(
+            content=f"{applicant.mention} {interaction.user.mention}",
+            embed=build_submission_embed(interaction.guild, panel, submission),
+        )
+    except discord.HTTPException as error:
+        await interaction.followup.send(f"I could not open the ticket: `{truncate(error, 180)}`", ephemeral=True)
+        return
+
+    submission["ticket_channel_id"] = ticket.id
+    save_state()
+    await interaction.followup.send(f"Ticket opened: {ticket.mention}", ephemeral=True)
 
 
 async def refresh_application_message(guild: discord.Guild) -> bool:
@@ -713,21 +858,25 @@ class ApplicationReviewView(discord.ui.View):
     def __init__(self, guild_id: int, submission_id: str, *, disabled: bool = False):
         super().__init__(timeout=None)
         buttons = [
-            ("Accept", discord.ButtonStyle.success, "accepted", None),
-            ("Deny", discord.ButtonStyle.danger, "denied", None),
-            ("Accept with reason", discord.ButtonStyle.success, "accepted", "reason"),
-            ("Deny with reason", discord.ButtonStyle.danger, "denied", "reason"),
-            ("History", discord.ButtonStyle.primary, "history", None),
+            ("Accept", discord.ButtonStyle.success, "accepted", None, 0),
+            ("Deny", discord.ButtonStyle.danger, "denied", None, 0),
+            ("Accept with reason", discord.ButtonStyle.success, "accepted", "reason", 0),
+            ("Deny with reason", discord.ButtonStyle.danger, "denied", "reason", 0),
+            ("History", discord.ButtonStyle.primary, "history", None, 1),
+            ("Open ticket with user", discord.ButtonStyle.secondary, "ticket", None, 1),
         ]
-        for label, style, action, mode in buttons:
+        for label, style, action, mode, row in buttons:
             button = discord.ui.Button(
                 label=label,
                 style=style,
                 custom_id=f"dexapp:review:{stable_suffix(label)}:{guild_id}:{submission_id}",
-                disabled=disabled and action != "history",
+                disabled=disabled and action not in {"history", "ticket"},
+                row=row,
             )
             if action == "history":
                 button.callback = self.history_button(guild_id, submission_id)
+            elif action == "ticket":
+                button.callback = self.ticket_button(guild_id, submission_id)
             elif mode == "reason":
                 button.callback = self.reason_button(guild_id, submission_id, action)
             else:
@@ -758,6 +907,12 @@ class ApplicationReviewView(discord.ui.View):
                 await interaction.response.send_message("That submission no longer exists.", ephemeral=True)
                 return
             await send_application_history(interaction, int(submission["user_id"]))
+
+        return callback
+
+    def ticket_button(self, guild_id: int, submission_id: str):
+        async def callback(interaction: discord.Interaction) -> None:
+            await open_application_ticket(interaction, guild_id, submission_id)
 
         return callback
 
@@ -998,6 +1153,12 @@ async def handle_review(
     submission["reason"] = reason or ""
     submission["reviewer_id"] = interaction.user.id
     submission["reviewed_at"] = utc_now()
+    role_success = False
+    role_message = ""
+    if status == "accepted":
+        role_success, role_message = await grant_panel_accept_role(interaction.guild, panel, int(submission["user_id"]))
+        if role_message:
+            submission["accepted_role_result"] = role_message
     save_state()
 
     embed = build_submission_embed(interaction.guild, panel, submission)
@@ -1015,8 +1176,15 @@ async def handle_review(
     )
     if reason:
         applicant_embed.add_field(name="Reason", value=truncate(reason, 1000), inline=False)
+    if role_message:
+        applicant_embed.add_field(name="Role", value=truncate(role_message, 1000), inline=False)
     await send_applicant_dm(int(submission["user_id"]), embed=applicant_embed)
-    await post_application_log(interaction.guild, panel, submission, f"Application was **{status}** by {interaction.user.mention}.")
+    log_text = f"Application was **{status}** by {interaction.user.mention}."
+    if role_message:
+        log_text = f"{log_text}\n{role_message}"
+    await post_application_log(interaction.guild, panel, submission, log_text)
+    if status == "accepted" and role_message and not role_success:
+        await interaction.followup.send(role_message, ephemeral=True)
 
 
 async def send_application_history(interaction: discord.Interaction, user_id: int) -> None:
@@ -1069,6 +1237,7 @@ async def createpanel_command(interaction: discord.Interaction, panel: str, desc
         "description": (description or "Start this application.").strip()[:100],
         "questions": [],
         "enabled": True,
+        "accepted_role_id": None,
         "created_at": utc_now(),
         "created_by": interaction.user.id,
     }
@@ -1110,6 +1279,52 @@ async def editpanel_command(
     if interaction.guild:
         await refresh_application_message(interaction.guild)
     await interaction.response.send_message(f"Updated panel `{panel_key}`.", ephemeral=True)
+
+
+@app_commands.command(name="applicationrole", description="Set the role given when an application panel is accepted")
+@app_commands.autocomplete(panel=panel_autocomplete)
+async def applicationrole_command(interaction: discord.Interaction, panel: str, role: discord.Role):
+    if not await require_application_admin(interaction) or not interaction.guild or not interaction.guild_id:
+        return
+    panel_key = normalize_panel_key(panel)
+    panel_data = get_panel(interaction.guild_id, panel_key)
+    if not panel_data:
+        await interaction.response.send_message("Unknown panel.", ephemeral=True)
+        return
+    if not isinstance(interaction.user, discord.Member) or not member_can_configure_role(interaction.user, role):
+        await interaction.response.send_message(
+            "You need Manage Roles and the role must be below your highest role.",
+            ephemeral=True,
+        )
+        return
+    allowed, reason = bot_can_manage_role(interaction.guild, role)
+    if not allowed:
+        await interaction.response.send_message(f"I cannot give {role.mention}: {reason}.", ephemeral=True)
+        return
+    panel_data["accepted_role_id"] = role.id
+    save_state()
+    await interaction.response.send_message(
+        f"Accepted applications for `{panel_key}` will now give {role.mention}.",
+        ephemeral=True,
+    )
+
+
+@app_commands.command(name="applicationroleclear", description="Remove the accepted role from an application panel")
+@app_commands.autocomplete(panel=panel_autocomplete)
+async def applicationroleclear_command(interaction: discord.Interaction, panel: str):
+    if not await require_application_admin(interaction) or not interaction.guild_id:
+        return
+    panel_key = normalize_panel_key(panel)
+    panel_data = get_panel(interaction.guild_id, panel_key)
+    if not panel_data:
+        await interaction.response.send_message("Unknown panel.", ephemeral=True)
+        return
+    panel_data["accepted_role_id"] = None
+    save_state()
+    await interaction.response.send_message(
+        f"Accepted applications for `{panel_key}` will no longer give a role.",
+        ephemeral=True,
+    )
 
 
 @app_commands.command(name="deletepanel", description="Delete an application dropdown option")
@@ -1367,6 +1582,8 @@ def setup_application_system(discord_bot: commands.Bot, data_dir: str) -> None:
         createpanel_command,
         creatpanel_alias_command,
         editpanel_command,
+        applicationrole_command,
+        applicationroleclear_command,
         deletepanel_command,
         addquestion_command,
         editquestion_command,
