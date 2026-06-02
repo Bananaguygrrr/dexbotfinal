@@ -171,7 +171,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self._redirect(dexbot.SERVER_INVITE_URL)
             return
         if path == "/":
-            self._send_body(200, dexbot._render_website(), "text/html; charset=utf-8")
+            self._send_body(200, dexbot._render_website(self.headers), "text/html; charset=utf-8")
             return
         self._send_empty()
 

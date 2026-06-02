@@ -4452,7 +4452,8 @@ def build_about_embed() -> discord.Embed:
     return embed
 
 
-def _render_website() -> bytes:
+def _render_website(headers: Any = None) -> bytes:
+    headers = headers or {}
     status = _website_status_payload()
     is_online = bool(status["online"])
     invite_url = str(status["invite_url"])
@@ -4483,6 +4484,28 @@ def _render_website() -> bytes:
         if avatar_url
         else '<span class="brand-mark">DEX</span>'
     )
+    session_payload = _dashboard_session_payload(headers)
+    login_href = "/applications/login" if _dashboard_oauth_enabled() else "/applications"
+    if session_payload:
+        session_name = escape(str(session_payload.get("name") or "Discord admin"))
+        session_avatar_url = str(session_payload.get("avatar_url") or "")
+        session_avatar_html = (
+            f'<img src="{escape(session_avatar_url)}" alt="">'
+            if session_avatar_url
+            else brand_icon_html
+        )
+        top_auth_html = f"""
+          <a class="top-login" href="/applications">Applications</a>
+          <div class="user-chip" title="Logged in with Discord">
+            {session_avatar_html}
+            <span class="user-text">
+              <span>{session_name}</span><br>
+              <span class="plan-badge">Admin</span>
+            </span>
+          </div>
+        """
+    else:
+        top_auth_html = f'<a class="top-login" href="{login_href}">Sign in</a>'
     status_text = "Online" if is_online else "Offline"
     status_class = "online" if is_online else "offline"
 
@@ -4847,14 +4870,7 @@ def _render_website() -> bytes:
       <a href="/invite">Invite</a>
     </nav>
     <div class="top-actions">
-      <a class="top-login" href="/applications">Login</a>
-      <div class="user-chip" title="Dashboard access is for server admins">
-        {brand_icon_html}
-        <span class="user-text">
-          <span>{escape(BOT_OWNER_NAME)}</span><br>
-          <span class="plan-badge">Free</span>
-        </span>
-      </div>
+      {top_auth_html}
     </div>
   </header>
   <main>
@@ -5141,15 +5157,18 @@ def _handle_dashboard_oauth_callback(params: Dict[str, list[str]]) -> tuple[int,
         return 403, "You are not an admin in any server that uses this bot.", None
 
     username = str(user_payload.get("global_name") or user_payload.get("username") or "Discord admin")
+    avatar_hash = str(user_payload.get("avatar") or "")
+    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128" if avatar_hash else ""
     session_cookie = _dashboard_pack(
         {
             "uid": user_id,
             "name": username[:80],
+            "avatar_url": avatar_url,
             "guild_ids": sorted(admin_guild_ids),
             "exp": int(time.time()) + 7 * 24 * 60 * 60,
         }
     )
-    return 302, _dashboard_url(sorted(admin_guild_ids)[0]), session_cookie
+    return 302, _dashboard_url(), session_cookie
 
 
 def _dashboard_url(guild_id: Optional[int] = None, notice: str = "") -> str:
@@ -5244,7 +5263,8 @@ def _run_dashboard_coro(coro: Any) -> str:
         return f"Dashboard action failed: {truncate(error, 180)}"
 
 
-def _dashboard_page(title: str, body: str) -> bytes:
+def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes:
+    logout_html = '<a class="button secondary" href="/applications/logout">Logout</a>' if show_logout else ""
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -5434,9 +5454,111 @@ def _dashboard_page(title: str, body: str) -> bytes:
       background: rgba(244,91,105,.08);
       color: #ffd4da;
     }}
+    .server-tabs {{
+      display: inline-flex;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #263033;
+      margin-bottom: 22px;
+    }}
+    .tab {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 22px;
+      font-weight: 900;
+      color: var(--text);
+      border-right: 1px solid rgba(255,255,255,.08);
+    }}
+    .tab.active {{
+      background: #0aa67a;
+      color: #fff;
+    }}
+    .tab.locked {{
+      color: #ffe16b;
+    }}
+    .server-header {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 20px;
+    }}
+    .server-header h1 {{
+      margin-top: 12px;
+      font-size: clamp(30px, 4vw, 46px);
+    }}
+    .search-box span {{
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      clip: rect(0,0,0,0);
+      overflow: hidden;
+    }}
+    .search-box input {{
+      min-height: 46px;
+      background: #0d1118;
+      border-color: rgba(255,255,255,.12);
+      border-radius: 7px;
+    }}
+    .server-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 18px;
+    }}
+    .server-card {{
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 7px;
+      background: #191b2a;
+    }}
+    .server-meta {{
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 13px;
+      align-items: center;
+      padding: 16px;
+      min-height: 100px;
+    }}
+    .server-meta h3 {{
+      margin: 0 0 4px;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }}
+    .server-meta p {{
+      margin: 0;
+      color: #bec8d6;
+    }}
+    .server-icon {{
+      width: 48px;
+      height: 48px;
+      border-radius: 7px;
+      object-fit: cover;
+      background: #6f7885;
+    }}
+    .server-icon.fallback {{
+      display: grid;
+      place-items: center;
+      font-weight: 1000;
+      color: #111827;
+    }}
+    .server-action {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      color: #21ffd0;
+      text-decoration: none;
+      font-weight: 900;
+      background: rgba(33,255,208,.12);
+    }}
+    .server-action:hover {{
+      background: rgba(33,255,208,.2);
+    }}
     @media (max-width: 850px) {{
-      .grid, .two, .three, .dashboard-hero, .stat-row {{ grid-template-columns: 1fr; }}
+      .grid, .two, .three, .dashboard-hero, .stat-row, .server-header {{ grid-template-columns: 1fr; }}
       header {{ position: static; }}
+      .server-tabs {{ display: flex; width: 100%; overflow-x: auto; }}
     }}
   </style>
 </head>
@@ -5449,7 +5571,7 @@ def _dashboard_page(title: str, body: str) -> bytes:
     </div>
     <div class="row">
       <a class="button secondary" href="/">Website</a>
-      <a class="button secondary" href="/applications/logout">Logout</a>
+      {logout_html}
     </div>
   </header>
   <main>{body}</main>
@@ -5469,6 +5591,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
               <p>Set <code>DISCORD_CLIENT_SECRET</code> for Discord admin login or <code>APPLICATION_DASHBOARD_TOKEN</code> for owner fallback access.</p>
             </section>
             """,
+            show_logout=False,
         )
     error_html = f'<div class="notice">{escape(error)}</div>' if error else ""
     discord_html = (
@@ -5500,7 +5623,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
           </form>
         </details>
         """
-        if APPLICATION_DASHBOARD_TOKEN
+        if APPLICATION_DASHBOARD_TOKEN and not discord_login_url
         else ""
     )
     return _dashboard_page(
@@ -5515,7 +5638,89 @@ def _render_dashboard_login(error: str = "") -> bytes:
           {token_html}
         </section>
         """,
+        show_logout=False,
     )
+
+
+def _dashboard_guild_icon_html(guild: discord.Guild) -> str:
+    if guild.icon:
+        try:
+            return f'<img class="server-icon" src="{escape(str(guild.icon.replace(size=96, static_format="png").url))}" alt="">'
+        except Exception:
+            pass
+    initials = "".join(part[:1] for part in guild.name.split()[:2]).upper() or "DX"
+    return f'<div class="server-icon fallback">{escape(initials)}</div>'
+
+
+def _render_application_server_selection(
+    guilds: list[discord.Guild],
+    params: Dict[str, list[str]],
+    headers: Any,
+) -> bytes:
+    notice = _form_value(params, "notice")
+    notice_html = f'<div class="notice">{escape(notice)}</div>' if notice else ""
+    session_payload = _dashboard_session_payload(headers)
+    account_name = str(session_payload.get("name") or "Owner token")
+    access_label = "Owner fallback" if _dashboard_owner_token_authorized(params, headers) else "Discord admin"
+
+    cards = []
+    for guild in guilds:
+        member = guild.get_member(_dashboard_session_user_id(headers))
+        role_label = "Owner" if _dashboard_owner_token_authorized(params, headers) else "Admin"
+        if member and member.guild_permissions.administrator:
+            role_label = "Admin"
+        elif member and member.guild_permissions.manage_guild:
+            role_label = "Manager"
+        cards.append(
+            f"""
+            <article class="server-card" data-name="{escape(guild.name.lower())}">
+              <div class="server-meta">
+                {_dashboard_guild_icon_html(guild)}
+                <div>
+                  <h3>{escape(guild.name)}</h3>
+                  <p>{escape(role_label)}</p>
+                </div>
+              </div>
+              <a class="server-action" href="{_dashboard_url(guild.id)}">Configure</a>
+            </article>
+            """
+        )
+
+    body = f"""
+    {notice_html}
+    <section class="server-tabs">
+      <span class="tab active">Server Selection</span>
+      <span class="tab locked">Admin only</span>
+      <span class="tab locked">Application Bot</span>
+    </section>
+    <section class="server-header">
+      <div>
+        <span class="pill admin-lock">{escape(access_label)}</span>
+        <h1>Select a Server</h1>
+        <p>Only servers where <strong>{escape(account_name)}</strong> has Manage Server or Administrator are shown.</p>
+      </div>
+      <label class="search-box">
+        <span>Search</span>
+        <input id="server-search" type="search" placeholder="Search for your server...">
+      </label>
+    </section>
+    <section class="server-grid" id="server-grid">
+      {''.join(cards) if cards else '<p>No servers found for this login.</p>'}
+    </section>
+    <script>
+      const search = document.getElementById('server-search');
+      const cards = Array.from(document.querySelectorAll('.server-card'));
+      if (search) {{
+        search.addEventListener('input', () => {{
+          const needle = search.value.trim().toLowerCase();
+          for (const card of cards) {{
+            card.style.display = card.dataset.name.includes(needle) ? '' : 'none';
+          }}
+        }});
+      }}
+    </script>
+    """
+    return _dashboard_page("Select a server", body)
 
 
 def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = None) -> bytes:
@@ -5529,6 +5734,9 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
             "Dashboard",
             '<section class="card"><h1>No manageable servers</h1><p>Log in with a Discord account that has Manage Server or Administrator in a server where the bot is installed.</p></section>',
         )
+
+    if not _form_value(params, "guild_id"):
+        return _render_application_server_selection(guilds, params, headers)
 
     requested_guild_id = _parse_int_value(_form_value(params, "guild_id"), guilds[0].id)
     guild = next((server for server in guilds if server.id == requested_guild_id), guilds[0])
@@ -5955,7 +6163,7 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        body = _render_website()
+        body = _render_website(self.headers)
         self._send_body(200, body, "text/html; charset=utf-8")
 
     def do_POST(self):
