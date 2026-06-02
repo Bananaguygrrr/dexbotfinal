@@ -4896,7 +4896,6 @@ def _render_website(headers: Any = None) -> bytes:
     </a>
     <nav class="nav" aria-label="Main navigation">
       <a class="active" href="/">Home</a>
-      <a href="/status">Status</a>
       <a href="/applications">Applications</a>
       <a href="/discord">Support</a>
       <a href="/invite">Invite</a>
@@ -5032,6 +5031,10 @@ def _dashboard_oauth_redirect_uri() -> str:
     return f"{APPLICATION_DASHBOARD_BASE_URL}/applications/callback"
 
 
+def _dashboard_discord_user_agent() -> str:
+    return f"Military Tycoon Dex Dashboard ({APPLICATION_DASHBOARD_BASE_URL}; discord.py)"
+
+
 def _dashboard_make_state() -> str:
     return _dashboard_pack({"ts": int(time.time()), "nonce": secrets.token_urlsafe(16)})
 
@@ -5123,7 +5126,12 @@ def _dashboard_visible_guilds(params: Dict[str, list[str]], headers: Any) -> lis
 
 def _dashboard_oauth_request(url: str, *, data: Optional[Dict[str, str]] = None, token: str = "") -> Any:
     encoded_data = urlencode(data).encode("utf-8") if data is not None else None
-    headers = {"Content-Type": "application/x-www-form-urlencoded"} if data is not None else {}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": _dashboard_discord_user_agent(),
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = Request(url, data=encoded_data, headers=headers, method="POST" if data is not None else "GET")
@@ -5141,7 +5149,7 @@ def _dashboard_oauth_request(url: str, *, data: Optional[Dict[str, str]] = None,
             pass
         raise RuntimeError(f"Discord HTTP {error.code}: {truncate(message, 160)}") from error
     except URLError as error:
-        raise RuntimeError(f"Could not reach Discord OAuth API: {truncate(error.reason, 120)}") from error
+        raise RuntimeError(f"Could not reach Discord OAuth API: {truncate(str(error.reason), 120)}") from error
     return json.loads(raw_body)
 
 
@@ -5753,7 +5761,6 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
     <nav class="dash-nav" aria-label="Dashboard navigation">
       <a href="/">Home</a>
       <a class="{applications_active}" href="/applications">Applications</a>
-      <a href="/status">Status</a>
       <a href="/discord">Support</a>
     </nav>
     <div class="row">
