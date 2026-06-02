@@ -5831,7 +5831,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
           </div>
           <div class="login-panel">
             <span class="pill good">Secure Discord login</span>
-            <h2 style="margin-top:12px;">Sign in</h2>
+            <h2 style="margin-top:12px;">Login</h2>
             <p>No dashboard token needed when Discord login is configured.</p>
             {error_html}
             {discord_html}
