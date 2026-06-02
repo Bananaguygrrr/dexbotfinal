@@ -5265,6 +5265,7 @@ def _run_dashboard_coro(coro: Any) -> str:
 
 def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes:
     logout_html = '<a class="button secondary" href="/applications/logout">Logout</a>' if show_logout else ""
+    applications_active = " active" if title in {"Select a server", "Application dashboard", "Dashboard login"} else ""
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -5281,8 +5282,11 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       --text: #f7f1df;
       --muted: rgba(247, 241, 223, 0.72);
       --accent: #d1a85f;
+      --teal: #21ffd0;
+      --teal-2: #0aa67a;
       --green: #2ecc71;
       --red: #f45b69;
+      --blue: #5d7cff;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -5294,6 +5298,16 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
         radial-gradient(circle at 92% 14%, rgba(74, 95, 56, .38), transparent 30%);
       color: var(--text);
       min-height: 100vh;
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(115deg, transparent 0 17%, rgba(33,255,208,.06) 17% 27%, transparent 27% 47%, rgba(209,168,95,.08) 47% 58%, transparent 58%),
+        radial-gradient(circle at 74% 18%, rgba(33,255,208,.13), transparent 26%);
+      opacity: .85;
     }}
     header {{
       display: flex;
@@ -5308,6 +5322,7 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       z-index: 10;
       backdrop-filter: blur(12px);
     }}
+    header, main {{ position: relative; }}
     main {{
       width: min(1220px, 100%);
       margin: 0 auto;
@@ -5331,6 +5346,7 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
     }}
     .stack {{ display: grid; gap: 14px; }}
     .row {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
+    .row.spread {{ justify-content: space-between; }}
     label {{ display: block; font-weight: 700; font-size: 13px; color: var(--muted); margin-bottom: 6px; }}
     input, textarea, select {{
       width: 100%;
@@ -5340,6 +5356,11 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       color: var(--text);
       padding: 10px 11px;
       font: inherit;
+    }}
+    input:focus, textarea:focus, select:focus {{
+      outline: none;
+      border-color: rgba(33,255,208,.72);
+      box-shadow: 0 0 0 3px rgba(33,255,208,.12);
     }}
     textarea {{ min-height: 84px; resize: vertical; }}
     button, .button {{
@@ -5355,10 +5376,13 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       justify-content: center;
       align-items: center;
       min-height: 40px;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease;
     }}
+    button:hover, .button:hover {{ transform: translateY(-1px); }}
     button.secondary, .button.secondary {{ background: #2d362d; color: var(--text); }}
     button.danger {{ background: var(--red); color: white; }}
-    button.green {{ background: var(--green); color: #071007; }}
+    button.green, .button.green {{ background: var(--green); color: #071007; }}
+    .button.discord {{ background: #5865f2; color: white; width: 100%; margin-top: 14px; }}
     .notice {{
       border: 1px solid rgba(209,168,95,.48);
       background: rgba(209,168,95,.12);
@@ -5375,6 +5399,19 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       padding: 14px;
       margin-top: 14px;
     }}
+    .panel-head {{
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }}
+    .panel-title {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }}
     .question {{
       border-left: 3px solid var(--accent);
       padding: 12px;
@@ -5382,8 +5419,21 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       border-radius: 6px;
       margin-top: 10px;
     }}
+    .question-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }}
+    .danger-zone {{
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }}
     .two {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
     .three {{ display: grid; grid-template-columns: 1fr 1fr 140px; gap: 10px; align-items: end; }}
+    .four {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }}
     .pill {{
       display: inline-flex;
       border: 1px solid var(--line);
@@ -5392,12 +5442,36 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       color: var(--muted);
       font-size: 12px;
       gap: 6px;
+      width: max-content;
     }}
+    .pill.good {{ border-color: rgba(46,204,113,.42); background: rgba(46,204,113,.1); color: #b9ffd6; }}
+    .pill.warn {{ border-color: rgba(209,168,95,.48); background: rgba(209,168,95,.12); color: #ffe0a1; }}
     .brand {{
       display: flex;
       align-items: center;
       gap: 10px;
       font-weight: 900;
+    }}
+    .dash-nav {{
+      display: flex;
+      align-items: center;
+      gap: clamp(12px, 2vw, 28px);
+      flex: 1;
+      justify-content: center;
+    }}
+    .dash-nav a {{
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 900;
+      opacity: .82;
+      border-bottom: 3px solid transparent;
+      padding: 8px 0;
+      white-space: nowrap;
+    }}
+    .dash-nav a:hover, .dash-nav a.active {{
+      opacity: 1;
+      color: var(--teal);
+      border-bottom-color: var(--teal);
     }}
     .brand-mark {{
       width: 28px;
@@ -5444,6 +5518,36 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       background: rgba(255,255,255,.03);
     }}
     .nav-item strong {{ display: block; }}
+    .setup-steps {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .setup-step {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(255,255,255,.035);
+    }}
+    .setup-step span {{
+      display: inline-grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: rgba(33,255,208,.16);
+      color: var(--teal);
+      font-weight: 1000;
+      margin-bottom: 8px;
+    }}
+    .empty-state {{
+      border: 1px dashed rgba(245,238,216,.24);
+      border-radius: 8px;
+      padding: 24px;
+      background: rgba(0,0,0,.14);
+      text-align: center;
+    }}
     .admin-lock {{
       border-color: rgba(46,204,113,.42);
       background: rgba(46,204,113,.1);
@@ -5501,6 +5605,12 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       border-color: rgba(255,255,255,.12);
       border-radius: 7px;
     }}
+    .server-tools {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+    }}
     .server-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -5555,9 +5665,29 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
     .server-action:hover {{
       background: rgba(33,255,208,.2);
     }}
+    .login-hero {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+      gap: clamp(22px, 5vw, 64px);
+      align-items: center;
+      min-height: 68vh;
+    }}
+    .login-copy h1 {{
+      font-size: clamp(42px, 6vw, 74px);
+      line-height: 1.05;
+    }}
+    .login-copy strong {{ color: var(--teal); }}
+    .login-panel {{
+      background: rgba(17,23,20,.78);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 22px;
+      box-shadow: 0 28px 70px rgba(0,0,0,.34);
+    }}
     @media (max-width: 850px) {{
-      .grid, .two, .three, .dashboard-hero, .stat-row, .server-header {{ grid-template-columns: 1fr; }}
-      header {{ position: static; }}
+      .grid, .two, .three, .four, .dashboard-hero, .stat-row, .server-header, .server-tools, .setup-steps, .login-hero {{ grid-template-columns: 1fr; }}
+      header {{ position: static; flex-wrap: wrap; }}
+      .dash-nav {{ justify-content: flex-start; width: 100%; overflow-x: auto; order: 3; }}
       .server-tabs {{ display: flex; width: 100%; overflow-x: auto; }}
     }}
   </style>
@@ -5567,8 +5697,13 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
     <div class="brand">
       <span class="brand-mark">D</span>
       <span>Military Tycoon Dex</span>
-      <span class="pill">Admin applications</span>
     </div>
+    <nav class="dash-nav" aria-label="Dashboard navigation">
+      <a href="/">Home</a>
+      <a class="{applications_active}" href="/applications">Applications</a>
+      <a href="/status">Status</a>
+      <a href="/discord">Support</a>
+    </nav>
     <div class="row">
       <a class="button secondary" href="/">Website</a>
       {logout_html}
@@ -5596,7 +5731,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
     error_html = f'<div class="notice">{escape(error)}</div>' if error else ""
     discord_html = (
         f"""
-        <a class="button green" style="width:100%;margin-top:14px;" href="{escape(discord_login_url)}">
+        <a class="button discord" href="{escape(discord_login_url)}">
           Log in with Discord
         </a>
         <p class="muted">Only Discord users with Manage Server or Administrator can edit that server.</p>
@@ -5629,13 +5764,26 @@ def _render_dashboard_login(error: str = "") -> bytes:
     return _dashboard_page(
         "Dashboard login",
         f"""
-        <section class="card" style="max-width:560px;margin:8vh auto 0;">
-          <span class="pill admin-lock">Admin only</span>
-          <h1 style="margin-top:12px;">Applications dashboard</h1>
-          <p>Manage application panels like Appy: create panels, add text or dropdown questions, set log channels, and choose accept roles.</p>
-          {error_html}
-          {discord_html}
-          {token_html}
+        <section class="login-hero">
+          <div class="login-copy">
+            <span class="pill admin-lock">Discord admin dashboard</span>
+            <h1><strong>Application panels</strong> made easy.</h1>
+            <p>Log in with Discord, choose a server you manage, then create panels, questions, review channels, tickets, and accepted roles from one clean place.</p>
+            <div class="setup-steps">
+              <div class="setup-step"><span>1</span><strong>Pick server</strong><p>Only servers you can manage are shown.</p></div>
+              <div class="setup-step"><span>2</span><strong>Create panel</strong><p>Add moderation, partner, creator, or custom forms.</p></div>
+              <div class="setup-step"><span>3</span><strong>Add questions</strong><p>Text answers and dropdown choices both work.</p></div>
+              <div class="setup-step"><span>4</span><strong>Post panel</strong><p>Users apply in Discord DMs.</p></div>
+            </div>
+          </div>
+          <div class="login-panel">
+            <span class="pill good">Secure Discord login</span>
+            <h2 style="margin-top:12px;">Sign in</h2>
+            <p>No dashboard token needed when Discord login is configured.</p>
+            {error_html}
+            {discord_html}
+            {token_html}
+          </div>
         </section>
         """,
         show_logout=False,
@@ -5688,10 +5836,10 @@ def _render_application_server_selection(
 
     body = f"""
     {notice_html}
-    <section class="server-tabs">
+    <section class="server-tabs" aria-label="Dashboard sections">
       <span class="tab active">Server Selection</span>
-      <span class="tab locked">Admin only</span>
-      <span class="tab locked">Application Bot</span>
+      <span class="tab locked">Applications</span>
+      <span class="tab locked">Settings</span>
     </section>
     <section class="server-header">
       <div>
@@ -5699,13 +5847,16 @@ def _render_application_server_selection(
         <h1>Select a Server</h1>
         <p>Only servers where <strong>{escape(account_name)}</strong> has Manage Server or Administrator are shown.</p>
       </div>
-      <label class="search-box">
-        <span>Search</span>
-        <input id="server-search" type="search" placeholder="Search for your server...">
-      </label>
+      <div class="server-tools">
+        <label class="search-box">
+          <span>Search</span>
+          <input id="server-search" type="search" placeholder="Search for your server...">
+        </label>
+        <a class="button secondary" href="/applications">Refresh</a>
+      </div>
     </section>
     <section class="server-grid" id="server-grid">
-      {''.join(cards) if cards else '<p>No servers found for this login.</p>'}
+      {''.join(cards) if cards else '<div class="empty-state"><h2>No servers found</h2><p>Invite the bot to a server where you have Manage Server or Administrator, then log in again.</p></div>'}
     </section>
     <script>
       const search = document.getElementById('server-search');
@@ -5772,26 +5923,30 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
             question_blocks.append(
                 f"""
                 <div class="question">
+                  <div class="question-head">
+                    <div>
+                      <span class="pill warn">Question {index}</span>
+                      <p class="muted">Leave dropdown choices empty for a normal text answer.</p>
+                    </div>
+                    <form method="post" action="/applications">
+                      <input type="hidden" name="action" value="delete_question">
+                      <input type="hidden" name="guild_id" value="{guild.id}">
+                      <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                      <input type="hidden" name="question_number" value="{index}">
+                      <button class="danger" type="submit">Delete</button>
+                    </form>
+                  </div>
                   <form method="post" action="/applications">
                     <input type="hidden" name="action" value="edit_question">
                     <input type="hidden" name="guild_id" value="{guild.id}">
                     <input type="hidden" name="panel_key" value="{escape(panel_key)}">
                     <input type="hidden" name="question_number" value="{index}">
-                    <label>Question {index}</label>
+                    <label>Question text</label>
                     <textarea name="text" required>{escape(question.get("text", ""))}</textarea>
                     <label>Dropdown choices <span class="muted">(blank = text answer, comma separated = selection)</span></label>
                     <input name="choices" value="{escape(choice_text)}" placeholder="yes, no">
                     <div class="row" style="margin-top:10px;">
                       <button type="submit">Save question</button>
-                    </div>
-                  </form>
-                  <form method="post" action="/applications">
-                    <input type="hidden" name="action" value="delete_question">
-                    <input type="hidden" name="guild_id" value="{guild.id}">
-                    <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                    <input type="hidden" name="question_number" value="{index}">
-                    <div class="row" style="margin-top:8px;">
-                      <button class="danger" type="submit">Delete</button>
                     </div>
                   </form>
                 </div>
@@ -5801,6 +5956,16 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
         panel_blocks.append(
             f"""
             <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">
+                    <h2>{escape(panel.get("name", panel_key))}</h2>
+                    <span class="pill {'good' if panel.get("enabled", True) else 'warn'}">{'Open' if panel.get("enabled", True) else 'Hidden'}</span>
+                    <span class="pill">{len(questions)} question{'s' if len(questions) != 1 else ''}</span>
+                  </div>
+                  <p class="muted">{escape(panel.get("description", "Start this application."))}</p>
+                </div>
+              </div>
               <form method="post" action="/applications">
                 <input type="hidden" name="action" value="update_panel">
                 <input type="hidden" name="guild_id" value="{guild.id}">
@@ -5832,17 +5997,9 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
                   <button type="submit">Save panel</button>
                 </div>
               </form>
-              <form method="post" action="/applications">
-                <input type="hidden" name="action" value="delete_panel">
-                <input type="hidden" name="guild_id" value="{guild.id}">
-                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                <div class="row" style="margin-top:8px;">
-                  <button class="danger" type="submit">Delete panel</button>
-                </div>
-              </form>
               <h3 style="margin-top:18px;">Questions</h3>
-              {''.join(question_blocks) if question_blocks else '<p>No questions yet.</p>'}
-              <form class="card" style="margin-top:12px;box-shadow:none;" method="post" action="/applications">
+              {''.join(question_blocks) if question_blocks else '<div class="empty-state"><h3>No questions yet</h3><p>Add the first question below. Applicants will answer it in DMs.</p></div>'}
+              <form class="panel" style="box-shadow:none;" method="post" action="/applications">
                 <input type="hidden" name="action" value="add_question">
                 <input type="hidden" name="guild_id" value="{guild.id}">
                 <input type="hidden" name="panel_key" value="{escape(panel_key)}">
@@ -5864,6 +6021,15 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
                   <button type="submit">Add question</button>
                 </div>
               </form>
+              <form class="danger-zone" method="post" action="/applications">
+                <input type="hidden" name="action" value="delete_panel">
+                <input type="hidden" name="guild_id" value="{guild.id}">
+                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
+                <div class="row spread">
+                  <p class="muted">Deleting a panel removes its dropdown entry and questions.</p>
+                  <button class="danger" type="submit">Delete panel</button>
+                </div>
+              </form>
             </section>
             """
         )
@@ -5875,6 +6041,12 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
         <span class="pill admin-lock">{escape(access_label)}</span>
         <h1 style="font-size:clamp(34px,5vw,64px);margin-top:12px;">Applications</h1>
         <p>Configure Appy-style application panels for <strong>{escape(guild.name)}</strong>. Users apply in DMs, staff reviews go to your log channel, and accepted applicants can receive a role automatically.</p>
+        <div class="setup-steps">
+          <div class="setup-step"><span>1</span><strong>Set channels</strong><p>Choose where the panel and staff logs go.</p></div>
+          <div class="setup-step"><span>2</span><strong>Create panels</strong><p>Add one dropdown option per application.</p></div>
+          <div class="setup-step"><span>3</span><strong>Add questions</strong><p>Text answers or dropdown choices.</p></div>
+          <div class="setup-step"><span>4</span><strong>Post panel</strong><p>Update the Discord message anytime.</p></div>
+        </div>
         <div class="stat-row">
           <div class="stat"><span class="muted">Panels</span><strong>{len(panels)}</strong></div>
           <div class="stat"><span class="muted">Questions</span><strong>{question_total}</strong></div>
@@ -5882,8 +6054,9 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
         </div>
       </div>
       <div class="nav-list" style="min-width:230px;">
-        <div class="nav-item admin-lock"><strong>Admin locked</strong><span class="muted">Discord admins only, or owner token fallback.</span></div>
-        <div class="nav-item"><strong>DM application flow</strong><span class="muted">Text and dropdown questions are supported.</span></div>
+        <a class="button secondary" href="/applications">Change server</a>
+        <div class="nav-item admin-lock"><strong>Admin locked</strong><span class="muted">Only users with Discord permissions can edit this server.</span></div>
+        <div class="nav-item"><strong>DM application flow</strong><span class="muted">Applicants answer privately, then staff reviews in the log channel.</span></div>
       </div>
     </section>
     <div class="grid">
@@ -5897,6 +6070,7 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
         </section>
         <section class="card">
           <h2>Application panel</h2>
+          <p class="muted">This controls the public dropdown message and staff review channel.</p>
           <form method="post" action="/applications">
             <input type="hidden" name="action" value="settings">
             <input type="hidden" name="guild_id" value="{guild.id}">
@@ -5921,6 +6095,7 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
         </section>
         <section class="card">
           <h2>Create application</h2>
+          <p class="muted">Each application becomes one option in the Discord dropdown.</p>
           <form method="post" action="/applications">
             <input type="hidden" name="action" value="create_panel">
             <input type="hidden" name="guild_id" value="{guild.id}">
@@ -5941,7 +6116,7 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
             <p class="muted">Edit the dropdown entries, questions, and accept-role behavior.</p>
           </div>
         </div>
-        {''.join(panel_blocks) if panel_blocks else '<p>No applications yet. Create one on the left.</p>'}
+        {''.join(panel_blocks) if panel_blocks else '<div class="empty-state"><h2>No applications yet</h2><p>Create your first application on the left. Good starter names are Moderation team, Partnerships, Trading advisor, or Content creator.</p></div>'}
       </section>
     </div>
     """
