@@ -15,6 +15,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any, Dict, Iterable, Optional
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -44,6 +45,13 @@ def print_flush(*args, **kwargs):
 
 
 print = print_flush
+
+
+def truncate(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
 
 
 load_dotenv()
@@ -4381,6 +4389,16 @@ def _bot_invite_url() -> str:
     )
 
 
+def _discord_icon_html() -> str:
+    return """
+      <span class="discord-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M20.32 4.37A19.8 19.8 0 0 0 15.96 3c-.19.33-.4.78-.55 1.14a18.4 18.4 0 0 0-4.82 0C10.44 3.78 10.22 3.33 10.03 3A19.74 19.74 0 0 0 5.67 4.37C2.91 8.45 2.16 12.43 2.53 16.35A19.9 19.9 0 0 0 7.9 19c.43-.58.82-1.2 1.15-1.86-.63-.24-1.23-.53-1.8-.86.15-.11.3-.23.45-.35a14.1 14.1 0 0 0 12.6 0c.15.12.3.24.45.35-.57.33-1.17.62-1.8.86.33.66.72 1.28 1.15 1.86a19.86 19.86 0 0 0 5.37-2.65c.44-4.55-.75-8.5-3.15-11.98ZM9.55 14.01c-1.05 0-1.91-.97-1.91-2.16 0-1.19.84-2.16 1.91-2.16 1.08 0 1.93.98 1.91 2.16 0 1.19-.84 2.16-1.91 2.16Zm4.9 0c-1.05 0-1.91-.97-1.91-2.16 0-1.19.84-2.16 1.91-2.16 1.08 0 1.93.98 1.91 2.16 0 1.19-.83 2.16-1.91 2.16Z"/>
+        </svg>
+      </span>
+    """
+
+
 def _website_status_payload() -> Dict[str, Any]:
     vehicles = get_vehicle_map()
     total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
@@ -4505,7 +4523,7 @@ def _render_website(headers: Any = None) -> bytes:
           </div>
         """
     else:
-        top_auth_html = f'<a class="top-login" href="{login_href}">Sign in</a>'
+        top_auth_html = f'<a class="top-login" href="{login_href}" aria-label="Login with Discord">{_discord_icon_html()}<span>Login</span></a>'
     status_text = "Online" if is_online else "Offline"
     status_class = "online" if is_online else "offline"
 
@@ -4642,7 +4660,21 @@ def _render_website(headers: Any = None) -> bytes:
       padding: 9px 14px;
       font-weight: 900;
       text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       white-space: nowrap;
+    }}
+    .discord-icon,
+    .discord-icon svg {{
+      width: 18px;
+      height: 18px;
+      display: inline-block;
+      flex: 0 0 auto;
+    }}
+    .discord-icon svg {{
+      fill: currentColor;
+      vertical-align: -3px;
     }}
     .user-chip {{
       display: flex;
@@ -5095,8 +5127,21 @@ def _dashboard_oauth_request(url: str, *, data: Optional[Dict[str, str]] = None,
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = Request(url, data=encoded_data, headers=headers, method="POST" if data is not None else "GET")
-    with urlopen(request, timeout=15) as response:
-        raw_body = response.read().decode("utf-8")
+    try:
+        with urlopen(request, timeout=15) as response:
+            raw_body = response.read().decode("utf-8")
+    except HTTPError as error:
+        raw_error = error.read().decode("utf-8", errors="replace")
+        message = raw_error.strip()
+        try:
+            payload = json.loads(raw_error)
+            if isinstance(payload, dict):
+                message = str(payload.get("message") or payload.get("error_description") or payload.get("error") or message)
+        except json.JSONDecodeError:
+            pass
+        raise RuntimeError(f"Discord HTTP {error.code}: {truncate(message, 160)}") from error
+    except URLError as error:
+        raise RuntimeError(f"Could not reach Discord OAuth API: {truncate(error.reason, 120)}") from error
     return json.loads(raw_body)
 
 
@@ -5127,7 +5172,13 @@ def _handle_dashboard_oauth_callback(params: Dict[str, list[str]]) -> tuple[int,
         user_payload = _dashboard_oauth_request("https://discord.com/api/users/@me", token=access_token)
         guilds_payload = _dashboard_oauth_request("https://discord.com/api/users/@me/guilds", token=access_token)
     except Exception as error:
-        return 502, f"Discord login failed: {truncate(error, 180)}", None
+        print(f"Dashboard OAuth failed: {error}")
+        return (
+            400,
+            "Discord login failed. Check that the redirect URL and Client Secret are correct, then try again. "
+            f"Details: {truncate(error, 180)}",
+            None,
+        )
 
     if not isinstance(user_payload, dict):
         return 401, "Discord login failed: invalid user response.", None
@@ -5383,6 +5434,7 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
     button.danger {{ background: var(--red); color: white; }}
     button.green, .button.green {{ background: var(--green); color: #071007; }}
     .button.discord {{ background: #5865f2; color: white; width: 100%; margin-top: 14px; }}
+    .button.discord .discord-icon {{ margin-right: 2px; }}
     .notice {{
       border: 1px solid rgba(209,168,95,.48);
       background: rgba(209,168,95,.12);
@@ -5732,7 +5784,8 @@ def _render_dashboard_login(error: str = "") -> bytes:
     discord_html = (
         f"""
         <a class="button discord" href="{escape(discord_login_url)}">
-          Log in with Discord
+          {_discord_icon_html()}
+          <span>Login</span>
         </a>
         <p class="muted">Only Discord users with Manage Server or Administrator can edit that server.</p>
         """
@@ -5768,7 +5821,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
           <div class="login-copy">
             <span class="pill admin-lock">Discord admin dashboard</span>
             <h1><strong>Application panels</strong> made easy.</h1>
-            <p>Log in with Discord, choose a server you manage, then create panels, questions, review channels, tickets, and accepted roles from one clean place.</p>
+            <p>Connect your Discord account, choose a server you manage, then create panels, questions, review channels, tickets, and accepted roles from one clean place.</p>
             <div class="setup-steps">
               <div class="setup-step"><span>1</span><strong>Pick server</strong><p>Only servers you can manage are shown.</p></div>
               <div class="setup-step"><span>2</span><strong>Create panel</strong><p>Add moderation, partner, creator, or custom forms.</p></div>
