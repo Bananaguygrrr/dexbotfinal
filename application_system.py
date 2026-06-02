@@ -11,7 +11,6 @@ import uuid
 from typing import Any, Dict, Optional
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 
@@ -94,14 +93,6 @@ def bot_can_manage_role(guild: discord.Guild, role: discord.Role) -> tuple[bool,
     if role >= bot_member.top_role:
         return False, "that role must be below my highest role"
     return True, ""
-
-
-def member_can_configure_role(member: discord.Member, role: discord.Role) -> bool:
-    if member.guild.owner_id == member.id:
-        return True
-    if member.guild_permissions.administrator:
-        return True
-    return member.guild_permissions.manage_roles and role < member.top_role
 
 
 def prune_application_sessions(user_id: Optional[int] = None) -> int:
@@ -280,25 +271,6 @@ async def require_application_admin(interaction: discord.Interaction) -> bool:
     return False
 
 
-async def panel_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[str]]:
-    if not interaction.guild_id:
-        return []
-    panels = get_guild_state(interaction.guild_id).get("panels", {})
-    needle = current.lower().strip()
-    choices: list[app_commands.Choice[str]] = []
-    for panel_key, panel in sorted(panels.items()):
-        display_name = panel.get("name", panel_key)
-        if needle and needle not in panel_key and needle not in display_name.lower():
-            continue
-        choices.append(app_commands.Choice(name=truncate(display_name, 100), value=panel_key))
-        if len(choices) >= 25:
-            break
-    return choices
-
-
 async def resolve_text_channel(guild: discord.Guild, channel_id: int) -> Optional[discord.TextChannel]:
     channel = guild.get_channel(channel_id)
     if channel is None:
@@ -475,7 +447,7 @@ async def grant_panel_accept_role(guild: discord.Guild, panel: Dict[str, Any], u
         return False, ""
     role = guild.get_role(role_id)
     if role is None:
-        return False, "Accepted role is missing. Set it again with `/applicationrole`."
+        return False, "Accepted role is missing. Set it again in the application dashboard."
     allowed, reason = bot_can_manage_role(guild, role)
     if not allowed:
         return False, f"Could not give {role.mention}: {reason}."
@@ -705,7 +677,7 @@ class ApplicationSelect(discord.ui.Select):
             options = [
                 discord.SelectOption(
                     label="No applications open",
-                    description="Staff can create panels with /createpanel.",
+                    description="Staff can create panels in the dashboard.",
                     value="__none__",
                 )
             ]
@@ -1116,7 +1088,7 @@ async def run_application_session(session_id: str) -> None:
                 title="Application log warning",
                 description=(
                     "Your application was saved, but I could not post it to the server log channel. "
-                    "Please tell a server admin to run `/applicationlog` again in a channel where I can send embeds."
+                    "Please tell a server admin to set the application log channel again in the dashboard."
                 ),
                 color=discord.Color.orange(),
             )
@@ -1219,306 +1191,6 @@ async def send_application_history(interaction: discord.Interaction, user_id: in
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@app_commands.command(name="createpanel", description="Create an application dropdown option")
-@app_commands.describe(panel="Panel/application name", description="Short text shown in the dropdown")
-async def createpanel_command(interaction: discord.Interaction, panel: str, description: Optional[str] = None):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_key = normalize_panel_key(panel)
-    if not panel_key:
-        await interaction.response.send_message("Pick a clearer panel name.", ephemeral=True)
-        return
-    panels = get_guild_state(interaction.guild_id)["panels"]
-    if panel_key in panels:
-        await interaction.response.send_message("That panel already exists.", ephemeral=True)
-        return
-    panels[panel_key] = {
-        "name": panel.strip()[:100],
-        "description": (description or "Start this application.").strip()[:100],
-        "questions": [],
-        "enabled": True,
-        "accepted_role_id": None,
-        "created_at": utc_now(),
-        "created_by": interaction.user.id,
-    }
-    save_state()
-    if interaction.guild:
-        await refresh_application_message(interaction.guild)
-    await interaction.response.send_message(f"Created panel `{panel_key}`.", ephemeral=True)
-
-
-@app_commands.command(name="creatpanel", description="Create an application dropdown option")
-@app_commands.describe(panel="Panel/application name", description="Short text shown in the dropdown")
-async def creatpanel_alias_command(interaction: discord.Interaction, panel: str, description: Optional[str] = None):
-    await createpanel_command.callback(interaction, panel, description)
-
-
-@app_commands.command(name="editpanel", description="Edit an application dropdown option")
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def editpanel_command(
-    interaction: discord.Interaction,
-    panel: str,
-    new_name: Optional[str] = None,
-    description: Optional[str] = None,
-    open: Optional[bool] = None,
-):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_key = normalize_panel_key(panel)
-    panel_data = get_panel(interaction.guild_id, panel_key)
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    if new_name:
-        panel_data["name"] = new_name.strip()[:100]
-    if description is not None:
-        panel_data["description"] = description.strip()[:100]
-    if open is not None:
-        panel_data["enabled"] = bool(open)
-    save_state()
-    if interaction.guild:
-        await refresh_application_message(interaction.guild)
-    await interaction.response.send_message(f"Updated panel `{panel_key}`.", ephemeral=True)
-
-
-@app_commands.command(name="applicationrole", description="Set the role given when an application panel is accepted")
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def applicationrole_command(interaction: discord.Interaction, panel: str, role: discord.Role):
-    if not await require_application_admin(interaction) or not interaction.guild or not interaction.guild_id:
-        return
-    panel_key = normalize_panel_key(panel)
-    panel_data = get_panel(interaction.guild_id, panel_key)
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    if not isinstance(interaction.user, discord.Member) or not member_can_configure_role(interaction.user, role):
-        await interaction.response.send_message(
-            "You need Manage Roles and the role must be below your highest role.",
-            ephemeral=True,
-        )
-        return
-    allowed, reason = bot_can_manage_role(interaction.guild, role)
-    if not allowed:
-        await interaction.response.send_message(f"I cannot give {role.mention}: {reason}.", ephemeral=True)
-        return
-    panel_data["accepted_role_id"] = role.id
-    save_state()
-    await interaction.response.send_message(
-        f"Accepted applications for `{panel_key}` will now give {role.mention}.",
-        ephemeral=True,
-    )
-
-
-@app_commands.command(name="applicationroleclear", description="Remove the accepted role from an application panel")
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def applicationroleclear_command(interaction: discord.Interaction, panel: str):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_key = normalize_panel_key(panel)
-    panel_data = get_panel(interaction.guild_id, panel_key)
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    panel_data["accepted_role_id"] = None
-    save_state()
-    await interaction.response.send_message(
-        f"Accepted applications for `{panel_key}` will no longer give a role.",
-        ephemeral=True,
-    )
-
-
-@app_commands.command(name="deletepanel", description="Delete an application dropdown option")
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def deletepanel_command(interaction: discord.Interaction, panel: str):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_key = normalize_panel_key(panel)
-    panels = get_guild_state(interaction.guild_id).get("panels", {})
-    if panel_key not in panels:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    del panels[panel_key]
-    save_state()
-    if interaction.guild:
-        await refresh_application_message(interaction.guild)
-    await interaction.response.send_message(f"Deleted panel `{panel_key}`.", ephemeral=True)
-
-
-@app_commands.command(name="addquestion", description="Add a question at a specific number")
-@app_commands.describe(
-    choices="Optional dropdown choices separated by commas or |, for example: yes,no",
-)
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def addquestion_command(
-    interaction: discord.Interaction,
-    panel: str,
-    question_number: int,
-    text: str,
-    choices: Optional[str] = None,
-):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_data = get_panel(interaction.guild_id, normalize_panel_key(panel))
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    question = text.strip()
-    if not question:
-        await interaction.response.send_message("Question cannot be empty.", ephemeral=True)
-        return
-    parsed_choices = parse_question_choices(choices)
-    if parsed_choices is not None and len(parsed_choices) == 1:
-        await interaction.response.send_message("Selection questions need at least 2 choices.", ephemeral=True)
-        return
-    questions = panel_data.setdefault("questions", [])
-    insert_index = min(max(0, question_number - 1), len(questions))
-    questions.insert(insert_index, make_question_value(question, choices))
-    save_state()
-    question_kind = "selection question" if parsed_choices else "question"
-    await interaction.response.send_message(
-        f"Added {question_kind} `{insert_index + 1}`. Questions were renumbered.",
-        ephemeral=True,
-    )
-
-
-@app_commands.command(name="editquestion", description="Edit a question by number")
-@app_commands.describe(
-    choices="Optional dropdown choices separated by commas or |. Use clear/text/none to make it a text question.",
-)
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def editquestion_command(
-    interaction: discord.Interaction,
-    panel: str,
-    question_number: int,
-    text: str,
-    choices: Optional[str] = None,
-):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_data = get_panel(interaction.guild_id, normalize_panel_key(panel))
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    questions = panel_data.setdefault("questions", [])
-    if question_number < 1 or question_number > len(questions):
-        await interaction.response.send_message("That question number does not exist.", ephemeral=True)
-        return
-    question = text.strip()
-    if not question:
-        await interaction.response.send_message("Question cannot be empty.", ephemeral=True)
-        return
-    parsed_choices = parse_question_choices(choices)
-    if parsed_choices is not None and len(parsed_choices) == 1:
-        await interaction.response.send_message("Selection questions need at least 2 choices.", ephemeral=True)
-        return
-    questions[question_number - 1] = make_question_value(question, choices, questions[question_number - 1])
-    save_state()
-    await interaction.response.send_message(f"Edited question `{question_number}`.", ephemeral=True)
-
-
-@app_commands.command(name="deletequestion", description="Delete a question by number")
-@app_commands.autocomplete(panel=panel_autocomplete)
-async def deletequestion_command(interaction: discord.Interaction, panel: str, question_number: int):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    panel_data = get_panel(interaction.guild_id, normalize_panel_key(panel))
-    if not panel_data:
-        await interaction.response.send_message("Unknown panel.", ephemeral=True)
-        return
-    questions = panel_data.setdefault("questions", [])
-    if question_number < 1 or question_number > len(questions):
-        await interaction.response.send_message("That question number does not exist.", ephemeral=True)
-        return
-    removed = questions.pop(question_number - 1)
-    save_state()
-    await interaction.response.send_message(
-        f"Deleted question `{question_number}`: {truncate(question_text(removed), 120)}\nQuestions were renumbered.",
-        ephemeral=True,
-    )
-
-
-@app_commands.command(name="applicationlog", description="Set the application review/log channel")
-async def applicationlog_command(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    await interaction.response.defer(ephemeral=True)
-    missing_permissions = bot_channel_permission_errors(channel)
-    if missing_permissions:
-        await interaction.followup.send(
-            f"I cannot use {channel.mention} for application logs yet. Missing: {', '.join(missing_permissions)}.",
-            ephemeral=True,
-        )
-        return
-    test_embed = discord.Embed(
-        title="Application log connected",
-        description="New applications and review updates will be posted here.",
-        color=discord.Color.green(),
-        timestamp=discord.utils.utcnow(),
-    )
-    try:
-        await channel.send(embed=test_embed)
-    except discord.HTTPException as error:
-        await interaction.followup.send(
-            f"I could not send a test log message in {channel.mention}: `{truncate(error, 180)}`",
-            ephemeral=True,
-        )
-        return
-    get_guild_state(interaction.guild_id)["log_channel_id"] = channel.id
-    save_state()
-    await interaction.followup.send(f"Application log channel set to {channel.mention}.", ephemeral=True)
-
-
-@app_commands.command(name="applicationtext", description="Set the text on the application dropdown panel")
-async def applicationtext_command(interaction: discord.Interaction, text: str):
-    if not await require_application_admin(interaction) or not interaction.guild_id:
-        return
-    get_guild_state(interaction.guild_id)["panel_text"] = text.strip()[:1000] or DEFAULT_PANEL_TEXT
-    save_state()
-    if interaction.guild:
-        await refresh_application_message(interaction.guild)
-    await interaction.response.send_message("Application panel text updated.", ephemeral=True)
-
-
-@app_commands.command(name="application", description="Post or move the application dropdown panel")
-async def application_command(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not await require_application_admin(interaction) or not interaction.guild:
-        return
-    guild_state = get_guild_state(interaction.guild.id)
-    if not guild_state.get("panels"):
-        await interaction.response.send_message("Create at least one panel first with `/createpanel`.", ephemeral=True)
-        return
-    await interaction.response.defer(ephemeral=True)
-    missing_permissions = bot_channel_permission_errors(channel)
-    if missing_permissions:
-        await interaction.followup.send(
-            f"I cannot post the application panel in {channel.mention}. Missing: {', '.join(missing_permissions)}.",
-            ephemeral=True,
-        )
-        return
-    try:
-        message = await channel.send(
-            embed=build_application_panel_embed(interaction.guild),
-            view=ApplicationSelectView(interaction.guild.id),
-        )
-    except discord.HTTPException as error:
-        await interaction.followup.send(
-            f"I could not post the application panel in {channel.mention}: `{truncate(error, 180)}`",
-            ephemeral=True,
-        )
-        return
-    guild_state["application_channel_id"] = channel.id
-    guild_state["application_message_id"] = message.id
-    save_state()
-    await interaction.followup.send(f"Application panel posted in {channel.mention}.", ephemeral=True)
-
-
-@app_commands.command(name="applicationhistory", description="Find all applications for a user")
-async def applicationhistory_command(interaction: discord.Interaction, user: discord.User):
-    if not await require_application_admin(interaction):
-        return
-    await send_application_history(interaction, user.id)
-
-
 async def restore_application_views() -> None:
     if BOT is None:
         return
@@ -1577,24 +1249,6 @@ def setup_application_system(discord_bot: commands.Bot, data_dir: str) -> None:
         save_state()
     print(f"Application legacy import file: {os.path.abspath(STATE_FILE)}")
     print(f"Application per-server settings directory: {os.path.abspath(STATE_DIR)}")
-
-    commands_to_add = (
-        createpanel_command,
-        creatpanel_alias_command,
-        editpanel_command,
-        applicationrole_command,
-        applicationroleclear_command,
-        deletepanel_command,
-        addquestion_command,
-        editquestion_command,
-        deletequestion_command,
-        applicationlog_command,
-        applicationtext_command,
-        application_command,
-        applicationhistory_command,
-    )
-    for command in commands_to_add:
-        discord_bot.tree.add_command(command)
 
     discord_bot.add_listener(application_ready_listener, "on_ready")
     REGISTERED = True
