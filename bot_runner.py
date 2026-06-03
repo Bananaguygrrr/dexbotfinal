@@ -130,6 +130,12 @@ class HealthHandler(BaseHTTPRequestHandler):
         if path in {"/health", "/status", "/api/status"}:
             self._send_json(_health_payload())
             return
+        if path == "/terms":
+            self._send_body(200, dexbot._render_public_markdown_page("Terms of Service", "TERMS.md"), "text/html; charset=utf-8")
+            return
+        if path == "/privacy":
+            self._send_body(200, dexbot._render_public_markdown_page("Privacy Policy", "PRIVACY.md"), "text/html; charset=utf-8")
+            return
         if path == "/applications/logout":
             self._redirect("/applications", clear_cookie=True)
             return
@@ -253,7 +259,7 @@ def print_startup_catalog() -> None:
 
 def run_bot_forever() -> None:
     if not dexbot.TOKEN:
-        print("No DISCORD_TOKEN found. Set it in environment variables or .env.", flush=True)
+        print("No DISCORD_TOKEN found. Set it in the service environment variables.", flush=True)
         raise SystemExit(1)
 
     if dexbot.ENABLE_INSTANCE_LOCK:
