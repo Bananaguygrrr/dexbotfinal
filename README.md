@@ -3,7 +3,7 @@
 Military Tycoon Vehicle Dex Bot is a Discord bot for Roblox Military Tycoon communities.
 
 It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading, market listings, leaderboards, practice games, and server application panels.
-It also includes simple server giveaways with button entries and automatic winner picking.
+It also includes server giveaways with button entries, participant lists, manager roles, rerolls, role requirements, images, winner roles, and winner DMs.
 
 ## Features
 
@@ -15,7 +15,7 @@ It also includes simple server giveaways with button entries and automatic winne
 - Player market and instant base-price selling
 - Vehicle and money leaderboards
 - Vehicle guessing practice game
-- Server giveaways with entry buttons and participant lists
+- Server giveaways with entry buttons, participant lists, rerolls, role requirements, winner roles, and custom embeds
 - Server settings for spawn channels and wrong-name comments
 - Admin application panel dashboard with Discord login
 - Per-server application panels, questions, logs, tickets, and accepted-role rewards
@@ -44,10 +44,26 @@ It also includes simple server giveaways with button entries and automatic winne
 | --- | --- |
 | `/dexchannel #channel` | Set the channel used for vehicle spawns |
 | `/botcomment public:true/false` | Choose whether wrong-name comments are public or private |
-| `/giveaway start prize duration winners [channel]` | Start a server giveaway |
-| `/giveaway end giveaway_id` | End a server giveaway early |
+| `/giveaway create duration winners prize` | Create a server giveaway |
+| `/giveaway edit giveaway_id` | Edit an active giveaway |
+| `/giveaway delete giveaway_id` | Delete a giveaway |
+| `/giveaway end giveaway_id` | End a giveaway early |
+| `/giveaway fix giveaway_id` | Re-render a giveaway if the message view is broken |
+| `/giveaway reroll giveaway_id` | Reroll an ended giveaway |
+| `/giveaway creator-roles` | Set roles that can create giveaways |
+| `/giveaway manager-roles` | Set roles that can manage giveaways |
+| `/application panel #channel` | Post or refresh the application dropdown panel |
+| `/application log #channel` | Set the application log and review channel |
+| `/application text text` | Update the text shown on the application panel |
+| `/application create-panel` | Create an application option |
+| `/application edit-panel` | Edit an application option |
+| `/application delete-panel` | Delete an application option |
+| `/application add-question` | Add a text or dropdown question |
+| `/application edit-question` | Edit a question |
+| `/application delete-question` | Delete a question and renumber the rest |
+| `/application accepted-role` | Set the role given when a panel is accepted |
 
-Application panels can be managed from the web dashboard by users who own the server or have Administrator/Manage Server permission.
+Application panels can also be managed from the web dashboard by users who own the server or have Administrator/Manage Server permission.
 
 ## Data And Privacy
 

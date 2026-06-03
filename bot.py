@@ -143,6 +143,7 @@ GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.jso
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
 GIVEAWAYS_FILE = os.path.join(DATA_DIR, "giveaways.json")
+GIVEAWAY_SETTINGS_FILE = os.path.join(DATA_DIR, "giveaway_settings.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
@@ -295,6 +296,7 @@ MARKET_LISTINGS_CACHE: Optional[list[Dict[str, Any]]] = None
 GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 GIVEAWAYS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+GIVEAWAY_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
@@ -798,8 +800,13 @@ def build_help_message(*, include_bot_admin: bool = False) -> str:
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
-        "`/giveaway start prize duration winners [channel]` - Start a giveaway (Manage Server)\n"
-        "`/giveaway end giveaway_id` - End a giveaway early (Manage Server)\n"
+        "`/giveaway create duration winners prize [channel]` - Create a giveaway\n"
+        "`/giveaway edit|delete|end|fix|reroll giveaway_id` - Manage giveaways\n"
+        "`/giveaway creator-roles|manager-roles` - Set giveaway staff roles\n"
+        "`/application panel #channel` - Post or refresh the application panel\n"
+        "`/application log #channel` - Set the application log/review channel\n"
+        "`/application create-panel|edit-panel|delete-panel` - Manage application dropdown options\n"
+        "`/application add-question|edit-question|delete-question` - Manage application questions\n"
     )
     if include_bot_admin:
         message += (
@@ -1466,6 +1473,183 @@ def _normalize_giveaway_id(value: Any) -> str:
     return normalized if GIVEAWAY_ID_RE.fullmatch(normalized) else ""
 
 
+def _coerce_role_id_list(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+
+    seen: set[int] = set()
+    role_ids: list[int] = []
+    for raw_role_id in values:
+        parsed_role_id = _parse_user_id_value(raw_role_id)
+        if parsed_role_id is None or parsed_role_id in seen:
+            continue
+        role_ids.append(parsed_role_id)
+        seen.add(parsed_role_id)
+    return role_ids[:25]
+
+
+def _coerce_int_mapping(values: Any, *, maximum: int = 100) -> Dict[str, int]:
+    if not isinstance(values, dict):
+        return {}
+
+    normalized: Dict[str, int] = {}
+    for raw_key, raw_value in values.items():
+        key_id = _parse_user_id_value(raw_key)
+        if key_id is None:
+            continue
+        count = min(maximum, max(0, _coerce_non_negative_int(raw_value)))
+        if count > 0:
+            normalized[str(key_id)] = count
+    return normalized
+
+
+def _coerce_role_entry_mapping(values: Any) -> Dict[str, int]:
+    return _coerce_int_mapping(values, maximum=100)
+
+
+def parse_role_entry_mapping(value: Optional[str]) -> Dict[str, int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return {}
+
+    entries: Dict[str, int] = {}
+    for chunk in re.split(r"[,;\n]+", raw):
+        part = chunk.strip()
+        if not part:
+            continue
+        if ":" in part:
+            role_part, count_part = part.rsplit(":", 1)
+        elif "=" in part:
+            role_part, count_part = part.rsplit("=", 1)
+        else:
+            continue
+        role_match = DIGIT_ID_RE.search(role_part)
+        if not role_match:
+            continue
+        count = min(100, max(1, _coerce_non_negative_int(parse_count(count_part) or count_part)))
+        entries[str(int(role_match.group(1)))] = count
+    return entries
+
+
+def parse_hex_color_value(value: Any, default: Optional[int] = None) -> Optional[int]:
+    if value is None:
+        return default
+    raw = str(value).strip()
+    if not raw:
+        return default
+    if raw.lower() in {"default", "none", "clear"}:
+        return default
+    raw = raw.removeprefix("#").removeprefix("0x").strip()
+    if len(raw) not in {3, 6}:
+        return default
+    if len(raw) == 3:
+        raw = "".join(char * 2 for char in raw)
+    try:
+        return int(raw, 16) & 0xFFFFFF
+    except ValueError:
+        return default
+
+
+def _clean_optional_url(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if is_http_url(text) else ""
+
+
+def load_giveaway_settings() -> Dict[str, Dict[str, Any]]:
+    global GIVEAWAY_SETTINGS_CACHE
+
+    if GIVEAWAY_SETTINGS_CACHE is not None:
+        return GIVEAWAY_SETTINGS_CACHE
+
+    if not os.path.exists(GIVEAWAY_SETTINGS_FILE):
+        GIVEAWAY_SETTINGS_CACHE = {"guilds": {}}
+        return GIVEAWAY_SETTINGS_CACHE
+
+    try:
+        with open(GIVEAWAY_SETTINGS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {GIVEAWAY_SETTINGS_FILE}: {error}")
+        GIVEAWAY_SETTINGS_CACHE = {"guilds": {}}
+        return GIVEAWAY_SETTINGS_CACHE
+
+    guilds = raw_data.get("guilds") if isinstance(raw_data, dict) else {}
+    if not isinstance(guilds, dict):
+        guilds = {}
+
+    normalized_guilds: Dict[str, Dict[str, Any]] = {}
+    for raw_guild_id, raw_settings in guilds.items():
+        guild_id = _parse_user_id_value(raw_guild_id)
+        if guild_id is None or not isinstance(raw_settings, dict):
+            continue
+        normalized_guilds[str(guild_id)] = {
+            "creator_role_ids": _coerce_role_id_list(raw_settings.get("creator_role_ids")),
+            "manager_role_ids": _coerce_role_id_list(raw_settings.get("manager_role_ids")),
+        }
+
+    GIVEAWAY_SETTINGS_CACHE = {"guilds": normalized_guilds}
+    return GIVEAWAY_SETTINGS_CACHE
+
+
+def save_giveaway_settings(settings: Dict[str, Dict[str, Any]]) -> None:
+    global GIVEAWAY_SETTINGS_CACHE
+
+    guilds = settings.get("guilds") if isinstance(settings, dict) else {}
+    normalized = {"guilds": {}}
+    if isinstance(guilds, dict):
+        for raw_guild_id, raw_settings in guilds.items():
+            guild_id = _parse_user_id_value(raw_guild_id)
+            if guild_id is None or not isinstance(raw_settings, dict):
+                continue
+            normalized["guilds"][str(guild_id)] = {
+                "creator_role_ids": _coerce_role_id_list(raw_settings.get("creator_role_ids")),
+                "manager_role_ids": _coerce_role_id_list(raw_settings.get("manager_role_ids")),
+            }
+
+    try:
+        os.makedirs(os.path.dirname(GIVEAWAY_SETTINGS_FILE), exist_ok=True)
+        with open(GIVEAWAY_SETTINGS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(normalized, handle, indent=2, sort_keys=True)
+        GIVEAWAY_SETTINGS_CACHE = normalized
+    except Exception as error:
+        print(f"Error saving {GIVEAWAY_SETTINGS_FILE}: {error}")
+
+
+def get_giveaway_guild_settings(guild_id: int) -> Dict[str, Any]:
+    settings = load_giveaway_settings()
+    guilds = settings.setdefault("guilds", {})
+    guild_settings = guilds.setdefault(
+        str(guild_id),
+        {"creator_role_ids": [], "manager_role_ids": []},
+    )
+    guild_settings["creator_role_ids"] = _coerce_role_id_list(guild_settings.get("creator_role_ids"))
+    guild_settings["manager_role_ids"] = _coerce_role_id_list(guild_settings.get("manager_role_ids"))
+    return guild_settings
+
+
+def member_has_any_role(member: discord.Member, role_ids: Iterable[int]) -> bool:
+    role_id_set = {int(role_id) for role_id in role_ids if _parse_user_id_value(role_id) is not None}
+    return any(role.id in role_id_set for role in member.roles)
+
+
+def has_giveaway_manager_access(interaction: discord.Interaction) -> bool:
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+    if interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator:
+        return True
+    settings = get_giveaway_guild_settings(interaction.guild.id)
+    return member_has_any_role(interaction.user, settings.get("manager_role_ids", []))
+
+
+def has_giveaway_creator_access(interaction: discord.Interaction) -> bool:
+    if has_giveaway_manager_access(interaction):
+        return True
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+    settings = get_giveaway_guild_settings(interaction.guild.id)
+    return member_has_any_role(interaction.user, settings.get("creator_role_ids", []))
+
+
 def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(record, dict):
         return None
@@ -1487,6 +1671,9 @@ def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Di
     ended_at = max(0, _coerce_non_negative_int(record.get("ended_at", 0)))
     message_id = _parse_user_id_value(record.get("message_id")) or 0
     forced_winner_id = _parse_user_id_value(record.get("forced_winner_id"))
+    participant_entries = _coerce_int_mapping(record.get("participant_entries"), maximum=100)
+    for participant_id in _coerce_user_id_list(record.get("participant_ids")):
+        participant_entries.setdefault(str(participant_id), 1)
 
     normalized: Dict[str, Any] = {
         "id": giveaway_id,
@@ -1503,6 +1690,19 @@ def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Di
         "ended": bool(record.get("ended", False)),
         "ended_at": ended_at,
         "winner_ids": _coerce_user_id_list(record.get("winner_ids")),
+        "participant_entries": participant_entries,
+        "required_role_id": _parse_user_id_value(record.get("required_role_id")),
+        "requirement_bypass_role_id": _parse_user_id_value(record.get("requirement_bypass_role_id")),
+        "winner_role_id": _parse_user_id_value(record.get("winner_role_id")),
+        "winner_dm_message": truncate(record.get("winner_dm_message", ""), 1500),
+        "create_message": truncate(record.get("create_message", ""), 1500),
+        "image_url": _clean_optional_url(record.get("image_url")),
+        "thumbnail_url": _clean_optional_url(record.get("thumbnail_url")),
+        "color": parse_hex_color_value(record.get("color"), None),
+        "end_color": parse_hex_color_value(record.get("end_color"), None),
+        "extra_entries": _coerce_role_entry_mapping(record.get("extra_entries")),
+        "other_options": truncate(record.get("other_options", ""), 1000),
+        "template_name": truncate(record.get("template_name", ""), 100),
     }
     if normalized["ended"] and not normalized["ended_at"]:
         normalized["ended_at"] = int(time.time())
@@ -1636,10 +1836,80 @@ def _giveaway_participant_count(giveaway: Dict[str, Any]) -> int:
     return len(_coerce_user_id_list(giveaway.get("participant_ids")))
 
 
+def giveaway_participant_entries(giveaway: Dict[str, Any], user_id: int) -> int:
+    participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
+    return max(1, participant_entries.get(str(user_id), 1))
+
+
+def giveaway_member_entry_count(giveaway: Dict[str, Any], member: discord.Member) -> int:
+    entries = 1
+    extra_entries = _coerce_role_entry_mapping(giveaway.get("extra_entries"))
+    for raw_role_id, raw_entries in extra_entries.items():
+        role_id = _parse_user_id_value(raw_role_id)
+        if role_id is None:
+            continue
+        if any(role.id == role_id for role in member.roles):
+            entries = max(entries, max(1, int(raw_entries)))
+    return min(entries, 100)
+
+
+def giveaway_entry_block_reason(guild: discord.Guild, member: discord.Member, giveaway: Dict[str, Any]) -> Optional[str]:
+    bypass_role_id = _parse_user_id_value(giveaway.get("requirement_bypass_role_id"))
+    if bypass_role_id and any(role.id == bypass_role_id for role in member.roles):
+        return None
+
+    required_role_id = _parse_user_id_value(giveaway.get("required_role_id"))
+    if required_role_id and not any(role.id == required_role_id for role in member.roles):
+        role = guild.get_role(required_role_id)
+        role_text = role.mention if role else f"`{required_role_id}`"
+        return f"You need {role_text} to enter this giveaway."
+    return None
+
+
+def format_giveaway_role(guild: Optional[discord.Guild], role_id: Any) -> str:
+    parsed_role_id = _parse_user_id_value(role_id)
+    if parsed_role_id is None:
+        return ""
+    role = guild.get_role(parsed_role_id) if guild else None
+    return role.mention if role else f"<@&{parsed_role_id}>"
+
+
+def format_giveaway_extra_entries(guild: Optional[discord.Guild], giveaway: Dict[str, Any]) -> str:
+    entries = _coerce_role_entry_mapping(giveaway.get("extra_entries"))
+    if not entries:
+        return ""
+    lines = []
+    for raw_role_id, count in entries.items():
+        role_text = format_giveaway_role(guild, raw_role_id)
+        if role_text:
+            lines.append(f"{role_text} - **{format_count(count)} entries**")
+    return "\n".join(lines[:10])
+
+
+def giveaway_message_from_template(template: str, giveaway: Dict[str, Any], user_id: int) -> str:
+    text = str(template or "").strip()
+    if not text:
+        text = "You won **{prize}** in **{guild}**!"
+    replacements = {
+        "{prize}": str(giveaway.get("prize", "Giveaway prize")),
+        "{giveaway_id}": str(giveaway.get("id", "")),
+        "{user}": f"<@{user_id}>",
+        "{guild}": bot.get_guild(int(giveaway.get("guild_id") or 0)).name
+        if bot.get_guild(int(giveaway.get("guild_id") or 0))
+        else "the server",
+    }
+    for key, value in replacements.items():
+        text = text.replace(key, value)
+    return truncate(text, 1800)
+
+
 def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
     end_at = int(giveaway.get("end_at") or 0)
     participants = _giveaway_participant_count(giveaway)
-    color = discord.Color.red() if giveaway.get("ended") else discord.Color.blue()
+    guild = bot.get_guild(int(giveaway.get("guild_id") or 0))
+    active_color = parse_hex_color_value(giveaway.get("color"), 0x3498DB) or 0x3498DB
+    ended_color = parse_hex_color_value(giveaway.get("end_color"), 0xE74C3C) or 0xE74C3C
+    color = discord.Color(ended_color if giveaway.get("ended") else active_color)
 
     if giveaway.get("ended"):
         winner_ids = _coerce_user_id_list(giveaway.get("winner_ids"))
@@ -1662,6 +1932,20 @@ def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
             f"Ends: {format_discord_timestamp(end_at, 'R')}\n"
             f"Ends at: {format_discord_timestamp(end_at, 'F')}"
         )
+        requirement_lines = []
+        if giveaway.get("required_role_id"):
+            requirement_lines.append(f"Must have role: {format_giveaway_role(guild, giveaway.get('required_role_id'))}")
+        if giveaway.get("requirement_bypass_role_id"):
+            requirement_lines.append(
+                f"Requirement bypass role: {format_giveaway_role(guild, giveaway.get('requirement_bypass_role_id'))}"
+            )
+        if requirement_lines:
+            description = f"{description}\n\n**Requirements**\n" + "\n".join(requirement_lines)
+        extra_entries_text = format_giveaway_extra_entries(guild, giveaway)
+        if extra_entries_text:
+            description = f"{description}\n\n**Extra Entries**\n{extra_entries_text}"
+        if giveaway.get("other_options"):
+            description = f"{description}\n\n**Other Options**\n{truncate(giveaway.get('other_options'), 900)}"
         embed = discord.Embed(
             title=str(giveaway.get("prize", "Giveaway prize")),
             description=description,
@@ -1669,23 +1953,44 @@ def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
         )
 
     embed.set_footer(text=f"Giveaway ID: {giveaway.get('id')} | Entries: {format_count(participants)}")
+    if giveaway.get("image_url"):
+        embed.set_image(url=str(giveaway["image_url"]))
+    if giveaway.get("thumbnail_url"):
+        embed.set_thumbnail(url=str(giveaway["thumbnail_url"]))
     if bot.user and bot.user.display_avatar:
         embed.set_author(name=bot.user.display_name, icon_url=bot.user.display_avatar.url)
     return embed
 
 
-def choose_giveaway_winners(giveaway: Dict[str, Any]) -> list[int]:
+def choose_giveaway_winners(
+    giveaway: Dict[str, Any],
+    *,
+    exclude_user_ids: Optional[Iterable[int]] = None,
+    respect_forced_winner: bool = True,
+) -> list[int]:
     participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
     forced_winner_id = _parse_user_id_value(giveaway.get("forced_winner_id"))
     winner_count = min(20, max(1, _coerce_non_negative_int(giveaway.get("winners", 1))))
+    excluded = {
+        parsed_user_id
+        for raw_user_id in (exclude_user_ids or [])
+        if (parsed_user_id := _parse_user_id_value(raw_user_id)) is not None
+    }
 
     winners: list[int] = []
-    if forced_winner_id is not None:
+    if respect_forced_winner and forced_winner_id is not None and forced_winner_id not in excluded:
         winners.append(forced_winner_id)
 
-    pool = [user_id for user_id in participant_ids if user_id not in winners]
-    random.shuffle(pool)
-    winners.extend(pool[: max(0, winner_count - len(winners))])
+    tickets: list[int] = []
+    for user_id in participant_ids:
+        if user_id in winners or user_id in excluded:
+            continue
+        tickets.extend([user_id] * giveaway_participant_entries(giveaway, user_id))
+
+    while tickets and len(winners) < winner_count:
+        winner_id = random.choice(tickets)
+        winners.append(winner_id)
+        tickets = [ticket for ticket in tickets if ticket != winner_id]
     return winners[:winner_count]
 
 
@@ -1729,6 +2034,34 @@ async def update_giveaway_message(giveaway_id: str) -> bool:
         return False
 
 
+async def deliver_giveaway_winner_rewards(giveaway: Dict[str, Any], winner_ids: Iterable[int]) -> list[str]:
+    results: list[str] = []
+    guild = bot.get_guild(int(giveaway.get("guild_id") or 0))
+    winner_role_id = _parse_user_id_value(giveaway.get("winner_role_id"))
+    winner_role = guild.get_role(winner_role_id) if guild and winner_role_id else None
+
+    for winner_id in _coerce_user_id_list(list(winner_ids)):
+        if guild and winner_role:
+            try:
+                member = guild.get_member(winner_id) or await guild.fetch_member(winner_id)
+            except discord.HTTPException:
+                member = None
+            if member is not None:
+                try:
+                    await member.add_roles(winner_role, reason=f"Giveaway winner {giveaway.get('id')}")
+                    results.append(f"Gave {winner_role.mention} to <@{winner_id}>.")
+                except discord.HTTPException as error:
+                    results.append(f"Could not give {winner_role.mention} to <@{winner_id}>: `{truncate(error, 140)}`")
+
+        if giveaway.get("winner_dm_message"):
+            try:
+                user = bot.get_user(winner_id) or await bot.fetch_user(winner_id)
+                await user.send(giveaway_message_from_template(str(giveaway.get("winner_dm_message", "")), giveaway, winner_id))
+            except discord.HTTPException:
+                results.append(f"Could not DM <@{winner_id}>.")
+    return results
+
+
 async def end_giveaway(giveaway_id: str, *, manual: bool = False) -> tuple[bool, str]:
     giveaways = load_giveaways()
     giveaway = giveaways.get(giveaway_id)
@@ -1745,6 +2078,7 @@ async def end_giveaway(giveaway_id: str, *, manual: bool = False) -> tuple[bool,
     save_giveaways(giveaways)
 
     await update_giveaway_message(giveaway_id)
+    reward_results = await deliver_giveaway_winner_rewards(giveaway, winner_ids)
 
     if not manual:
         message = await fetch_giveaway_message(giveaway)
@@ -1754,6 +2088,8 @@ async def end_giveaway(giveaway_id: str, *, manual: bool = False) -> tuple[bool,
                 announcement = f"\U0001F389 Congratulations {winner_mentions}! You won **{giveaway['prize']}**."
             else:
                 announcement = f"\U0001F389 Giveaway **{giveaway['prize']}** ended with no valid entries."
+            if reward_results:
+                announcement = f"{announcement}\n" + "\n".join(reward_results[:3])
             try:
                 await message.channel.send(announcement)
             except (discord.Forbidden, discord.HTTPException) as error:
@@ -1792,10 +2128,11 @@ def build_giveaway_participants_embed(giveaway: Dict[str, Any], page: int = 0) -
     visible_ids = participant_ids[start : start + GIVEAWAY_PARTICIPANTS_PAGE_SIZE]
 
     if visible_ids:
-        lines = [
-            f"**{start + index}.** <@{user_id}> (**1 entry**)"
-            for index, user_id in enumerate(visible_ids, start=1)
-        ]
+        lines = []
+        for index, user_id in enumerate(visible_ids, start=1):
+            entry_count = giveaway_participant_entries(giveaway, user_id)
+            entry_label = "entry" if entry_count == 1 else "entries"
+            lines.append(f"**{start + index}.** <@{user_id}> (**{format_count(entry_count)} {entry_label}**)")
     else:
         lines = ["No participants yet."]
 
@@ -1893,16 +2230,28 @@ class GiveawayView(discord.ui.View):
         if giveaway.get("ended") or int(giveaway.get("end_at") or 0) <= int(time.time()):
             await safe_send(interaction, "This giveaway has ended.", ephemeral=True)
             return
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await safe_send(interaction, "Use this button inside the server.", ephemeral=True)
+            return
 
         participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+        participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
         if interaction.user.id in participant_ids:
             participant_ids = [user_id for user_id in participant_ids if user_id != interaction.user.id]
+            participant_entries.pop(str(interaction.user.id), None)
             response_text = "You left this giveaway."
         else:
+            blocked_reason = giveaway_entry_block_reason(interaction.guild, interaction.user, giveaway)
+            if blocked_reason:
+                await safe_send(interaction, blocked_reason, ephemeral=True)
+                return
+            entry_count = giveaway_member_entry_count(giveaway, interaction.user)
             participant_ids.append(interaction.user.id)
-            response_text = "You entered this giveaway."
+            participant_entries[str(interaction.user.id)] = entry_count
+            response_text = f"You entered this giveaway with {format_count(entry_count)} entr{'y' if entry_count == 1 else 'ies'}."
 
         giveaway["participant_ids"] = participant_ids
+        giveaway["participant_entries"] = participant_entries
         giveaways[self.giveaway_id] = giveaway
         save_giveaways(giveaways)
 
@@ -7105,28 +7454,173 @@ register_trade_commands(bot)
 giveaway_group = app_commands.Group(name="giveaway", description="Create and manage giveaways")
 
 
-@giveaway_group.command(name="start", description="Start a giveaway")
+def giveaway_color_is_valid(value: Optional[str]) -> bool:
+    if not value:
+        return True
+    return parse_hex_color_value(value, None) is not None or value.strip().lower() in {"default", "none", "clear"}
+
+
+async def ensure_giveaway_channel_permissions(
+    interaction: discord.Interaction,
+    target_channel: discord.abc.Messageable,
+) -> bool:
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return False
+    if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
+        await safe_send(interaction, "Choose a text channel for the giveaway.", ephemeral=True)
+        return False
+
+    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
+    if guild_me and isinstance(target_channel, discord.TextChannel):
+        perms = target_channel.permissions_for(guild_me)
+        missing = []
+        if not perms.send_messages:
+            missing.append("Send Messages")
+        if not perms.embed_links:
+            missing.append("Embed Links")
+        if not perms.read_message_history:
+            missing.append("Read Message History")
+        if missing:
+            await safe_send(
+                interaction,
+                f"I need {', '.join(missing)} permission in {target_channel.mention}.",
+                ephemeral=True,
+            )
+            return False
+    return True
+
+
+async def get_giveaway_for_command(
+    interaction: discord.Interaction,
+    giveaway_id: str,
+) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return None, None
+    resolved_giveaway_id = find_giveaway_id(giveaway_id)
+    giveaway = load_giveaways().get(resolved_giveaway_id or "")
+    if not resolved_giveaway_id or not giveaway or int(giveaway.get("guild_id") or 0) != interaction.guild.id:
+        await safe_send(interaction, "Giveaway not found in this server.", ephemeral=True)
+        return None, None
+    return resolved_giveaway_id, giveaway
+
+
+async def require_giveaway_manager(interaction: discord.Interaction) -> bool:
+    if has_giveaway_manager_access(interaction):
+        return True
+    await safe_send(interaction, "You need Manage Server or a giveaway manager role to use this.", ephemeral=True)
+    return False
+
+
+async def require_giveaway_creator(interaction: discord.Interaction) -> bool:
+    if has_giveaway_creator_access(interaction):
+        return True
+    await safe_send(interaction, "You need Manage Server or a giveaway creator role to create giveaways.", ephemeral=True)
+    return False
+
+
+def apply_giveaway_optional_fields(
+    giveaway: Dict[str, Any],
+    *,
+    host: Optional[discord.Member] = None,
+    giveaway_create_message: Optional[str] = None,
+    giveaway_winners_role: Optional[discord.Role] = None,
+    giveaway_winners_dm_message: Optional[str] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    required_role: Optional[discord.Role] = None,
+    requirement_bypass_role: Optional[discord.Role] = None,
+    color: Optional[str] = None,
+    end_color: Optional[str] = None,
+    extra_entries: Optional[str] = None,
+    other_options: Optional[str] = None,
+    use_template: Optional[str] = None,
+) -> Optional[str]:
+    if host is not None:
+        giveaway["host_id"] = host.id
+    if giveaway_create_message is not None:
+        giveaway["create_message"] = truncate(giveaway_create_message, 1500)
+    if giveaway_winners_role is not None:
+        giveaway["winner_role_id"] = giveaway_winners_role.id
+    if giveaway_winners_dm_message is not None:
+        giveaway["winner_dm_message"] = truncate(giveaway_winners_dm_message, 1500)
+    if image is not None:
+        if image and not is_http_url(image):
+            return "Image must be an `http://` or `https://` URL."
+        giveaway["image_url"] = image.strip()
+    if thumbnail is not None:
+        if thumbnail and not is_http_url(thumbnail):
+            return "Thumbnail must be an `http://` or `https://` URL."
+        giveaway["thumbnail_url"] = thumbnail.strip()
+    if required_role is not None:
+        giveaway["required_role_id"] = required_role.id
+    if requirement_bypass_role is not None:
+        giveaway["requirement_bypass_role_id"] = requirement_bypass_role.id
+    if color is not None:
+        if not giveaway_color_is_valid(color):
+            return "Color must be a hex color like `#3498db`, or `clear`."
+        giveaway["color"] = parse_hex_color_value(color, None)
+    if end_color is not None:
+        if not giveaway_color_is_valid(end_color):
+            return "End color must be a hex color like `#ff5555`, or `clear`."
+        giveaway["end_color"] = parse_hex_color_value(end_color, None)
+    if extra_entries is not None:
+        giveaway["extra_entries"] = parse_role_entry_mapping(extra_entries)
+    if other_options is not None:
+        giveaway["other_options"] = truncate(other_options, 1000)
+    if use_template is not None:
+        giveaway["template_name"] = truncate(use_template, 100)
+    return None
+
+
+@giveaway_group.command(name="create", description="Create a giveaway")
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
-    prize="The prize people are entering for",
     duration="How long it runs, like 10m, 2h, 3d, or 1w",
-    winners="How many winners to pick",
-    channel="Optional channel to post the giveaway in",
+    winners="The number of winners for this giveaway",
+    prize="The prize for this giveaway",
+    use_template="Optional template name to label this giveaway",
+    channel="The channel this giveaway will be created in",
+    host="The visible host of this giveaway",
+    giveaway_create_message="Optional message to send after creating the giveaway",
+    giveaway_winners_role="The role the bot should give to winners",
+    giveaway_winners_dm_message="The message the bot should DM to winners. Supports {prize}, {user}, {guild}, {giveaway_id}",
+    image="Image URL shown at the bottom of the embed",
+    thumbnail="Thumbnail URL shown in the top right of the embed",
+    required_role="Role required to participate",
+    requirement_bypass_role="Role that bypasses requirements",
+    color="Active embed hex color, like #3498db",
+    end_color="Ended embed hex color, like #ff5555",
+    extra_entries="Role entry boosts like @Booster:2, @Donator:4",
+    other_options="Extra public notes shown on the giveaway",
 )
-async def giveaway_start_slash(
+async def giveaway_create_slash(
     interaction: discord.Interaction,
-    prize: str,
     duration: str,
-    winners: app_commands.Range[int, 1, 20] = 1,
+    winners: app_commands.Range[int, 1, 20],
+    prize: str,
+    use_template: Optional[str] = None,
     channel: Optional[discord.TextChannel] = None,
+    host: Optional[discord.Member] = None,
+    giveaway_create_message: Optional[str] = None,
+    giveaway_winners_role: Optional[discord.Role] = None,
+    giveaway_winners_dm_message: Optional[str] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    required_role: Optional[discord.Role] = None,
+    requirement_bypass_role: Optional[discord.Role] = None,
+    color: Optional[str] = None,
+    end_color: Optional[str] = None,
+    extra_entries: Optional[str] = None,
+    other_options: Optional[str] = None,
 ):
     if not interaction.guild:
         await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
         return
 
-    if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "Only server admins can start giveaways.", ephemeral=True)
+    if not await require_giveaway_creator(interaction):
         return
 
     duration_seconds = parse_giveaway_duration(duration)
@@ -7139,25 +7633,8 @@ async def giveaway_start_slash(
         return
 
     target_channel = channel or interaction.channel
-    if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
-        await safe_send(interaction, "Choose a text channel for the giveaway.", ephemeral=True)
+    if not await ensure_giveaway_channel_permissions(interaction, target_channel):
         return
-
-    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
-    if guild_me:
-        perms = target_channel.permissions_for(guild_me)
-        missing = []
-        if not perms.send_messages:
-            missing.append("Send Messages")
-        if not perms.embed_links:
-            missing.append("Embed Links")
-        if missing:
-            await safe_send(
-                interaction,
-                f"I need {', '.join(missing)} permission in {target_channel.mention}.",
-                ephemeral=True,
-            )
-            return
 
     giveaway_id = generate_giveaway_id()
     now = int(time.time())
@@ -7166,17 +7643,37 @@ async def giveaway_start_slash(
         "guild_id": interaction.guild.id,
         "channel_id": target_channel.id,
         "message_id": 0,
-        "host_id": interaction.user.id,
+        "host_id": host.id if host else interaction.user.id,
         "prize": truncate(prize.strip() or "Giveaway prize", 180),
         "winners": int(winners),
         "end_at": now + duration_seconds,
         "created_at": now,
         "participant_ids": [],
+        "participant_entries": {},
         "forced_winner_id": None,
         "ended": False,
         "ended_at": 0,
         "winner_ids": [],
     }
+    field_error = apply_giveaway_optional_fields(
+        giveaway,
+        host=host,
+        giveaway_create_message=giveaway_create_message,
+        giveaway_winners_role=giveaway_winners_role,
+        giveaway_winners_dm_message=giveaway_winners_dm_message,
+        image=image,
+        thumbnail=thumbnail,
+        required_role=required_role,
+        requirement_bypass_role=requirement_bypass_role,
+        color=color,
+        end_color=end_color,
+        extra_entries=extra_entries,
+        other_options=other_options,
+        use_template=use_template,
+    )
+    if field_error:
+        await safe_send(interaction, field_error, ephemeral=True)
+        return
 
     giveaway_message = await target_channel.send(embed=build_giveaway_embed(giveaway), view=GiveawayView(giveaway_id))
     giveaway["message_id"] = giveaway_message.id
@@ -7184,38 +7681,647 @@ async def giveaway_start_slash(
     giveaways[giveaway_id] = giveaway
     save_giveaways(giveaways)
     register_giveaway_view(giveaway_id)
+    if giveaway.get("create_message"):
+        try:
+            await target_channel.send(giveaway_message_from_template(str(giveaway["create_message"]), giveaway, interaction.user.id))
+        except discord.HTTPException as error:
+            print(f"Could not send giveaway create message {giveaway_id}: {error}")
 
     await safe_send(
         interaction,
-        f"Giveaway started in {target_channel.mention}. ID: `{giveaway_id}`",
+        f"Giveaway created in {target_channel.mention}. ID: `{giveaway_id}`",
         ephemeral=True,
     )
+
+
+@giveaway_group.command(name="delete", description="Delete a giveaway")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(giveaway_id="The giveaway ID or message ID")
+async def giveaway_delete_slash(interaction: discord.Interaction, giveaway_id: str):
+    if not await require_giveaway_manager(interaction):
+        return
+
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
+        return
+
+    message = await fetch_giveaway_message(giveaway)
+    if message is not None:
+        try:
+            await message.delete()
+        except discord.HTTPException:
+            pass
+
+    giveaways = load_giveaways()
+    giveaways.pop(resolved_giveaway_id, None)
+    save_giveaways(giveaways)
+    REGISTERED_GIVEAWAY_VIEW_IDS.discard(resolved_giveaway_id)
+    await safe_send(interaction, f"Deleted giveaway `{resolved_giveaway_id}`.", ephemeral=True)
+
+
+@giveaway_group.command(name="edit", description="Edit a giveaway")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    giveaway_id="The giveaway ID or message ID",
+    prize="New prize",
+    duration="New duration from now, like 1h or 3d",
+    winners="New number of winners",
+    channel="Move the giveaway to a different text channel",
+    image="New image URL, or clear",
+    thumbnail="New thumbnail URL, or clear",
+    color="New active hex color, or clear",
+    end_color="New ended hex color, or clear",
+    required_role="New required role",
+    requirement_bypass_role="New bypass role",
+    giveaway_winners_role="New winner role",
+    giveaway_winners_dm_message="New winner DM message",
+    extra_entries="New role entry boosts like @Booster:2",
+    other_options="New extra notes",
+)
+async def giveaway_edit_slash(
+    interaction: discord.Interaction,
+    giveaway_id: str,
+    prize: Optional[str] = None,
+    duration: Optional[str] = None,
+    winners: Optional[int] = None,
+    channel: Optional[discord.TextChannel] = None,
+    image: Optional[str] = None,
+    thumbnail: Optional[str] = None,
+    color: Optional[str] = None,
+    end_color: Optional[str] = None,
+    required_role: Optional[discord.Role] = None,
+    requirement_bypass_role: Optional[discord.Role] = None,
+    giveaway_winners_role: Optional[discord.Role] = None,
+    giveaway_winners_dm_message: Optional[str] = None,
+    extra_entries: Optional[str] = None,
+    other_options: Optional[str] = None,
+):
+    if not await require_giveaway_manager(interaction):
+        return
+
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
+        return
+    if giveaway.get("ended"):
+        await safe_send(interaction, "This giveaway already ended. Use `/giveaway reroll` for ended giveaways.", ephemeral=True)
+        return
+
+    if prize is not None:
+        giveaway["prize"] = truncate(prize.strip() or "Giveaway prize", 180)
+    if duration is not None:
+        duration_seconds = parse_giveaway_duration(duration)
+        if duration_seconds is None:
+            await safe_send(interaction, "Invalid duration. Use `10m`, `2h`, `3d`, or `1w`.", ephemeral=True)
+            return
+        giveaway["end_at"] = int(time.time()) + duration_seconds
+    if winners is not None:
+        if winners < 1 or winners > 20:
+            await safe_send(interaction, "Winner count must be between 1 and 20.", ephemeral=True)
+            return
+        giveaway["winners"] = int(winners)
+
+    field_error = apply_giveaway_optional_fields(
+        giveaway,
+        giveaway_winners_role=giveaway_winners_role,
+        giveaway_winners_dm_message=giveaway_winners_dm_message,
+        image=image,
+        thumbnail=thumbnail,
+        required_role=required_role,
+        requirement_bypass_role=requirement_bypass_role,
+        color=color,
+        end_color=end_color,
+        extra_entries=extra_entries,
+        other_options=other_options,
+    )
+    if field_error:
+        await safe_send(interaction, field_error, ephemeral=True)
+        return
+
+    old_message = await fetch_giveaway_message(giveaway)
+    target_channel = channel
+    if target_channel is not None and target_channel.id != int(giveaway.get("channel_id") or 0):
+        if not await ensure_giveaway_channel_permissions(interaction, target_channel):
+            return
+        new_message = await target_channel.send(embed=build_giveaway_embed(giveaway), view=GiveawayView(resolved_giveaway_id))
+        giveaway["channel_id"] = target_channel.id
+        giveaway["message_id"] = new_message.id
+        if old_message is not None:
+            try:
+                await old_message.delete()
+            except discord.HTTPException:
+                pass
+        REGISTERED_GIVEAWAY_VIEW_IDS.discard(resolved_giveaway_id)
+
+    giveaways = load_giveaways()
+    giveaways[resolved_giveaway_id] = giveaway
+    save_giveaways(giveaways)
+    register_giveaway_view(resolved_giveaway_id)
+    await update_giveaway_message(resolved_giveaway_id)
+    await safe_send(interaction, f"Edited giveaway `{resolved_giveaway_id}`.", ephemeral=True)
 
 
 @giveaway_group.command(name="end", description="End a giveaway early")
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(giveaway_id="The giveaway ID from the giveaway footer")
+@app_commands.describe(giveaway_id="The giveaway ID or message ID")
 async def giveaway_end_slash(interaction: discord.Interaction, giveaway_id: str):
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+    if not await require_giveaway_manager(interaction):
         return
 
-    if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "Only server admins can end giveaways.", ephemeral=True)
-        return
-
-    resolved_giveaway_id = find_giveaway_id(giveaway_id)
-    giveaway = load_giveaways().get(resolved_giveaway_id or "")
-    if not resolved_giveaway_id or not giveaway or int(giveaway.get("guild_id") or 0) != interaction.guild.id:
-        await safe_send(interaction, "Giveaway not found in this server.", ephemeral=True)
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
         return
 
     success, message = await end_giveaway(resolved_giveaway_id, manual=False)
     await safe_send(interaction, message if success else f"Could not end giveaway: {message}", ephemeral=True)
 
 
+@giveaway_group.command(name="fix", description="Fix a giveaway if it fails to update")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(giveaway_id="The giveaway ID or message ID")
+async def giveaway_fix_slash(interaction: discord.Interaction, giveaway_id: str):
+    if not await require_giveaway_manager(interaction):
+        return
+
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
+        return
+
+    if not giveaway.get("ended"):
+        register_giveaway_view(resolved_giveaway_id)
+    updated = await update_giveaway_message(resolved_giveaway_id)
+    await safe_send(
+        interaction,
+        f"Giveaway `{resolved_giveaway_id}` fixed." if updated else "I could not fetch the giveaway message.",
+        ephemeral=True,
+    )
+
+
+@giveaway_group.command(name="reroll", description="Reroll winners for an ended giveaway")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(giveaway_id="The giveaway ID or message ID")
+async def giveaway_reroll_slash(interaction: discord.Interaction, giveaway_id: str):
+    if not await require_giveaway_manager(interaction):
+        return
+
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
+        return
+    if not giveaway.get("ended"):
+        await safe_send(interaction, "This giveaway has not ended yet.", ephemeral=True)
+        return
+
+    old_winners = set(_coerce_user_id_list(giveaway.get("winner_ids")))
+    new_winners = choose_giveaway_winners(giveaway, exclude_user_ids=old_winners, respect_forced_winner=False)
+    if not new_winners:
+        new_winners = choose_giveaway_winners(giveaway, respect_forced_winner=False)
+    giveaway["winner_ids"] = new_winners
+    giveaway["ended_at"] = int(time.time())
+    giveaways = load_giveaways()
+    giveaways[resolved_giveaway_id] = giveaway
+    save_giveaways(giveaways)
+    await update_giveaway_message(resolved_giveaway_id)
+    await deliver_giveaway_winner_rewards(giveaway, new_winners)
+
+    message = await fetch_giveaway_message(giveaway)
+    winner_text = ", ".join(f"<@{user_id}>" for user_id in new_winners) if new_winners else "No valid entries"
+    if message is not None:
+        try:
+            await message.channel.send(f"\U0001F389 Giveaway **{giveaway['prize']}** rerolled. New winner(s): {winner_text}")
+        except discord.HTTPException:
+            pass
+    await safe_send(interaction, f"Rerolled giveaway `{resolved_giveaway_id}`.", ephemeral=True)
+
+
+async def update_giveaway_role_setting(
+    interaction: discord.Interaction,
+    setting_key: str,
+    action: str,
+    role: Optional[discord.Role],
+) -> None:
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+    if not interaction.permissions.manage_guild and not interaction.permissions.administrator:
+        await safe_send(interaction, "Only server admins can edit giveaway role settings.", ephemeral=True)
+        return
+    if action != "clear" and role is None:
+        await safe_send(interaction, "Choose a role, or use `clear`.", ephemeral=True)
+        return
+
+    settings = load_giveaway_settings()
+    guild_settings = get_giveaway_guild_settings(interaction.guild.id)
+    role_ids = _coerce_role_id_list(guild_settings.get(setting_key))
+    if action == "clear":
+        role_ids = []
+    elif role is not None and action == "add":
+        if role.id not in role_ids:
+            role_ids.append(role.id)
+    elif role is not None and action == "remove":
+        role_ids = [role_id for role_id in role_ids if role_id != role.id]
+    else:
+        await safe_send(interaction, "Unknown action.", ephemeral=True)
+        return
+
+    guild_settings[setting_key] = role_ids
+    settings.setdefault("guilds", {})[str(interaction.guild.id)] = guild_settings
+    save_giveaway_settings(settings)
+    role_mentions = ", ".join(f"<@&{role_id}>" for role_id in role_ids) or "none"
+    await safe_send(interaction, f"Updated {setting_key.replace('_', ' ')}: {role_mentions}", ephemeral=True)
+
+
+@giveaway_group.command(name="creator-roles", description="Set roles that can create giveaways")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(action="Add, remove, or clear creator roles", role="The role to add or remove")
+@app_commands.choices(
+    action=[
+        app_commands.Choice(name="add", value="add"),
+        app_commands.Choice(name="remove", value="remove"),
+        app_commands.Choice(name="clear", value="clear"),
+    ]
+)
+async def giveaway_creator_roles_slash(
+    interaction: discord.Interaction,
+    action: app_commands.Choice[str],
+    role: Optional[discord.Role] = None,
+):
+    await update_giveaway_role_setting(interaction, "creator_role_ids", action.value, role)
+
+
+@giveaway_group.command(name="manager-roles", description="Set roles that can use every giveaway command")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(action="Add, remove, or clear manager roles", role="The role to add or remove")
+@app_commands.choices(
+    action=[
+        app_commands.Choice(name="add", value="add"),
+        app_commands.Choice(name="remove", value="remove"),
+        app_commands.Choice(name="clear", value="clear"),
+    ]
+)
+async def giveaway_manager_roles_slash(
+    interaction: discord.Interaction,
+    action: app_commands.Choice[str],
+    role: Optional[discord.Role] = None,
+):
+    await update_giveaway_role_setting(interaction, "manager_role_ids", action.value, role)
+
+
 bot.tree.add_command(giveaway_group)
+
+
+application_group = app_commands.Group(name="application", description="Manage application panels")
+
+
+async def require_application_slash_admin(interaction: discord.Interaction) -> bool:
+    if interaction.guild and isinstance(interaction.user, discord.Member) and (
+        interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator
+    ):
+        return True
+    await safe_send(interaction, "You need Manage Server permission to manage applications.", ephemeral=True)
+    return False
+
+
+async def refresh_application_panel_after_slash(interaction: discord.Interaction) -> None:
+    if interaction.guild:
+        try:
+            await application_system.refresh_application_message(interaction.guild)
+        except Exception as error:
+            print(f"Could not refresh application panel after slash edit: {error}")
+
+
+async def application_panel_autocomplete(interaction: discord.Interaction, current: str):
+    if not interaction.guild_id:
+        return []
+    current_lower = current.lower()
+    panels = application_system.get_guild_state(interaction.guild_id).get("panels", {})
+    choices = []
+    for panel_key, panel in sorted(panels.items()):
+        label = str(panel.get("name") or panel_key)
+        if current_lower and current_lower not in panel_key.lower() and current_lower not in label.lower():
+            continue
+        choices.append(app_commands.Choice(name=label[:100], value=panel_key))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+@application_group.command(name="panel", description="Post or refresh the application dropdown panel")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(channel="The channel where the application panel should be posted")
+async def application_panel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not await require_application_slash_admin(interaction):
+        return
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+    result = await _dashboard_post_application_panel(interaction.guild.id, channel.id)
+    await safe_send(interaction, result, ephemeral=True)
+
+
+@application_group.command(name="log", description="Set the application review/log channel")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(channel="The channel where submitted applications should be logged")
+async def application_log_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not await require_application_slash_admin(interaction):
+        return
+    missing_permissions = application_system.bot_channel_permission_errors(channel)
+    if missing_permissions:
+        await safe_send(
+            interaction,
+            f"I cannot post logs in {channel.mention}. Missing: {', '.join(missing_permissions)}.",
+            ephemeral=True,
+        )
+        return
+    guild_state = application_system.get_guild_state(interaction.guild.id)
+    guild_state["log_channel_id"] = channel.id
+    application_system.save_state()
+    await safe_send(interaction, f"Application log channel set to {channel.mention}.", ephemeral=True)
+
+
+@application_group.command(name="text", description="Set the text shown above the application dropdown")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(text="Panel text, like 'Select an option to begin!'")
+async def application_text_slash(interaction: discord.Interaction, text: str):
+    if not await require_application_slash_admin(interaction):
+        return
+    guild_state = application_system.get_guild_state(interaction.guild.id)
+    guild_state["panel_text"] = truncate(text.strip() or application_system.DEFAULT_PANEL_TEXT, 1000)
+    application_system.save_state()
+    await refresh_application_panel_after_slash(interaction)
+    await safe_send(interaction, "Application panel text updated.", ephemeral=True)
+
+
+@application_group.command(name="create-panel", description="Create an application dropdown option")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(name="Panel name, like Moderation team", description="Short dropdown description")
+async def application_create_panel_slash(
+    interaction: discord.Interaction,
+    name: str,
+    description: Optional[str] = None,
+):
+    if not await require_application_slash_admin(interaction):
+        return
+    guild_state = application_system.get_guild_state(interaction.guild.id)
+    panels = guild_state.setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(name)
+    if not panel_key:
+        await safe_send(interaction, "Panel name cannot be empty.", ephemeral=True)
+        return
+    if panel_key in panels:
+        await safe_send(interaction, "That panel already exists.", ephemeral=True)
+        return
+    panels[panel_key] = {
+        "name": truncate(name.strip(), 100),
+        "description": truncate(description or "Start this application.", 100),
+        "questions": [],
+        "enabled": True,
+        "accepted_role_id": None,
+        "created_at": int(time.time()),
+        "created_by": str(interaction.user.id),
+    }
+    application_system.save_state()
+    await refresh_application_panel_after_slash(interaction)
+    await safe_send(interaction, f"Created application panel `{panel_key}`.", ephemeral=True)
+
+
+@application_group.command(name="edit-panel", description="Edit an application dropdown option")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    panel="Panel to edit",
+    name="New display name",
+    description="New dropdown description",
+    enabled="Whether users can choose this panel",
+    accepted_role="Role given when this application is accepted",
+)
+async def application_edit_panel_slash(
+    interaction: discord.Interaction,
+    panel: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    accepted_role: Optional[discord.Role] = None,
+):
+    if not await require_application_slash_admin(interaction):
+        return
+    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(panel)
+    panel_data = panels.get(panel_key)
+    if not panel_data:
+        await safe_send(interaction, "Unknown panel.", ephemeral=True)
+        return
+    if accepted_role is not None:
+        allowed, reason = application_system.bot_can_manage_role(interaction.guild, accepted_role)
+        if not allowed:
+            await safe_send(interaction, f"I cannot give that role: {reason}.", ephemeral=True)
+            return
+        panel_data["accepted_role_id"] = accepted_role.id
+    if name is not None:
+        panel_data["name"] = truncate(name.strip() or panel_key, 100)
+    if description is not None:
+        panel_data["description"] = truncate(description.strip() or "Start this application.", 100)
+    if enabled is not None:
+        panel_data["enabled"] = bool(enabled)
+    application_system.save_state()
+    await refresh_application_panel_after_slash(interaction)
+    await safe_send(interaction, f"Updated application panel `{panel_key}`.", ephemeral=True)
+
+
+@application_edit_panel_slash.autocomplete("panel")
+async def application_edit_panel_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+@application_group.command(name="delete-panel", description="Delete an application dropdown option")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(panel="Panel to delete")
+async def application_delete_panel_slash(interaction: discord.Interaction, panel: str):
+    if not await require_application_slash_admin(interaction):
+        return
+    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(panel)
+    if panel_key not in panels:
+        await safe_send(interaction, "Unknown panel.", ephemeral=True)
+        return
+    panels.pop(panel_key, None)
+    application_system.save_state()
+    await refresh_application_panel_after_slash(interaction)
+    await safe_send(interaction, f"Deleted application panel `{panel_key}`.", ephemeral=True)
+
+
+@application_delete_panel_slash.autocomplete("panel")
+async def application_delete_panel_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+async def upsert_application_question(
+    interaction: discord.Interaction,
+    panel: str,
+    question_number: int,
+    text: str,
+    choices: Optional[str],
+    *,
+    edit: bool,
+) -> None:
+    if not await require_application_slash_admin(interaction):
+        return
+    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(panel)
+    panel_data = panels.get(panel_key)
+    if not panel_data:
+        await safe_send(interaction, "Unknown panel.", ephemeral=True)
+        return
+    questions = panel_data.setdefault("questions", [])
+    question_number = max(1, int(question_number))
+    parsed_choices = application_system.parse_question_choices(choices)
+    if parsed_choices is not None and len(parsed_choices) == 1:
+        await safe_send(interaction, "Selection questions need at least 2 choices. Use `yes|no` or leave choices empty.", ephemeral=True)
+        return
+    clean_text = text.strip()
+    if not clean_text:
+        await safe_send(interaction, "Question text cannot be empty.", ephemeral=True)
+        return
+    if edit:
+        if question_number > len(questions):
+            await safe_send(interaction, "That question number does not exist.", ephemeral=True)
+            return
+        questions[question_number - 1] = application_system.make_question_value(
+            clean_text,
+            choices,
+            questions[question_number - 1],
+        )
+        result = "Question updated."
+    else:
+        insert_index = min(max(0, question_number - 1), len(questions))
+        questions.insert(insert_index, application_system.make_question_value(clean_text, choices))
+        result = "Question added and questions were renumbered."
+    application_system.save_state()
+    await safe_send(interaction, result, ephemeral=True)
+
+
+@application_group.command(name="add-question", description="Add a text or dropdown question to a panel")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    panel="Panel to edit",
+    question_number="Where the question should be inserted",
+    text="Question text",
+    choices="Optional dropdown choices separated by |, like yes|no",
+)
+async def application_add_question_slash(
+    interaction: discord.Interaction,
+    panel: str,
+    question_number: int,
+    text: str,
+    choices: Optional[str] = None,
+):
+    await upsert_application_question(interaction, panel, question_number, text, choices, edit=False)
+
+
+@application_add_question_slash.autocomplete("panel")
+async def application_add_question_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+@application_group.command(name="edit-question", description="Edit a text or dropdown question")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    panel="Panel to edit",
+    question_number="Question number to edit",
+    text="New question text",
+    choices="Optional dropdown choices separated by |, or text/clear for text answer",
+)
+async def application_edit_question_slash(
+    interaction: discord.Interaction,
+    panel: str,
+    question_number: int,
+    text: str,
+    choices: Optional[str] = None,
+):
+    await upsert_application_question(interaction, panel, question_number, text, choices, edit=True)
+
+
+@application_edit_question_slash.autocomplete("panel")
+async def application_edit_question_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+@application_group.command(name="delete-question", description="Delete a question and renumber the rest")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(panel="Panel to edit", question_number="Question number to delete")
+async def application_delete_question_slash(interaction: discord.Interaction, panel: str, question_number: int):
+    if not await require_application_slash_admin(interaction):
+        return
+    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(panel)
+    panel_data = panels.get(panel_key)
+    if not panel_data:
+        await safe_send(interaction, "Unknown panel.", ephemeral=True)
+        return
+    questions = panel_data.setdefault("questions", [])
+    if question_number < 1 or question_number > len(questions):
+        await safe_send(interaction, "That question number does not exist.", ephemeral=True)
+        return
+    questions.pop(question_number - 1)
+    application_system.save_state()
+    await safe_send(interaction, "Question deleted and questions were renumbered.", ephemeral=True)
+
+
+@application_delete_question_slash.autocomplete("panel")
+async def application_delete_question_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+@application_group.command(name="accepted-role", description="Set or clear the role given when a panel is accepted")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(panel="Panel to edit", role="Accepted role. Leave empty to clear it")
+async def application_accepted_role_slash(
+    interaction: discord.Interaction,
+    panel: str,
+    role: Optional[discord.Role] = None,
+):
+    if not await require_application_slash_admin(interaction):
+        return
+    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
+    panel_key = application_system.normalize_panel_key(panel)
+    panel_data = panels.get(panel_key)
+    if not panel_data:
+        await safe_send(interaction, "Unknown panel.", ephemeral=True)
+        return
+    if role is None:
+        panel_data["accepted_role_id"] = None
+        result = "Accepted role cleared."
+    else:
+        allowed, reason = application_system.bot_can_manage_role(interaction.guild, role)
+        if not allowed:
+            await safe_send(interaction, f"I cannot give that role: {reason}.", ephemeral=True)
+            return
+        panel_data["accepted_role_id"] = role.id
+        result = f"Accepted role set to {role.mention}."
+    application_system.save_state()
+    await safe_send(interaction, result, ephemeral=True)
+
+
+@application_accepted_role_slash.autocomplete("panel")
+async def application_accepted_role_autocomplete(interaction: discord.Interaction, current: str):
+    return await application_panel_autocomplete(interaction, current)
+
+
+bot.tree.add_command(application_group)
 
 
 @bot.tree.command(name="help", description="Show MT vehicle bot commands")
