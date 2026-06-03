@@ -293,6 +293,8 @@ def run_bot_forever() -> None:
                 print(f"Discord HTTP error on startup: {error}. Retrying in {retry_delay}s...", flush=True)
         except Exception as error:
             print(f"Unexpected bot startup error: {error}. Retrying in {retry_delay}s...", flush=True)
+        finally:
+            dexbot.save_message_stats(force=True)
 
         if not dexbot.AUTO_RESTART_BOT:
             print("Auto-restart is disabled, so the bot process will now exit.", flush=True)
