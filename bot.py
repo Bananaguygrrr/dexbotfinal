@@ -69,10 +69,6 @@ WEBSITE_BACKGROUND_URL = os.getenv("WEBSITE_BACKGROUND_URL", "").strip()
 SERVER_INVITE_URL = os.getenv("SERVER_INVITE_URL", "https://discord.gg/yWJHqqBRSJ").strip()
 BOT_VERSION = os.getenv("BOT_VERSION", "Beta 1.7.0").strip() or "Beta 1.7.0"
 BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME", "nissan_gtr_r35_nismo").strip() or "nissan_gtr_r35_nismo"
-DEFAULT_SOURCE_CODE_URL = "https://github.com/Bananaguygrrr/dexbotfinal"
-SOURCE_CODE_URL = os.getenv("SOURCE_CODE_URL", DEFAULT_SOURCE_CODE_URL).strip() or DEFAULT_SOURCE_CODE_URL
-TERMS_URL = os.getenv("TERMS_URL", f"{SOURCE_CODE_URL}/blob/main/TERMS.md").strip() or f"{SOURCE_CODE_URL}/blob/main/TERMS.md"
-PRIVACY_URL = os.getenv("PRIVACY_URL", f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md").strip() or f"{SOURCE_CODE_URL}/blob/main/PRIVACY.md"
 APPLICATION_DASHBOARD_TOKEN = (
     os.getenv("APPLICATION_DASHBOARD_TOKEN")
     or os.getenv("DASHBOARD_TOKEN")
@@ -91,6 +87,8 @@ DISCORD_CLIENT_SECRET = (
     or os.getenv("CLIENT_SECRET")
     or ""
 ).strip()
+TERMS_URL = os.getenv("TERMS_URL", f"{APPLICATION_DASHBOARD_BASE_URL}/terms").strip() or f"{APPLICATION_DASHBOARD_BASE_URL}/terms"
+PRIVACY_URL = os.getenv("PRIVACY_URL", f"{APPLICATION_DASHBOARD_BASE_URL}/privacy").strip() or f"{APPLICATION_DASHBOARD_BASE_URL}/privacy"
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -4446,8 +4444,6 @@ def build_about_embed() -> discord.Embed:
         link_parts.append(f"[Invite me]({invite_url})")
     if SERVER_INVITE_URL:
         link_parts.append(f"[Discord server]({SERVER_INVITE_URL})")
-    if SOURCE_CODE_URL:
-        link_parts.append(f"[Source code]({SOURCE_CODE_URL})")
     if link_parts:
         lines.extend(["", " - ".join(link_parts)])
 
@@ -5113,9 +5109,6 @@ def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
 def _dashboard_can_manage_guild(guild_id: int, params: Dict[str, list[str]], headers: Any) -> bool:
     if _dashboard_owner_token_authorized(params, headers):
         return True
-    user_id = _dashboard_session_user_id(headers)
-    if user_id in load_admin_user_ids():
-        return True
     return guild_id in _dashboard_session_admin_guild_ids(headers)
 
 
@@ -5199,16 +5192,15 @@ def _handle_dashboard_oauth_callback(params: Dict[str, list[str]]) -> tuple[int,
 
     bot_guild_ids = {guild.id for guild in bot.guilds}
     admin_guild_ids: set[int] = set()
-    if user_id in load_admin_user_ids():
-        admin_guild_ids = set(bot_guild_ids)
-    elif isinstance(guilds_payload, list):
+    if isinstance(guilds_payload, list):
         for guild_payload in guilds_payload:
             try:
                 guild_id = int(guild_payload.get("id") or 0)
                 permissions = int(guild_payload.get("permissions") or 0)
             except (AttributeError, TypeError, ValueError):
                 continue
-            has_admin_access = bool(permissions & 0x8 or permissions & 0x20)
+            is_owner = bool(guild_payload.get("owner"))
+            has_admin_access = bool(is_owner or permissions & 0x8 or permissions & 0x20)
             if guild_id in bot_guild_ids and has_admin_access:
                 admin_guild_ids.add(guild_id)
 
@@ -5736,7 +5728,28 @@ def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes
       font-size: clamp(42px, 6vw, 74px);
       line-height: 1.05;
     }}
+    .login-copy .lead {{
+      max-width: 720px;
+      font-size: 17px;
+    }}
     .login-copy strong {{ color: var(--teal); }}
+    .login-points {{
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+      max-width: 640px;
+    }}
+    .login-point {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,.035);
+    }}
+    .login-point strong {{
+      color: var(--teal);
+      display: block;
+      margin-bottom: 4px;
+    }}
     .login-panel {{
       background: rgba(17,23,20,.78);
       border: 1px solid var(--line);
@@ -5794,7 +5807,7 @@ def _render_dashboard_login(error: str = "") -> bytes:
           {_discord_icon_html()}
           <span>Login</span>
         </a>
-        <p class="muted">Only Discord users with Manage Server or Administrator can edit that server.</p>
+        <p class="muted">Only server owners, Administrators, and users with Manage Server can edit that server.</p>
         """
         if discord_login_url
         else f"""
@@ -5826,20 +5839,19 @@ def _render_dashboard_login(error: str = "") -> bytes:
         f"""
         <section class="login-hero">
           <div class="login-copy">
-            <span class="pill admin-lock">Discord admin dashboard</span>
-            <h1><strong>Application panels</strong> made easy.</h1>
-            <p>Connect your Discord account, choose a server you manage, then create panels, questions, review channels, tickets, and accepted roles from one clean place.</p>
-            <div class="setup-steps">
-              <div class="setup-step"><span>1</span><strong>Pick server</strong><p>Only servers you can manage are shown.</p></div>
-              <div class="setup-step"><span>2</span><strong>Create panel</strong><p>Add moderation, partner, creator, or custom forms.</p></div>
-              <div class="setup-step"><span>3</span><strong>Add questions</strong><p>Text answers and dropdown choices both work.</p></div>
-              <div class="setup-step"><span>4</span><strong>Post panel</strong><p>Users apply in Discord DMs.</p></div>
+            <span class="pill admin-lock">Server admin dashboard</span>
+            <h1><strong>MT Dex</strong> Application Panel</h1>
+            <p class="lead">Manage application panels for the servers where your Discord account has Owner, Administrator, or Manage Server permission.</p>
+            <div class="login-points">
+              <div class="login-point"><strong>Server-safe access</strong><span class="muted">Only manageable servers appear after login.</span></div>
+              <div class="login-point"><strong>Panel builder</strong><span class="muted">Create application options, questions, dropdown answers, logs, tickets, and accepted roles from one place.</span></div>
+              <div class="login-point"><strong>Saved per server</strong><span class="muted">Each server keeps its own application setup on the Render disk.</span></div>
             </div>
           </div>
           <div class="login-panel">
             <span class="pill good">Secure Discord login</span>
             <h2 style="margin-top:12px;">Login</h2>
-            <p>No dashboard token needed when Discord login is configured.</p>
+            <p>Use Discord to open the admin panel for servers you can manage.</p>
             {error_html}
             {discord_html}
             {token_html}
@@ -5943,7 +5955,7 @@ def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = N
     if not guilds:
         return _dashboard_page(
             "Dashboard",
-            '<section class="card"><h1>No manageable servers</h1><p>Log in with a Discord account that has Manage Server or Administrator in a server where the bot is installed.</p></section>',
+            '<section class="card"><h1>No manageable servers</h1><p>Log in with a Discord account that owns the server or has Manage Server/Administrator in a server where the bot is installed.</p></section>',
         )
 
     if not _form_value(params, "guild_id"):
@@ -6287,6 +6299,76 @@ def _handle_application_dashboard_post(form: Dict[str, list[str]], headers: Any 
     return 302, _dashboard_url(guild.id, notice), None
 
 
+def _render_public_markdown_page(title: str, file_name: str) -> bytes:
+    file_path = os.path.join(os.path.dirname(__file__), file_name)
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = [f"# {title}", "", "This page is not available right now."]
+
+    html_parts = []
+    list_open = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            if list_open:
+                html_parts.append("</ul>")
+                list_open = False
+            continue
+        if line.startswith("# "):
+            if list_open:
+                html_parts.append("</ul>")
+                list_open = False
+            html_parts.append(f"<h1>{escape(line[2:].strip())}</h1>")
+        elif line.startswith("## "):
+            if list_open:
+                html_parts.append("</ul>")
+                list_open = False
+            html_parts.append(f"<h2>{escape(line[3:].strip())}</h2>")
+        elif line.startswith("- "):
+            if not list_open:
+                html_parts.append("<ul>")
+                list_open = True
+            html_parts.append(f"<li>{escape(line[2:].strip())}</li>")
+        else:
+            if list_open:
+                html_parts.append("</ul>")
+                list_open = False
+            html_parts.append(f"<p>{escape(line)}</p>")
+    if list_open:
+        html_parts.append("</ul>")
+
+    content = "\n".join(html_parts)
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)} - Military Tycoon Dex</title>
+  <style>
+    :root {{ color-scheme: dark; --bg:#0b100d; --panel:#111812; --line:rgba(245,238,216,.16); --text:#f5eed8; --muted:#c7c0aa; --teal:#21ffd0; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; min-height:100vh; background:radial-gradient(circle at 80% 0, rgba(33,255,208,.11), transparent 28%), linear-gradient(135deg, #07100c, #15160f 55%, #23190c); color:var(--text); font-family:Arial, Helvetica, sans-serif; }}
+    main {{ width:min(900px, calc(100% - 32px)); margin:0 auto; padding:46px 0 64px; }}
+    article {{ background:rgba(17,24,18,.84); border:1px solid var(--line); border-radius:10px; padding:clamp(20px, 4vw, 38px); box-shadow:0 24px 70px rgba(0,0,0,.34); }}
+    a {{ color:var(--teal); }}
+    h1 {{ font-size:clamp(34px, 6vw, 58px); margin:0 0 18px; }}
+    h2 {{ margin:28px 0 10px; }}
+    p, li {{ color:var(--muted); line-height:1.58; }}
+    .back {{ display:inline-flex; margin-bottom:18px; color:var(--teal); font-weight:900; text-decoration:none; }}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/">Back to website</a>
+    <article>{content}</article>
+  </main>
+</body>
+</html>"""
+    return html.encode("utf-8")
+
+
 class _WebsiteHandler(BaseHTTPRequestHandler):
     def _send_body(self, status_code: int, body: bytes, content_type: str) -> None:
         self.send_response(status_code)
@@ -6371,6 +6453,14 @@ class _WebsiteHandler(BaseHTTPRequestHandler):
             payload = _website_status_payload()
             body = json.dumps(payload).encode("utf-8")
             self._send_body(200, body, "application/json; charset=utf-8")
+            return
+
+        if self.path.startswith("/terms"):
+            self._send_body(200, _render_public_markdown_page("Terms of Service", "TERMS.md"), "text/html; charset=utf-8")
+            return
+
+        if self.path.startswith("/privacy"):
+            self._send_body(200, _render_public_markdown_page("Privacy Policy", "PRIVACY.md"), "text/html; charset=utf-8")
             return
 
         if self.path.startswith("/invite"):
@@ -7042,7 +7132,7 @@ if __name__ == "__main__":
     start_website_server()
 
     if not TOKEN:
-        print("No DISCORD_TOKEN found. Set it in environment variables or .env.")
+        print("No DISCORD_TOKEN found. Set it in the service environment variables.")
         raise SystemExit(1)
 
     if ENABLE_INSTANCE_LOCK:
