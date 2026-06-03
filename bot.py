@@ -7576,7 +7576,6 @@ def apply_giveaway_optional_fields(
 
 @giveaway_group.command(name="create", description="Create a giveaway")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
     duration="How long it runs, like 10m, 2h, 3d, or 1w",
     winners="The number of winners for this giveaway",
@@ -7696,7 +7695,6 @@ async def giveaway_create_slash(
 
 @giveaway_group.command(name="delete", description="Delete a giveaway")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(giveaway_id="The giveaway ID or message ID")
 async def giveaway_delete_slash(interaction: discord.Interaction, giveaway_id: str):
     if not await require_giveaway_manager(interaction):
@@ -7722,7 +7720,6 @@ async def giveaway_delete_slash(interaction: discord.Interaction, giveaway_id: s
 
 @giveaway_group.command(name="edit", description="Edit a giveaway")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
     giveaway_id="The giveaway ID or message ID",
     prize="New prize",
@@ -7824,7 +7821,6 @@ async def giveaway_edit_slash(
 
 @giveaway_group.command(name="end", description="End a giveaway early")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(giveaway_id="The giveaway ID or message ID")
 async def giveaway_end_slash(interaction: discord.Interaction, giveaway_id: str):
     if not await require_giveaway_manager(interaction):
@@ -7840,7 +7836,6 @@ async def giveaway_end_slash(interaction: discord.Interaction, giveaway_id: str)
 
 @giveaway_group.command(name="fix", description="Fix a giveaway if it fails to update")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(giveaway_id="The giveaway ID or message ID")
 async def giveaway_fix_slash(interaction: discord.Interaction, giveaway_id: str):
     if not await require_giveaway_manager(interaction):
@@ -7862,7 +7857,6 @@ async def giveaway_fix_slash(interaction: discord.Interaction, giveaway_id: str)
 
 @giveaway_group.command(name="reroll", description="Reroll winners for an ended giveaway")
 @app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(giveaway_id="The giveaway ID or message ID")
 async def giveaway_reroll_slash(interaction: discord.Interaction, giveaway_id: str):
     if not await require_giveaway_manager(interaction):
