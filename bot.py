@@ -142,6 +142,7 @@ MARKET_LISTINGS_FILE = os.path.join(DATA_DIR, "market_listings.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
+GIVEAWAYS_FILE = os.path.join(DATA_DIR, "giveaways.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
@@ -235,6 +236,11 @@ FRESH_CATCH_BONUS = _read_money_env("FRESH_CATCH_BONUS", 50)
 SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 100)
 MONEY_TRADE_ALIASES = {"money", "cash", "coin", "coins", "dollar", "dollars", "$"}
 COIN_EMOJI = os.getenv("COIN_EMOJI", "\U0001FA99").strip() or "\U0001FA99"
+GIVEAWAY_EMOJI = os.getenv("GIVEAWAY_EMOJI", "\U0001F389").strip() or "\U0001F389"
+GIVEAWAY_CHECK_INTERVAL_SECONDS = max(10, _read_money_env("GIVEAWAY_CHECK_INTERVAL_SECONDS", 20))
+GIVEAWAY_MIN_DURATION_SECONDS = 60
+GIVEAWAY_MAX_DURATION_SECONDS = 60 * 60 * 24 * 30
+GIVEAWAY_PARTICIPANTS_PAGE_SIZE = 10
 
 EXOTIC_RAINBOW_COLORS = (
     0xFF00D4,  # neon magenta
@@ -288,16 +294,20 @@ BALANCES_CACHE: Optional[Dict[str, int]] = None
 MARKET_LISTINGS_CACHE: Optional[list[Dict[str, Any]]] = None
 GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
+GIVEAWAYS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
 VEHICLE_ALIASES_CACHE: Dict[str, str] = {}
 VEHICLE_ALIASES_CACHE_SIGNATURE: Optional[tuple[tuple[str, Optional[float], Optional[int]], ...]] = None
+REGISTERED_GIVEAWAY_VIEW_IDS: set[str] = set()
 
 
 FRESH_INVENTORY_SUFFIX = "|fresh"
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
+GIVEAWAY_ID_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
+GIVEAWAY_DURATION_PART_RE = re.compile(r"(\d+)\s*([smhdw])", re.IGNORECASE)
 NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
 CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
@@ -788,6 +798,8 @@ def build_help_message(*, include_bot_admin: bool = False) -> str:
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
+        "`/giveaway start prize duration winners [channel]` - Start a giveaway (Manage Server)\n"
+        "`/giveaway end giveaway_id` - End a giveaway early (Manage Server)\n"
     )
     if include_bot_admin:
         message += (
@@ -1431,6 +1443,502 @@ def save_spawn_records(records: Dict[str, Dict[str, Any]]) -> None:
             json.dump(records, handle, indent=2, sort_keys=True)
     except Exception as error:
         print(f"Error saving {SPAWN_RECORDS_FILE}: {error}")
+
+
+def _coerce_user_id_list(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+
+    seen: set[int] = set()
+    user_ids: list[int] = []
+    for raw_user_id in values:
+        parsed_user_id = _parse_user_id_value(raw_user_id)
+        if parsed_user_id is None or parsed_user_id in seen:
+            continue
+        user_ids.append(parsed_user_id)
+        seen.add(parsed_user_id)
+    return user_ids
+
+
+def _normalize_giveaway_id(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = normalized.strip("` ")
+    return normalized if GIVEAWAY_ID_RE.fullmatch(normalized) else ""
+
+
+def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(record, dict):
+        return None
+
+    giveaway_id = _normalize_giveaway_id(record.get("id") or raw_giveaway_id)
+    if not giveaway_id:
+        return None
+
+    guild_id = _parse_user_id_value(record.get("guild_id"))
+    channel_id = _parse_user_id_value(record.get("channel_id"))
+    host_id = _parse_user_id_value(record.get("host_id"))
+    if guild_id is None or channel_id is None or host_id is None:
+        return None
+
+    prize = truncate(str(record.get("prize") or "Giveaway prize").strip(), 180)
+    winners = min(20, max(1, _coerce_non_negative_int(record.get("winners", 1))))
+    end_at = max(0, _coerce_non_negative_int(record.get("end_at", 0)))
+    created_at = max(0, _coerce_non_negative_int(record.get("created_at", int(time.time()))))
+    ended_at = max(0, _coerce_non_negative_int(record.get("ended_at", 0)))
+    message_id = _parse_user_id_value(record.get("message_id")) or 0
+    forced_winner_id = _parse_user_id_value(record.get("forced_winner_id"))
+
+    normalized: Dict[str, Any] = {
+        "id": giveaway_id,
+        "guild_id": guild_id,
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "host_id": host_id,
+        "prize": prize,
+        "winners": winners,
+        "end_at": end_at,
+        "created_at": created_at,
+        "participant_ids": _coerce_user_id_list(record.get("participant_ids")),
+        "forced_winner_id": forced_winner_id,
+        "ended": bool(record.get("ended", False)),
+        "ended_at": ended_at,
+        "winner_ids": _coerce_user_id_list(record.get("winner_ids")),
+    }
+    if normalized["ended"] and not normalized["ended_at"]:
+        normalized["ended_at"] = int(time.time())
+    return normalized
+
+
+def load_giveaways() -> Dict[str, Dict[str, Any]]:
+    global GIVEAWAYS_CACHE
+
+    if GIVEAWAYS_CACHE is not None:
+        return GIVEAWAYS_CACHE
+
+    if not os.path.exists(GIVEAWAYS_FILE):
+        GIVEAWAYS_CACHE = {}
+        return GIVEAWAYS_CACHE
+
+    try:
+        with open(GIVEAWAYS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {GIVEAWAYS_FILE}: {error}")
+        GIVEAWAYS_CACHE = {}
+        return GIVEAWAYS_CACHE
+
+    if not isinstance(raw_data, dict):
+        GIVEAWAYS_CACHE = {}
+        save_giveaways(GIVEAWAYS_CACHE)
+        return GIVEAWAYS_CACHE
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    migrated = False
+    for raw_giveaway_id, raw_record in raw_data.items():
+        record = _normalize_giveaway_record(raw_giveaway_id, raw_record)
+        if record is None:
+            migrated = True
+            continue
+        normalized[record["id"]] = record
+        if record != raw_record or record["id"] != raw_giveaway_id:
+            migrated = True
+
+    GIVEAWAYS_CACHE = normalized
+    if migrated:
+        save_giveaways(GIVEAWAYS_CACHE)
+    return GIVEAWAYS_CACHE
+
+
+def save_giveaways(giveaways: Dict[str, Dict[str, Any]]) -> None:
+    global GIVEAWAYS_CACHE
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for giveaway_id, record in giveaways.items():
+        normalized_record = _normalize_giveaway_record(giveaway_id, record)
+        if normalized_record is not None:
+            normalized[normalized_record["id"]] = normalized_record
+
+    try:
+        os.makedirs(os.path.dirname(GIVEAWAYS_FILE), exist_ok=True)
+        with open(GIVEAWAYS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(normalized, handle, indent=2, sort_keys=True)
+        GIVEAWAYS_CACHE = normalized
+    except Exception as error:
+        print(f"Error saving {GIVEAWAYS_FILE}: {error}")
+
+
+def base36(value: int) -> str:
+    alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+    value = max(0, int(value))
+    if value == 0:
+        return "0"
+
+    digits: list[str] = []
+    while value:
+        value, remainder = divmod(value, 36)
+        digits.append(alphabet[remainder])
+    return "".join(reversed(digits))
+
+
+def generate_giveaway_id() -> str:
+    giveaways = load_giveaways()
+    for _ in range(50):
+        candidate = f"gw{base36(int(time.time()))[-5:]}{secrets.token_hex(2)}"
+        if candidate not in giveaways:
+            return candidate
+    return f"gw{secrets.token_hex(6)}"
+
+
+def parse_giveaway_duration(value: str) -> Optional[int]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        seconds = int(raw) * 60
+    else:
+        seconds = 0
+        consumed = ""
+        unit_seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+        for amount, unit in GIVEAWAY_DURATION_PART_RE.findall(raw):
+            seconds += int(amount) * unit_seconds[unit.lower()]
+            consumed += f"{amount}{unit}"
+        compact_raw = re.sub(r"\s+", "", raw)
+        if not seconds or consumed.lower() != compact_raw:
+            return None
+
+    if seconds < GIVEAWAY_MIN_DURATION_SECONDS or seconds > GIVEAWAY_MAX_DURATION_SECONDS:
+        return None
+    return seconds
+
+
+def format_discord_timestamp(timestamp: int, style: str = "R") -> str:
+    return f"<t:{max(0, int(timestamp))}:{style}>"
+
+
+def find_giveaway_id(lookup: str) -> Optional[str]:
+    lookup = str(lookup or "").strip().strip("`")
+    if not lookup:
+        return None
+
+    giveaways = load_giveaways()
+    normalized_lookup = lookup.lower()
+    if normalized_lookup in giveaways:
+        return normalized_lookup
+
+    for giveaway_id, giveaway in giveaways.items():
+        if str(giveaway.get("message_id") or "") == lookup:
+            return giveaway_id
+    return None
+
+
+def _giveaway_participant_count(giveaway: Dict[str, Any]) -> int:
+    return len(_coerce_user_id_list(giveaway.get("participant_ids")))
+
+
+def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
+    end_at = int(giveaway.get("end_at") or 0)
+    participants = _giveaway_participant_count(giveaway)
+    color = discord.Color.red() if giveaway.get("ended") else discord.Color.blue()
+
+    if giveaway.get("ended"):
+        winner_ids = _coerce_user_id_list(giveaway.get("winner_ids"))
+        winner_text = ", ".join(f"<@{user_id}>" for user_id in winner_ids) if winner_ids else "No valid entries"
+        description = (
+            f"Winner{'s' if len(winner_ids) != 1 else ''}: {winner_text}\n"
+            f"Entries: **{format_count(participants)}**\n"
+            f"Ended at: {format_discord_timestamp(int(giveaway.get('ended_at') or end_at), 'F')}"
+        )
+        embed = discord.Embed(
+            title=f"\U0001F389 GIVEAWAY ENDED \U0001F389\n{giveaway.get('prize', 'Giveaway prize')}",
+            description=description,
+            color=color,
+        )
+    else:
+        description = (
+            f"Click {GIVEAWAY_EMOJI} button to enter!\n"
+            f"Winners: **{format_count(giveaway.get('winners', 1))}**\n"
+            f"Hosted by: <@{giveaway.get('host_id')}>\n"
+            f"Ends: {format_discord_timestamp(end_at, 'R')}\n"
+            f"Ends at: {format_discord_timestamp(end_at, 'F')}"
+        )
+        embed = discord.Embed(
+            title=str(giveaway.get("prize", "Giveaway prize")),
+            description=description,
+            color=color,
+        )
+
+    embed.set_footer(text=f"Giveaway ID: {giveaway.get('id')} | Entries: {format_count(participants)}")
+    if bot.user and bot.user.display_avatar:
+        embed.set_author(name=bot.user.display_name, icon_url=bot.user.display_avatar.url)
+    return embed
+
+
+def choose_giveaway_winners(giveaway: Dict[str, Any]) -> list[int]:
+    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+    forced_winner_id = _parse_user_id_value(giveaway.get("forced_winner_id"))
+    winner_count = min(20, max(1, _coerce_non_negative_int(giveaway.get("winners", 1))))
+
+    winners: list[int] = []
+    if forced_winner_id is not None:
+        winners.append(forced_winner_id)
+
+    pool = [user_id for user_id in participant_ids if user_id not in winners]
+    random.shuffle(pool)
+    winners.extend(pool[: max(0, winner_count - len(winners))])
+    return winners[:winner_count]
+
+
+async def fetch_giveaway_message(giveaway: Dict[str, Any]) -> Optional[discord.Message]:
+    channel_id = _parse_user_id_value(giveaway.get("channel_id"))
+    message_id = _parse_user_id_value(giveaway.get("message_id"))
+    if channel_id is None or message_id is None:
+        return None
+
+    try:
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
+        print(f"Could not fetch giveaway channel {channel_id}: {error}")
+        return None
+
+    if not hasattr(channel, "fetch_message"):
+        return None
+
+    try:
+        return await channel.fetch_message(message_id)  # type: ignore[attr-defined]
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
+        print(f"Could not fetch giveaway message {message_id}: {error}")
+        return None
+
+
+async def update_giveaway_message(giveaway_id: str) -> bool:
+    giveaway = load_giveaways().get(giveaway_id)
+    if not giveaway:
+        return False
+
+    message = await fetch_giveaway_message(giveaway)
+    if message is None:
+        return False
+
+    try:
+        view = None if giveaway.get("ended") else GiveawayView(giveaway_id)
+        await message.edit(embed=build_giveaway_embed(giveaway), view=view)
+        return True
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"Could not update giveaway message {giveaway_id}: {error}")
+        return False
+
+
+async def end_giveaway(giveaway_id: str, *, manual: bool = False) -> tuple[bool, str]:
+    giveaways = load_giveaways()
+    giveaway = giveaways.get(giveaway_id)
+    if not giveaway:
+        return False, "Giveaway not found."
+    if giveaway.get("ended"):
+        return False, "Giveaway already ended."
+
+    winner_ids = choose_giveaway_winners(giveaway)
+    giveaway["ended"] = True
+    giveaway["ended_at"] = int(time.time())
+    giveaway["winner_ids"] = winner_ids
+    giveaways[giveaway_id] = giveaway
+    save_giveaways(giveaways)
+
+    await update_giveaway_message(giveaway_id)
+
+    if not manual:
+        message = await fetch_giveaway_message(giveaway)
+        if message is not None:
+            if winner_ids:
+                winner_mentions = ", ".join(f"<@{user_id}>" for user_id in winner_ids)
+                announcement = f"\U0001F389 Congratulations {winner_mentions}! You won **{giveaway['prize']}**."
+            else:
+                announcement = f"\U0001F389 Giveaway **{giveaway['prize']}** ended with no valid entries."
+            try:
+                await message.channel.send(announcement)
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(f"Could not send giveaway winner announcement {giveaway_id}: {error}")
+
+    return True, "Giveaway ended."
+
+
+def register_giveaway_view(giveaway_id: str) -> None:
+    if giveaway_id in REGISTERED_GIVEAWAY_VIEW_IDS:
+        return
+
+    giveaway = load_giveaways().get(giveaway_id)
+    if not giveaway or giveaway.get("ended") or not giveaway.get("message_id"):
+        return
+
+    try:
+        bot.add_view(GiveawayView(giveaway_id), message_id=int(giveaway["message_id"]))
+        REGISTERED_GIVEAWAY_VIEW_IDS.add(giveaway_id)
+    except Exception as error:
+        print(f"Could not register persistent giveaway view {giveaway_id}: {error}")
+
+
+def restore_giveaway_views() -> None:
+    for giveaway_id, giveaway in load_giveaways().items():
+        if giveaway.get("ended"):
+            continue
+        register_giveaway_view(giveaway_id)
+
+
+def build_giveaway_participants_embed(giveaway: Dict[str, Any], page: int = 0) -> discord.Embed:
+    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+    total_pages = max(1, (len(participant_ids) + GIVEAWAY_PARTICIPANTS_PAGE_SIZE - 1) // GIVEAWAY_PARTICIPANTS_PAGE_SIZE)
+    page = min(max(0, page), total_pages - 1)
+    start = page * GIVEAWAY_PARTICIPANTS_PAGE_SIZE
+    visible_ids = participant_ids[start : start + GIVEAWAY_PARTICIPANTS_PAGE_SIZE]
+
+    if visible_ids:
+        lines = [
+            f"**{start + index}.** <@{user_id}> (**1 entry**)"
+            for index, user_id in enumerate(visible_ids, start=1)
+        ]
+    else:
+        lines = ["No participants yet."]
+
+    embed = discord.Embed(
+        title=f"Giveaway Participants (Page {page + 1}/{total_pages})",
+        description=(
+            f"Participants for **{giveaway.get('prize', 'Giveaway prize')}**:\n\n"
+            + "\n".join(lines)
+            + f"\n\nTotal Participants: **{format_count(len(participant_ids))}**"
+        ),
+        color=discord.Color.blue(),
+    )
+    if bot.user and bot.user.display_avatar:
+        embed.set_author(name=bot.user.display_name, icon_url=bot.user.display_avatar.url)
+    return embed
+
+
+class GiveawayParticipantsView(discord.ui.View):
+    def __init__(self, giveaway_id: str, page: int = 0):
+        super().__init__(timeout=120)
+        self.giveaway_id = giveaway_id
+        self.page = page
+        giveaway = load_giveaways().get(giveaway_id, {})
+        participant_count = _giveaway_participant_count(giveaway)
+        total_pages = max(1, (participant_count + GIVEAWAY_PARTICIPANTS_PAGE_SIZE - 1) // GIVEAWAY_PARTICIPANTS_PAGE_SIZE)
+
+        previous_button = discord.ui.Button(
+            emoji="\u25C0",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page <= 0,
+        )
+        next_button = discord.ui.Button(
+            emoji="\u25B6",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page >= total_pages - 1,
+        )
+        previous_button.callback = self.previous_page
+        next_button.callback = self.next_page
+        self.add_item(previous_button)
+        self.add_item(next_button)
+
+    async def previous_page(self, interaction: discord.Interaction):
+        await self.show_page(interaction, self.page - 1)
+
+    async def next_page(self, interaction: discord.Interaction):
+        await self.show_page(interaction, self.page + 1)
+
+    async def show_page(self, interaction: discord.Interaction, page: int):
+        giveaway = load_giveaways().get(self.giveaway_id)
+        if not giveaway:
+            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
+            return
+
+        view = GiveawayParticipantsView(self.giveaway_id, page)
+        embed = build_giveaway_participants_embed(giveaway, page)
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException) as error:
+            print(f"Could not edit giveaway participants page: {error}")
+
+
+class GiveawayView(discord.ui.View):
+    def __init__(self, giveaway_id: str):
+        super().__init__(timeout=None)
+        self.giveaway_id = giveaway_id
+        giveaway = load_giveaways().get(giveaway_id, {})
+        ended = bool(giveaway.get("ended"))
+        participant_count = _giveaway_participant_count(giveaway)
+
+        entry_button = discord.ui.Button(
+            label=format_count(participant_count),
+            emoji=GIVEAWAY_EMOJI,
+            style=discord.ButtonStyle.primary,
+            custom_id=f"giveaway:enter:{giveaway_id}",
+            disabled=ended,
+        )
+        participant_button = discord.ui.Button(
+            label="Participants",
+            emoji="\U0001F465",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"giveaway:participants:{giveaway_id}",
+        )
+        entry_button.callback = self.entry_button
+        participant_button.callback = self.participants_button
+        self.add_item(entry_button)
+        self.add_item(participant_button)
+
+    async def entry_button(self, interaction: discord.Interaction):
+        giveaways = load_giveaways()
+        giveaway = giveaways.get(self.giveaway_id)
+        if not giveaway:
+            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
+            return
+
+        if giveaway.get("ended") or int(giveaway.get("end_at") or 0) <= int(time.time()):
+            await safe_send(interaction, "This giveaway has ended.", ephemeral=True)
+            return
+
+        participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+        if interaction.user.id in participant_ids:
+            participant_ids = [user_id for user_id in participant_ids if user_id != interaction.user.id]
+            response_text = "You left this giveaway."
+        else:
+            participant_ids.append(interaction.user.id)
+            response_text = "You entered this giveaway."
+
+        giveaway["participant_ids"] = participant_ids
+        giveaways[self.giveaway_id] = giveaway
+        save_giveaways(giveaways)
+
+        if interaction.message:
+            try:
+                await interaction.message.edit(embed=build_giveaway_embed(giveaway), view=GiveawayView(self.giveaway_id))
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(f"Could not update giveaway entry count {self.giveaway_id}: {error}")
+
+        await safe_send(interaction, response_text, ephemeral=True)
+
+    async def participants_button(self, interaction: discord.Interaction):
+        giveaway = load_giveaways().get(self.giveaway_id)
+        if not giveaway:
+            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
+            return
+
+        await safe_send(
+            interaction,
+            embed=build_giveaway_participants_embed(giveaway),
+            view=GiveawayParticipantsView(self.giveaway_id),
+            ephemeral=True,
+        )
+
+
+@tasks.loop(seconds=GIVEAWAY_CHECK_INTERVAL_SECONDS)
+async def giveaway_end_task():
+    now = int(time.time())
+    for giveaway_id, giveaway in list(load_giveaways().items()):
+        if giveaway.get("ended"):
+            continue
+        if int(giveaway.get("end_at") or 0) <= now:
+            try:
+                await end_giveaway(giveaway_id)
+            except Exception as error:
+                print(f"Giveaway end task failed for {giveaway_id}: {error}")
 
 
 def remember_spawn_message(message: discord.Message, view: "CatchView") -> None:
@@ -6594,6 +7102,122 @@ async def sync_all_commands():
 register_trade_commands(bot)
 
 
+giveaway_group = app_commands.Group(name="giveaway", description="Create and manage giveaways")
+
+
+@giveaway_group.command(name="start", description="Start a giveaway")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    prize="The prize people are entering for",
+    duration="How long it runs, like 10m, 2h, 3d, or 1w",
+    winners="How many winners to pick",
+    channel="Optional channel to post the giveaway in",
+)
+async def giveaway_start_slash(
+    interaction: discord.Interaction,
+    prize: str,
+    duration: str,
+    winners: app_commands.Range[int, 1, 20] = 1,
+    channel: Optional[discord.TextChannel] = None,
+):
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+
+    if not interaction.permissions.manage_guild:
+        await safe_send(interaction, "Only server admins can start giveaways.", ephemeral=True)
+        return
+
+    duration_seconds = parse_giveaway_duration(duration)
+    if duration_seconds is None:
+        await safe_send(
+            interaction,
+            "Invalid duration. Use `10m`, `2h`, `3d`, or `1w` (minimum 1 minute, maximum 30 days).",
+            ephemeral=True,
+        )
+        return
+
+    target_channel = channel or interaction.channel
+    if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
+        await safe_send(interaction, "Choose a text channel for the giveaway.", ephemeral=True)
+        return
+
+    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
+    if guild_me:
+        perms = target_channel.permissions_for(guild_me)
+        missing = []
+        if not perms.send_messages:
+            missing.append("Send Messages")
+        if not perms.embed_links:
+            missing.append("Embed Links")
+        if missing:
+            await safe_send(
+                interaction,
+                f"I need {', '.join(missing)} permission in {target_channel.mention}.",
+                ephemeral=True,
+            )
+            return
+
+    giveaway_id = generate_giveaway_id()
+    now = int(time.time())
+    giveaway = {
+        "id": giveaway_id,
+        "guild_id": interaction.guild.id,
+        "channel_id": target_channel.id,
+        "message_id": 0,
+        "host_id": interaction.user.id,
+        "prize": truncate(prize.strip() or "Giveaway prize", 180),
+        "winners": int(winners),
+        "end_at": now + duration_seconds,
+        "created_at": now,
+        "participant_ids": [],
+        "forced_winner_id": None,
+        "ended": False,
+        "ended_at": 0,
+        "winner_ids": [],
+    }
+
+    giveaway_message = await target_channel.send(embed=build_giveaway_embed(giveaway), view=GiveawayView(giveaway_id))
+    giveaway["message_id"] = giveaway_message.id
+    giveaways = load_giveaways()
+    giveaways[giveaway_id] = giveaway
+    save_giveaways(giveaways)
+    register_giveaway_view(giveaway_id)
+
+    await safe_send(
+        interaction,
+        f"Giveaway started in {target_channel.mention}. ID: `{giveaway_id}`",
+        ephemeral=True,
+    )
+
+
+@giveaway_group.command(name="end", description="End a giveaway early")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(giveaway_id="The giveaway ID from the giveaway footer")
+async def giveaway_end_slash(interaction: discord.Interaction, giveaway_id: str):
+    if not interaction.guild:
+        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
+        return
+
+    if not interaction.permissions.manage_guild:
+        await safe_send(interaction, "Only server admins can end giveaways.", ephemeral=True)
+        return
+
+    resolved_giveaway_id = find_giveaway_id(giveaway_id)
+    giveaway = load_giveaways().get(resolved_giveaway_id or "")
+    if not resolved_giveaway_id or not giveaway or int(giveaway.get("guild_id") or 0) != interaction.guild.id:
+        await safe_send(interaction, "Giveaway not found in this server.", ephemeral=True)
+        return
+
+    success, message = await end_giveaway(resolved_giveaway_id, manual=False)
+    await safe_send(interaction, message if success else f"Could not end giveaway: {message}", ephemeral=True)
+
+
+bot.tree.add_command(giveaway_group)
+
+
 @bot.tree.command(name="help", description="Show MT vehicle bot commands")
 async def help_slash(interaction: discord.Interaction):
     await safe_send(
@@ -6836,6 +7460,66 @@ async def on_message(message: discord.Message):
             await message.channel.send(vehicle_name)
         else:
             await message.channel.send("I could not find a saved spawn for that message ID.")
+        return
+
+    if command == "!winner":
+        if not has_admin_access(message):
+            return
+
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+
+        async def send_winner_notice(text: str) -> None:
+            try:
+                await message.author.send(text)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        if len(parts) != 3:
+            await send_winner_notice("Usage: `!winner giveaway_id user_id`")
+            return
+
+        resolved_giveaway_id = find_giveaway_id(parts[1])
+        giveaways = load_giveaways()
+        giveaway = giveaways.get(resolved_giveaway_id or "")
+        if not resolved_giveaway_id or not giveaway:
+            await send_winner_notice("Giveaway not found.")
+            return
+
+        if message.guild and int(giveaway.get("guild_id") or 0) != message.guild.id:
+            await send_winner_notice("That giveaway belongs to another server.")
+            return
+
+        user_id_match = DIGIT_ID_RE.search(parts[2])
+        if not user_id_match:
+            await send_winner_notice("Could not find a user ID.")
+            return
+
+        forced_winner_id = int(user_id_match.group(1))
+        participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+        if forced_winner_id not in participant_ids:
+            participant_ids.append(forced_winner_id)
+
+        giveaway["participant_ids"] = participant_ids
+        giveaway["forced_winner_id"] = forced_winner_id
+        if giveaway.get("ended"):
+            existing_winners = [
+                user_id
+                for user_id in _coerce_user_id_list(giveaway.get("winner_ids"))
+                if user_id != forced_winner_id
+            ]
+            giveaway["winner_ids"] = [forced_winner_id, *existing_winners][
+                : min(20, max(1, _coerce_non_negative_int(giveaway.get("winners", 1))))
+            ]
+
+        giveaways[resolved_giveaway_id] = giveaway
+        save_giveaways(giveaways)
+        await update_giveaway_message(resolved_giveaway_id)
+        await send_winner_notice(
+            f"Winner override saved for giveaway `{resolved_giveaway_id}`: <@{forced_winner_id}>"
+        )
         return
 
     if command in {"!catalogdebug", "!vehicledebug"}:
@@ -7117,8 +7801,13 @@ async def on_ready():
     if not rainbow_task.is_running():
         rainbow_task.start()
 
+    restore_giveaway_views()
+    if not giveaway_end_task.is_running():
+        giveaway_end_task.start()
+
 
 async def setup_hook():
+    restore_giveaway_views()
     try:
         await sync_all_commands()
     except Exception as error:

@@ -3,6 +3,7 @@
 Military Tycoon Vehicle Dex Bot is a Discord bot for Roblox Military Tycoon communities.
 
 It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading, market listings, leaderboards, practice games, and server application panels.
+It also includes simple server giveaways with button entries and automatic winner picking.
 
 ## Features
 
@@ -14,6 +15,7 @@ It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading,
 - Player market and instant base-price selling
 - Vehicle and money leaderboards
 - Vehicle guessing practice game
+- Server giveaways with entry buttons and participant lists
 - Server settings for spawn channels and wrong-name comments
 - Admin application panel dashboard with Discord login
 - Per-server application panels, questions, logs, tickets, and accepted-role rewards
@@ -42,6 +44,8 @@ It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading,
 | --- | --- |
 | `/dexchannel #channel` | Set the channel used for vehicle spawns |
 | `/botcomment public:true/false` | Choose whether wrong-name comments are public or private |
+| `/giveaway start prize duration winners [channel]` | Start a server giveaway |
+| `/giveaway end giveaway_id` | End a server giveaway early |
 
 Application panels can be managed from the web dashboard by users who own the server or have Administrator/Manage Server permission.
 
