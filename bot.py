@@ -11,6 +11,7 @@ import re
 import secrets
 import sys
 import time
+from datetime import datetime, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -144,6 +145,7 @@ ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
 SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
 GIVEAWAYS_FILE = os.path.join(DATA_DIR, "giveaways.json")
 GIVEAWAY_SETTINGS_FILE = os.path.join(DATA_DIR, "giveaway_settings.json")
+MESSAGE_STATS_FILE = os.path.join(DATA_DIR, "message_stats.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
@@ -242,6 +244,7 @@ GIVEAWAY_CHECK_INTERVAL_SECONDS = max(10, _read_money_env("GIVEAWAY_CHECK_INTERV
 GIVEAWAY_MIN_DURATION_SECONDS = 60
 GIVEAWAY_MAX_DURATION_SECONDS = 60 * 60 * 24 * 30
 GIVEAWAY_PARTICIPANTS_PAGE_SIZE = 10
+MESSAGE_STATS_SAVE_INTERVAL_SECONDS = max(1, _read_money_env("MESSAGE_STATS_SAVE_INTERVAL_SECONDS", 15))
 
 EXOTIC_RAINBOW_COLORS = (
     0xFF00D4,  # neon magenta
@@ -297,6 +300,8 @@ GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
 GIVEAWAYS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 GIVEAWAY_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+MESSAGE_STATS_CACHE: Optional[Dict[str, Any]] = None
+MESSAGE_STATS_LAST_SAVE = 0.0
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
@@ -781,8 +786,8 @@ def format_uptime(seconds: int) -> str:
 
 def build_help_message(*, include_bot_admin: bool = False) -> str:
     message = (
-        "**MT Vehicle Bot Commands:**\n\n"
-        "**Commands Users Can Use**\n"
+        "**MT Vehicle Bot Commands**\n\n"
+        "**Players**\n"
         "`/help` - Show this help message\n"
         "`/about` - Show bot info, stats, and links\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
@@ -800,8 +805,10 @@ def build_help_message(*, include_bot_admin: bool = False) -> str:
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
-        "`/giveaway create duration winners prize [channel]` - Create a giveaway\n"
-        "`/giveaway edit|delete|end|fix|reroll giveaway_id` - Manage giveaways\n"
+        "`/giveaway create duration winners prize` - Create a giveaway with roles, message requirements, images, and extra entries\n"
+        "`/giveaway edit giveaway_id` - Edit giveaway fields or clear image/requirements/extra entries\n"
+        "`/giveaway delete|end|fix|reroll giveaway_id` - Manage giveaways\n"
+        "`/giveaway remove-participant giveaway_id user` - Remove an entry from a giveaway\n"
         "`/giveaway creator-roles|manager-roles` - Set giveaway staff roles\n"
         "`/application panel #channel` - Post or refresh the application panel\n"
         "`/application log #channel` - Set the application log/review channel\n"
@@ -836,6 +843,15 @@ def build_help_message(*, include_bot_admin: bool = False) -> str:
         f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
     return message
+
+
+def build_help_embed(*, include_bot_admin: bool = False) -> discord.Embed:
+    embed = discord.Embed(
+        title="MT Vehicle Bot Commands",
+        description=build_help_message(include_bot_admin=include_bot_admin),
+        color=discord.Color.green(),
+    )
+    return embed
 
 
 async def resolve_user_from_token(token: str, guild: Optional[discord.Guild]) -> Optional[discord.abc.User]:
@@ -1452,6 +1468,115 @@ def save_spawn_records(records: Dict[str, Dict[str, Any]]) -> None:
         print(f"Error saving {SPAWN_RECORDS_FILE}: {error}")
 
 
+def current_message_period_keys(now: Optional[datetime] = None) -> Dict[str, str]:
+    now = now or datetime.now(timezone.utc)
+    iso_year, iso_week, _ = now.isocalendar()
+    return {
+        "day": now.strftime("%Y-%m-%d"),
+        "week": f"{iso_year}-W{iso_week:02d}",
+        "month": now.strftime("%Y-%m"),
+    }
+
+
+def normalize_message_user_stats(record: Any, periods: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    periods = periods or current_message_period_keys()
+    record = record if isinstance(record, dict) else {}
+    normalized = {
+        "total": _coerce_non_negative_int(record.get("total", 0)),
+        "day_key": str(record.get("day_key") or periods["day"]),
+        "day_count": _coerce_non_negative_int(record.get("day_count", 0)),
+        "week_key": str(record.get("week_key") or periods["week"]),
+        "week_count": _coerce_non_negative_int(record.get("week_count", 0)),
+        "month_key": str(record.get("month_key") or periods["month"]),
+        "month_count": _coerce_non_negative_int(record.get("month_count", 0)),
+    }
+    if normalized["day_key"] != periods["day"]:
+        normalized["day_key"] = periods["day"]
+        normalized["day_count"] = 0
+    if normalized["week_key"] != periods["week"]:
+        normalized["week_key"] = periods["week"]
+        normalized["week_count"] = 0
+    if normalized["month_key"] != periods["month"]:
+        normalized["month_key"] = periods["month"]
+        normalized["month_count"] = 0
+    return normalized
+
+
+def load_message_stats() -> Dict[str, Any]:
+    global MESSAGE_STATS_CACHE
+
+    if MESSAGE_STATS_CACHE is not None:
+        return MESSAGE_STATS_CACHE
+
+    if not os.path.exists(MESSAGE_STATS_FILE):
+        MESSAGE_STATS_CACHE = {"guilds": {}}
+        return MESSAGE_STATS_CACHE
+
+    try:
+        with open(MESSAGE_STATS_FILE, "r", encoding="utf-8") as handle:
+            raw_data = json.load(handle)
+    except Exception as error:
+        print(f"Error loading {MESSAGE_STATS_FILE}: {error}")
+        MESSAGE_STATS_CACHE = {"guilds": {}}
+        return MESSAGE_STATS_CACHE
+
+    guilds = raw_data.get("guilds") if isinstance(raw_data, dict) else {}
+    MESSAGE_STATS_CACHE = {"guilds": guilds if isinstance(guilds, dict) else {}}
+    return MESSAGE_STATS_CACHE
+
+
+def save_message_stats(*, force: bool = False) -> None:
+    global MESSAGE_STATS_CACHE, MESSAGE_STATS_LAST_SAVE
+
+    if MESSAGE_STATS_CACHE is None:
+        return
+
+    now = time.monotonic()
+    if not force and MESSAGE_STATS_LAST_SAVE and now - MESSAGE_STATS_LAST_SAVE < MESSAGE_STATS_SAVE_INTERVAL_SECONDS:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(MESSAGE_STATS_FILE), exist_ok=True)
+        with open(MESSAGE_STATS_FILE, "w", encoding="utf-8") as handle:
+            json.dump(MESSAGE_STATS_CACHE, handle, indent=2, sort_keys=True)
+        MESSAGE_STATS_LAST_SAVE = now
+    except Exception as error:
+        print(f"Error saving {MESSAGE_STATS_FILE}: {error}")
+
+
+def record_guild_message_stat(message: discord.Message) -> None:
+    if not message.guild or message.author.bot:
+        return
+
+    periods = current_message_period_keys()
+    stats = load_message_stats()
+    guilds = stats.setdefault("guilds", {})
+    guild_stats = guilds.setdefault(str(message.guild.id), {})
+    users = guild_stats.setdefault("users", {})
+    user_stats = normalize_message_user_stats(users.get(str(message.author.id)), periods)
+
+    user_stats["total"] = _coerce_non_negative_int(user_stats.get("total", 0)) + 1
+    user_stats["day_count"] = _coerce_non_negative_int(user_stats.get("day_count", 0)) + 1
+    user_stats["week_count"] = _coerce_non_negative_int(user_stats.get("week_count", 0)) + 1
+    user_stats["month_count"] = _coerce_non_negative_int(user_stats.get("month_count", 0)) + 1
+    users[str(message.author.id)] = user_stats
+    save_message_stats()
+
+
+def get_guild_user_message_counts(guild_id: int, user_id: int) -> Dict[str, int]:
+    periods = current_message_period_keys()
+    stats = load_message_stats()
+    guild_stats = stats.get("guilds", {}).get(str(guild_id), {})
+    users = guild_stats.get("users", {}) if isinstance(guild_stats, dict) else {}
+    user_stats = normalize_message_user_stats(users.get(str(user_id)), periods)
+    return {
+        "daily": _coerce_non_negative_int(user_stats.get("day_count", 0)),
+        "weekly": _coerce_non_negative_int(user_stats.get("week_count", 0)),
+        "monthly": _coerce_non_negative_int(user_stats.get("month_count", 0)),
+        "total": _coerce_non_negative_int(user_stats.get("total", 0)),
+    }
+
+
 def _coerce_user_id_list(values: Any) -> list[int]:
     if not isinstance(values, list):
         return []
@@ -1507,7 +1632,28 @@ def _coerce_role_entry_mapping(values: Any) -> Dict[str, int]:
     return _coerce_int_mapping(values, maximum=100)
 
 
-def parse_role_entry_mapping(value: Optional[str]) -> Dict[str, int]:
+def resolve_role_id_from_text(guild: Optional[discord.Guild], value: str) -> Optional[int]:
+    text = str(value or "").strip()
+    role_match = DIGIT_ID_RE.search(text)
+    if role_match:
+        return int(role_match.group(1))
+    if not guild:
+        return None
+
+    normalized_text = text.lower().strip("@&<> ")
+    if not normalized_text:
+        return None
+    for role in guild.roles:
+        if role.name.lower() == normalized_text:
+            return role.id
+    compact_text = NON_ALNUM_RE.sub("", normalized_text)
+    for role in guild.roles:
+        if NON_ALNUM_RE.sub("", role.name.lower()) == compact_text:
+            return role.id
+    return None
+
+
+def parse_role_entry_mapping(value: Optional[str], guild: Optional[discord.Guild] = None) -> Dict[str, int]:
     raw = str(value or "").strip()
     if not raw:
         return {}
@@ -1523,11 +1669,11 @@ def parse_role_entry_mapping(value: Optional[str]) -> Dict[str, int]:
             role_part, count_part = part.rsplit("=", 1)
         else:
             continue
-        role_match = DIGIT_ID_RE.search(role_part)
-        if not role_match:
+        role_id = resolve_role_id_from_text(guild, role_part)
+        if role_id is None:
             continue
         count = min(100, max(1, _coerce_non_negative_int(parse_count(count_part) or count_part)))
-        entries[str(int(role_match.group(1)))] = count
+        entries[str(role_id)] = count
     return entries
 
 
@@ -1693,6 +1839,10 @@ def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Di
         "participant_entries": participant_entries,
         "required_role_id": _parse_user_id_value(record.get("required_role_id")),
         "requirement_bypass_role_id": _parse_user_id_value(record.get("requirement_bypass_role_id")),
+        "required_daily_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_daily_messages", 0))),
+        "required_weekly_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_weekly_messages", 0))),
+        "required_monthly_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_monthly_messages", 0))),
+        "required_total_messages": min(10_000_000, _coerce_non_negative_int(record.get("required_total_messages", 0))),
         "winner_role_id": _parse_user_id_value(record.get("winner_role_id")),
         "winner_dm_message": truncate(record.get("winner_dm_message", ""), 1500),
         "create_message": truncate(record.get("create_message", ""), 1500),
@@ -1701,8 +1851,6 @@ def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Di
         "color": parse_hex_color_value(record.get("color"), None),
         "end_color": parse_hex_color_value(record.get("end_color"), None),
         "extra_entries": _coerce_role_entry_mapping(record.get("extra_entries")),
-        "other_options": truncate(record.get("other_options", ""), 1000),
-        "template_name": truncate(record.get("template_name", ""), 100),
     }
     if normalized["ended"] and not normalized["ended_at"]:
         normalized["ended_at"] = int(time.time())
@@ -1853,6 +2001,31 @@ def giveaway_member_entry_count(giveaway: Dict[str, Any], member: discord.Member
     return min(entries, 100)
 
 
+def get_giveaway_message_requirements(giveaway: Dict[str, Any]) -> Dict[str, int]:
+    return {
+        "daily": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_daily_messages", 0))),
+        "weekly": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_weekly_messages", 0))),
+        "monthly": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_monthly_messages", 0))),
+        "total": min(10_000_000, _coerce_non_negative_int(giveaway.get("required_total_messages", 0))),
+    }
+
+
+def format_giveaway_message_requirements(giveaway: Dict[str, Any]) -> str:
+    requirements = get_giveaway_message_requirements(giveaway)
+    labels = {
+        "daily": "messages today",
+        "weekly": "messages this week",
+        "monthly": "messages this month",
+        "total": "messages total",
+    }
+    lines = [
+        f"- **{format_count(required)}** {labels[key]}"
+        for key, required in requirements.items()
+        if required > 0
+    ]
+    return "\n".join(lines)
+
+
 def giveaway_entry_block_reason(guild: discord.Guild, member: discord.Member, giveaway: Dict[str, Any]) -> Optional[str]:
     bypass_role_id = _parse_user_id_value(giveaway.get("requirement_bypass_role_id"))
     if bypass_role_id and any(role.id == bypass_role_id for role in member.roles):
@@ -1863,6 +2036,23 @@ def giveaway_entry_block_reason(guild: discord.Guild, member: discord.Member, gi
         role = guild.get_role(required_role_id)
         role_text = role.mention if role else f"`{required_role_id}`"
         return f"You need {role_text} to enter this giveaway."
+    message_requirements = get_giveaway_message_requirements(giveaway)
+    if any(required > 0 for required in message_requirements.values()):
+        counts = get_guild_user_message_counts(guild.id, member.id)
+        missing_lines = []
+        labels = {
+            "daily": "today",
+            "weekly": "this week",
+            "monthly": "this month",
+            "total": "total",
+        }
+        for key, required in message_requirements.items():
+            if required > 0 and counts.get(key, 0) < required:
+                missing_lines.append(
+                    f"{labels[key]}: {format_count(counts.get(key, 0))}/{format_count(required)}"
+                )
+        if missing_lines:
+            return "You do not meet the message requirements for this giveaway: " + ", ".join(missing_lines)
     return None
 
 
@@ -1935,6 +2125,9 @@ def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
         requirement_lines = []
         if giveaway.get("required_role_id"):
             requirement_lines.append(f"Must have role: {format_giveaway_role(guild, giveaway.get('required_role_id'))}")
+        message_requirements_text = format_giveaway_message_requirements(giveaway)
+        if message_requirements_text:
+            requirement_lines.append(f"Must have sent:\n{message_requirements_text}")
         if giveaway.get("requirement_bypass_role_id"):
             requirement_lines.append(
                 f"Requirement bypass role: {format_giveaway_role(guild, giveaway.get('requirement_bypass_role_id'))}"
@@ -1944,8 +2137,6 @@ def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
         extra_entries_text = format_giveaway_extra_entries(guild, giveaway)
         if extra_entries_text:
             description = f"{description}\n\n**Extra Entries**\n{extra_entries_text}"
-        if giveaway.get("other_options"):
-            description = f"{description}\n\n**Other Options**\n{truncate(giveaway.get('other_options'), 900)}"
         embed = discord.Embed(
             title=str(giveaway.get("prize", "Giveaway prize")),
             description=description,
@@ -2150,6 +2341,64 @@ def build_giveaway_participants_embed(giveaway: Dict[str, Any], page: int = 0) -
     return embed
 
 
+def remove_giveaway_participant(giveaway_id: str, user_id: int) -> tuple[bool, Optional[Dict[str, Any]]]:
+    giveaways = load_giveaways()
+    giveaway = giveaways.get(giveaway_id)
+    if not giveaway:
+        return False, None
+
+    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
+    if user_id not in participant_ids:
+        return False, giveaway
+
+    giveaway["participant_ids"] = [participant_id for participant_id in participant_ids if participant_id != user_id]
+    participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
+    participant_entries.pop(str(user_id), None)
+    giveaway["participant_entries"] = participant_entries
+    giveaways[giveaway_id] = giveaway
+    save_giveaways(giveaways)
+    return True, giveaway
+
+
+class GiveawayRemoveParticipantModal(discord.ui.Modal, title="Remove Participant"):
+    user_text = discord.ui.TextInput(
+        label="User ID or mention",
+        placeholder="@user or 123456789012345678",
+        required=True,
+        max_length=80,
+    )
+
+    def __init__(self, giveaway_id: str, page: int):
+        super().__init__()
+        self.giveaway_id = giveaway_id
+        self.page = page
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_giveaway_manager(interaction):
+            return
+        user_id_match = DIGIT_ID_RE.search(str(self.user_text.value or ""))
+        if not user_id_match:
+            await safe_send(interaction, "I could not find a user ID in that input.", ephemeral=True)
+            return
+
+        target_user_id = int(user_id_match.group(1))
+        removed, giveaway = remove_giveaway_participant(self.giveaway_id, target_user_id)
+        if not giveaway:
+            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
+            return
+        if not removed:
+            await safe_send(interaction, "That user is not participating in this giveaway.", ephemeral=True)
+            return
+
+        await update_giveaway_message(self.giveaway_id)
+        embed = build_giveaway_participants_embed(giveaway, self.page)
+        view = GiveawayParticipantsView(self.giveaway_id, self.page)
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException):
+            await safe_send(interaction, f"Removed <@{target_user_id}> from the giveaway.", ephemeral=True)
+
+
 class GiveawayParticipantsView(discord.ui.View):
     def __init__(self, giveaway_id: str, page: int = 0):
         super().__init__(timeout=120)
@@ -2173,12 +2422,24 @@ class GiveawayParticipantsView(discord.ui.View):
         next_button.callback = self.next_page
         self.add_item(previous_button)
         self.add_item(next_button)
+        remove_button = discord.ui.Button(
+            label="Remove A Participant",
+            style=discord.ButtonStyle.danger,
+            disabled=participant_count <= 0,
+        )
+        remove_button.callback = self.remove_participant
+        self.add_item(remove_button)
 
     async def previous_page(self, interaction: discord.Interaction):
         await self.show_page(interaction, self.page - 1)
 
     async def next_page(self, interaction: discord.Interaction):
         await self.show_page(interaction, self.page + 1)
+
+    async def remove_participant(self, interaction: discord.Interaction):
+        if not await require_giveaway_manager(interaction):
+            return
+        await interaction.response.send_modal(GiveawayRemoveParticipantModal(self.giveaway_id, self.page))
 
     async def show_page(self, interaction: discord.Interaction, page: int):
         giveaway = load_giveaways().get(self.giveaway_id)
@@ -7460,6 +7721,15 @@ def giveaway_color_is_valid(value: Optional[str]) -> bool:
     return parse_hex_color_value(value, None) is not None or value.strip().lower() in {"default", "none", "clear"}
 
 
+def giveaway_attachment_url(attachment: Optional[discord.Attachment]) -> str:
+    if attachment is None:
+        return ""
+    filename = str(attachment.filename or "").lower()
+    content_type = str(attachment.content_type or "").lower()
+    looks_like_image = content_type.startswith("image/") or filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
+    return attachment.url if looks_like_image and is_http_url(attachment.url) else ""
+
+
 async def ensure_giveaway_channel_permissions(
     interaction: discord.Interaction,
     target_channel: discord.abc.Messageable,
@@ -7523,19 +7793,26 @@ async def require_giveaway_creator(interaction: discord.Interaction) -> bool:
 def apply_giveaway_optional_fields(
     giveaway: Dict[str, Any],
     *,
+    guild: Optional[discord.Guild] = None,
     host: Optional[discord.Member] = None,
     giveaway_create_message: Optional[str] = None,
     giveaway_winners_role: Optional[discord.Role] = None,
     giveaway_winners_dm_message: Optional[str] = None,
-    image: Optional[str] = None,
-    thumbnail: Optional[str] = None,
+    image: Optional[discord.Attachment] = None,
+    thumbnail: Optional[discord.Attachment] = None,
+    clear_image: Optional[bool] = None,
+    clear_thumbnail: Optional[bool] = None,
     required_role: Optional[discord.Role] = None,
     requirement_bypass_role: Optional[discord.Role] = None,
+    clear_requirements: Optional[bool] = None,
+    required_daily_messages: Optional[int] = None,
+    required_weekly_messages: Optional[int] = None,
+    required_monthly_messages: Optional[int] = None,
+    required_total_messages: Optional[int] = None,
     color: Optional[str] = None,
     end_color: Optional[str] = None,
     extra_entries: Optional[str] = None,
-    other_options: Optional[str] = None,
-    use_template: Optional[str] = None,
+    clear_extra_entries: Optional[bool] = None,
 ) -> Optional[str]:
     if host is not None:
         giveaway["host_id"] = host.id
@@ -7545,18 +7822,44 @@ def apply_giveaway_optional_fields(
         giveaway["winner_role_id"] = giveaway_winners_role.id
     if giveaway_winners_dm_message is not None:
         giveaway["winner_dm_message"] = truncate(giveaway_winners_dm_message, 1500)
+    if clear_image:
+        giveaway["image_url"] = ""
     if image is not None:
-        if image and not is_http_url(image):
-            return "Image must be an `http://` or `https://` URL."
-        giveaway["image_url"] = image.strip()
+        image_url = giveaway_attachment_url(image)
+        if not image_url:
+            return "Image must be a valid image upload (`png`, `jpg`, `gif`, or `webp`)."
+        giveaway["image_url"] = image_url
+    if clear_thumbnail:
+        giveaway["thumbnail_url"] = ""
     if thumbnail is not None:
-        if thumbnail and not is_http_url(thumbnail):
-            return "Thumbnail must be an `http://` or `https://` URL."
-        giveaway["thumbnail_url"] = thumbnail.strip()
+        thumbnail_url = giveaway_attachment_url(thumbnail)
+        if not thumbnail_url:
+            return "Thumbnail must be a valid image upload (`png`, `jpg`, `gif`, or `webp`)."
+        giveaway["thumbnail_url"] = thumbnail_url
+    if clear_requirements:
+        giveaway["required_role_id"] = None
+        giveaway["requirement_bypass_role_id"] = None
+        giveaway["required_daily_messages"] = 0
+        giveaway["required_weekly_messages"] = 0
+        giveaway["required_monthly_messages"] = 0
+        giveaway["required_total_messages"] = 0
     if required_role is not None:
         giveaway["required_role_id"] = required_role.id
     if requirement_bypass_role is not None:
         giveaway["requirement_bypass_role_id"] = requirement_bypass_role.id
+    requirement_updates = {
+        "required_daily_messages": required_daily_messages,
+        "required_weekly_messages": required_weekly_messages,
+        "required_monthly_messages": required_monthly_messages,
+        "required_total_messages": required_total_messages,
+    }
+    for field_name, raw_value in requirement_updates.items():
+        if raw_value is None:
+            continue
+        if raw_value < 0:
+            return "Message requirements cannot be negative."
+        maximum = 10_000_000 if field_name == "required_total_messages" else 1_000_000
+        giveaway[field_name] = min(maximum, int(raw_value))
     if color is not None:
         if not giveaway_color_is_valid(color):
             return "Color must be a hex color like `#3498db`, or `clear`."
@@ -7565,12 +7868,13 @@ def apply_giveaway_optional_fields(
         if not giveaway_color_is_valid(end_color):
             return "End color must be a hex color like `#ff5555`, or `clear`."
         giveaway["end_color"] = parse_hex_color_value(end_color, None)
+    if clear_extra_entries:
+        giveaway["extra_entries"] = {}
     if extra_entries is not None:
-        giveaway["extra_entries"] = parse_role_entry_mapping(extra_entries)
-    if other_options is not None:
-        giveaway["other_options"] = truncate(other_options, 1000)
-    if use_template is not None:
-        giveaway["template_name"] = truncate(use_template, 100)
+        parsed_entries = parse_role_entry_mapping(extra_entries, guild=guild)
+        if extra_entries.strip() and not parsed_entries:
+            return "Extra entries must use `@Role:2` or `Role Name:2`."
+        giveaway["extra_entries"] = parsed_entries
     return None
 
 
@@ -7580,40 +7884,44 @@ def apply_giveaway_optional_fields(
     duration="How long it runs, like 10m, 2h, 3d, or 1w",
     winners="The number of winners for this giveaway",
     prize="The prize for this giveaway",
-    use_template="Optional template name to label this giveaway",
     channel="The channel this giveaway will be created in",
     host="The visible host of this giveaway",
     giveaway_create_message="Optional message to send after creating the giveaway",
     giveaway_winners_role="The role the bot should give to winners",
     giveaway_winners_dm_message="The message the bot should DM to winners. Supports {prize}, {user}, {guild}, {giveaway_id}",
-    image="Image URL shown at the bottom of the embed",
-    thumbnail="Thumbnail URL shown in the top right of the embed",
+    image="Image upload shown at the bottom of the embed",
+    thumbnail="Thumbnail upload shown in the top right of the embed",
     required_role="Role required to participate",
     requirement_bypass_role="Role that bypasses requirements",
+    required_daily_messages="Messages required today",
+    required_weekly_messages="Messages required this week",
+    required_monthly_messages="Messages required this month",
+    required_total_messages="Messages required in total",
     color="Active embed hex color, like #3498db",
     end_color="Ended embed hex color, like #ff5555",
-    extra_entries="Role entry boosts like @Booster:2, @Donator:4",
-    other_options="Extra public notes shown on the giveaway",
+    extra_entries="Role entry boosts like @Booster:2, Donator:4",
 )
 async def giveaway_create_slash(
     interaction: discord.Interaction,
     duration: str,
     winners: app_commands.Range[int, 1, 20],
     prize: str,
-    use_template: Optional[str] = None,
     channel: Optional[discord.TextChannel] = None,
     host: Optional[discord.Member] = None,
     giveaway_create_message: Optional[str] = None,
     giveaway_winners_role: Optional[discord.Role] = None,
     giveaway_winners_dm_message: Optional[str] = None,
-    image: Optional[str] = None,
-    thumbnail: Optional[str] = None,
+    image: Optional[discord.Attachment] = None,
+    thumbnail: Optional[discord.Attachment] = None,
     required_role: Optional[discord.Role] = None,
     requirement_bypass_role: Optional[discord.Role] = None,
+    required_daily_messages: Optional[int] = None,
+    required_weekly_messages: Optional[int] = None,
+    required_monthly_messages: Optional[int] = None,
+    required_total_messages: Optional[int] = None,
     color: Optional[str] = None,
     end_color: Optional[str] = None,
     extra_entries: Optional[str] = None,
-    other_options: Optional[str] = None,
 ):
     if not interaction.guild:
         await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
@@ -7656,6 +7964,7 @@ async def giveaway_create_slash(
     }
     field_error = apply_giveaway_optional_fields(
         giveaway,
+        guild=interaction.guild,
         host=host,
         giveaway_create_message=giveaway_create_message,
         giveaway_winners_role=giveaway_winners_role,
@@ -7664,11 +7973,13 @@ async def giveaway_create_slash(
         thumbnail=thumbnail,
         required_role=required_role,
         requirement_bypass_role=requirement_bypass_role,
+        required_daily_messages=required_daily_messages,
+        required_weekly_messages=required_weekly_messages,
+        required_monthly_messages=required_monthly_messages,
+        required_total_messages=required_total_messages,
         color=color,
         end_color=end_color,
         extra_entries=extra_entries,
-        other_options=other_options,
-        use_template=use_template,
     )
     if field_error:
         await safe_send(interaction, field_error, ephemeral=True)
@@ -7726,16 +8037,23 @@ async def giveaway_delete_slash(interaction: discord.Interaction, giveaway_id: s
     duration="New duration from now, like 1h or 3d",
     winners="New number of winners",
     channel="Move the giveaway to a different text channel",
-    image="New image URL, or clear",
-    thumbnail="New thumbnail URL, or clear",
+    image="New image upload",
+    thumbnail="New thumbnail upload",
+    clear_image="Remove the giveaway image",
+    clear_thumbnail="Remove the giveaway thumbnail",
     color="New active hex color, or clear",
     end_color="New ended hex color, or clear",
     required_role="New required role",
     requirement_bypass_role="New bypass role",
+    clear_requirements="Clear role and message requirements",
+    required_daily_messages="Messages required today. Use 0 to clear",
+    required_weekly_messages="Messages required this week. Use 0 to clear",
+    required_monthly_messages="Messages required this month. Use 0 to clear",
+    required_total_messages="Messages required total. Use 0 to clear",
     giveaway_winners_role="New winner role",
     giveaway_winners_dm_message="New winner DM message",
-    extra_entries="New role entry boosts like @Booster:2",
-    other_options="New extra notes",
+    extra_entries="New role entry boosts like @Booster:2, Donator:4",
+    clear_extra_entries="Remove all role extra entries",
 )
 async def giveaway_edit_slash(
     interaction: discord.Interaction,
@@ -7744,16 +8062,23 @@ async def giveaway_edit_slash(
     duration: Optional[str] = None,
     winners: Optional[int] = None,
     channel: Optional[discord.TextChannel] = None,
-    image: Optional[str] = None,
-    thumbnail: Optional[str] = None,
+    image: Optional[discord.Attachment] = None,
+    thumbnail: Optional[discord.Attachment] = None,
+    clear_image: Optional[bool] = None,
+    clear_thumbnail: Optional[bool] = None,
     color: Optional[str] = None,
     end_color: Optional[str] = None,
     required_role: Optional[discord.Role] = None,
     requirement_bypass_role: Optional[discord.Role] = None,
+    clear_requirements: Optional[bool] = None,
+    required_daily_messages: Optional[int] = None,
+    required_weekly_messages: Optional[int] = None,
+    required_monthly_messages: Optional[int] = None,
+    required_total_messages: Optional[int] = None,
     giveaway_winners_role: Optional[discord.Role] = None,
     giveaway_winners_dm_message: Optional[str] = None,
     extra_entries: Optional[str] = None,
-    other_options: Optional[str] = None,
+    clear_extra_entries: Optional[bool] = None,
 ):
     if not await require_giveaway_manager(interaction):
         return
@@ -7781,16 +8106,24 @@ async def giveaway_edit_slash(
 
     field_error = apply_giveaway_optional_fields(
         giveaway,
+        guild=interaction.guild,
         giveaway_winners_role=giveaway_winners_role,
         giveaway_winners_dm_message=giveaway_winners_dm_message,
         image=image,
         thumbnail=thumbnail,
+        clear_image=clear_image,
+        clear_thumbnail=clear_thumbnail,
         required_role=required_role,
         requirement_bypass_role=requirement_bypass_role,
+        clear_requirements=clear_requirements,
+        required_daily_messages=required_daily_messages,
+        required_weekly_messages=required_weekly_messages,
+        required_monthly_messages=required_monthly_messages,
+        required_total_messages=required_total_messages,
         color=color,
         end_color=end_color,
         extra_entries=extra_entries,
-        other_options=other_options,
+        clear_extra_entries=clear_extra_entries,
     )
     if field_error:
         await safe_send(interaction, field_error, ephemeral=True)
@@ -7889,6 +8222,30 @@ async def giveaway_reroll_slash(interaction: discord.Interaction, giveaway_id: s
         except discord.HTTPException:
             pass
     await safe_send(interaction, f"Rerolled giveaway `{resolved_giveaway_id}`.", ephemeral=True)
+
+
+@giveaway_group.command(name="remove-participant", description="Remove a participant from a giveaway")
+@app_commands.guild_only()
+@app_commands.describe(giveaway_id="The giveaway ID or message ID", user="The participant to remove")
+async def giveaway_remove_participant_slash(
+    interaction: discord.Interaction,
+    giveaway_id: str,
+    user: discord.Member,
+):
+    if not await require_giveaway_manager(interaction):
+        return
+
+    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
+    if not resolved_giveaway_id or not giveaway:
+        return
+
+    removed, _ = remove_giveaway_participant(resolved_giveaway_id, user.id)
+    if not removed:
+        await safe_send(interaction, f"{user.mention} is not participating in that giveaway.", ephemeral=True)
+        return
+
+    await update_giveaway_message(resolved_giveaway_id)
+    await safe_send(interaction, f"Removed {user.mention} from giveaway `{resolved_giveaway_id}`.", ephemeral=True)
 
 
 async def update_giveaway_role_setting(
@@ -8322,7 +8679,7 @@ bot.tree.add_command(application_group)
 async def help_slash(interaction: discord.Interaction):
     await safe_send(
         interaction,
-        build_help_message(include_bot_admin=interaction.user.id in load_admin_user_ids()),
+        embed=build_help_embed(include_bot_admin=interaction.user.id in load_admin_user_ids()),
         ephemeral=True,
     )
 
@@ -8476,11 +8833,13 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+    record_guild_message_stat(message)
 
     parts = message.content.split()
     command = parts[0].lower() if parts else ""
 
     if command == "!help":
+        await message.channel.send("Use `/help` for the command list.")
         return
 
     if command in {"!permadd", "!permremove"}:
@@ -8921,6 +9280,7 @@ bot.setup_hook = setup_hook
 async def on_disconnect():
     global BOT_ONLINE
     BOT_ONLINE = False
+    save_message_stats(force=True)
 
 
 if __name__ == "__main__":
@@ -8967,6 +9327,8 @@ if __name__ == "__main__":
                 print(f"Discord HTTP error on startup: {error}. Retrying in {retry_delay}s...")
         except Exception as error:
             print(f"Unexpected bot startup error: {error}. Retrying in {retry_delay}s...")
+        finally:
+            save_message_stats(force=True)
 
         if not AUTO_RESTART_BOT:
             print("Auto-restart is disabled, so the bot process will now exit.")
