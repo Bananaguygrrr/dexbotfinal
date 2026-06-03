@@ -101,8 +101,8 @@ def _patch_help(dexbot: Any) -> None:
     if not callable(original) or getattr(original, "_guess_game_help", False):
         return
 
-    def build_help_message_with_game() -> str:
-        message = original()
+    def build_help_message_with_game(*args: Any, **kwargs: Any) -> str:
+        message = original(*args, **kwargs)
         if "`/game" in message:
             return message
 

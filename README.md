@@ -25,12 +25,14 @@ It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading,
 | `/help` | Show the bot command list |
 | `/about` | Show bot information and public links |
 | `/show vehicle_name` | Show a vehicle image, rarity, and global counts |
+| `/game [rounds]` | Start a vehicle guessing practice game |
 | `/inventory [user]` | Show inventory, fresh totals, and coin balance |
 | `/leaderboard` | Switch between vehicle and money leaderboards |
 | `/shop buy` | Search and buy vehicles listed by other users |
 | `/shop sell sell_type:market vehicle amount price` | List vehicles on the player market |
 | `/shop sell sell_type:shop vehicle amount` | Sell vehicles instantly for the base price |
 | `/trade @user` | Start a trade request |
+| `/tradeaccept @user` | Accept a trade request |
 | `/tradeadd item amount` | Add vehicles or coins to an active trade |
 | `/traderemove item amount` | Remove vehicles or coins from an active trade |
 

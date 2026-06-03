@@ -767,13 +767,14 @@ def format_uptime(seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def build_help_message() -> str:
-    return (
+def build_help_message(*, include_bot_admin: bool = False) -> str:
+    message = (
         "**MT Vehicle Bot Commands:**\n\n"
         "**Commands Users Can Use**\n"
         "`/help` - Show this help message\n"
         "`/about` - Show bot info, stats, and links\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
+        "`/game [rounds]` - Start vehicle guessing practice; no vehicles are awarded\n"
         "`/inventory [user]` - View a vehicle inventory\n"
         "`/leaderboard` - Show vehicle and coin leaderboards\n"
         "`/shop buy` - Search and buy vehicles from other players\n"
@@ -783,21 +784,27 @@ def build_help_message() -> str:
         "`/tradeaccept @user` - Accept a trade request\n"
         "`/tradeadd item amount` - Add vehicles or coins to a trade\n"
         "`/traderemove item amount` - Remove vehicles or coins from a trade\n"
+        "\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
         "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
-        "\n"
-        "**Bot Admins**\n"
-        "`!list` - Show vehicles missing pictures\n"
-        "`!vehicles` - Show total caught vehicles and fresh vehicles\n"
-        "`!check <message_id>` - Show the hidden vehicle name for a spawn message\n"
-        "`!testspawn` - Spawn a test vehicle\n"
-        "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-        "`!testspawn rarity [true|false]` - Spawn a test vehicle from any rarity\n"
-        f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
-        "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
-        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
-        "`!addmoney @user amount` - Add coins to a user\n\n"
+    )
+    if include_bot_admin:
+        message += (
+            "\n"
+            "**Bot Admins**\n"
+            "`!list` - Show vehicles missing pictures\n"
+            "`!vehicles` - Show total caught vehicles and fresh vehicles\n"
+            "`!check <message_id>` - Show the hidden vehicle name for a spawn message\n"
+            "`!testspawn` - Spawn a test vehicle\n"
+            "`!testspawn true|false` - Force the fresh state on a test spawn\n"
+            "`!testspawn rarity [true|false]` - Spawn a test vehicle from any rarity\n"
+            f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
+            "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
+            "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
+            "`!addmoney @user amount` - Add coins to a user\n\n"
+        )
+    message += (
         "**Rarities**\n"
         "`Specials` - 0.01%\n"
         "`Limited Edition` - 0.5%\n"
@@ -809,6 +816,7 @@ def build_help_message() -> str:
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
         f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
+    return message
 
 
 async def resolve_user_from_token(token: str, guild: Optional[discord.Guild]) -> Optional[discord.abc.User]:
@@ -6588,7 +6596,11 @@ register_trade_commands(bot)
 
 @bot.tree.command(name="help", description="Show MT vehicle bot commands")
 async def help_slash(interaction: discord.Interaction):
-    await safe_send(interaction, build_help_message(), ephemeral=True)
+    await safe_send(
+        interaction,
+        build_help_message(include_bot_admin=interaction.user.id in load_admin_user_ids()),
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="about", description="Show bot info, stats, and links")
