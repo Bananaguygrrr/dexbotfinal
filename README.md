@@ -3,7 +3,7 @@
 Military Tycoon Vehicle Dex Bot is a Discord bot for Roblox Military Tycoon communities.
 
 It handles vehicle spawns, catches, inventories, fresh vehicles, coins, trading, market listings, leaderboards, practice games, and server application panels.
-It also includes server giveaways with button entries, participant lists, manager roles, rerolls, role requirements, images, winner roles, and winner DMs.
+It also includes server giveaways with button entries, participant lists, manager roles, rerolls, role and message requirements, uploaded images, winner roles, and winner DMs.
 
 ## Features
 
@@ -15,7 +15,7 @@ It also includes server giveaways with button entries, participant lists, manage
 - Player market and instant base-price selling
 - Vehicle and money leaderboards
 - Vehicle guessing practice game
-- Server giveaways with entry buttons, participant lists, rerolls, role requirements, winner roles, and custom embeds
+- Server giveaways with entry buttons, participant lists, participant removal, rerolls, role requirements, message requirements, extra role entries, winner roles, and uploaded images
 - Server settings for spawn channels and wrong-name comments
 - Admin application panel dashboard with Discord login
 - Per-server application panels, questions, logs, tickets, and accepted-role rewards
@@ -44,12 +44,13 @@ It also includes server giveaways with button entries, participant lists, manage
 | --- | --- |
 | `/dexchannel #channel` | Set the channel used for vehicle spawns |
 | `/botcomment public:true/false` | Choose whether wrong-name comments are public or private |
-| `/giveaway create duration winners prize` | Create a server giveaway |
-| `/giveaway edit giveaway_id` | Edit an active giveaway |
+| `/giveaway create duration winners prize` | Create a giveaway with role requirements, message requirements, extra entries, and uploaded images |
+| `/giveaway edit giveaway_id` | Edit an active giveaway or clear images, requirements, and extra entries |
 | `/giveaway delete giveaway_id` | Delete a giveaway |
 | `/giveaway end giveaway_id` | End a giveaway early |
 | `/giveaway fix giveaway_id` | Re-render a giveaway if the message view is broken |
 | `/giveaway reroll giveaway_id` | Reroll an ended giveaway |
+| `/giveaway remove-participant giveaway_id user` | Remove a user from a giveaway |
 | `/giveaway creator-roles` | Set roles that can create giveaways |
 | `/giveaway manager-roles` | Set roles that can manage giveaways |
 | `/application panel #channel` | Post or refresh the application dropdown panel |
