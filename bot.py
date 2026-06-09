@@ -1,33 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import builtins
-import hmac
 import json
 import os
 import random
 import re
-import secrets
 import sys
 import time
-from datetime import datetime, timezone
-from html import escape
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
 from typing import Any, Dict, Iterable, Optional
-from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, urlencode, urlparse
-from urllib.request import Request, urlopen
 
 import discord
 from discord import app_commands
 from discord.errors import HTTPException, NotFound
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
-
-import application_system
-from application_system import setup_application_system
 
 try:
     import fcntl
@@ -48,48 +35,9 @@ def print_flush(*args, **kwargs):
 print = print_flush
 
 
-def truncate(value: Any, limit: int) -> str:
-    text = str(value or "")
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 3)] + "..."
-
-
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-DISCORD_CLIENT_ID = (
-    os.getenv("DISCORD_CLIENT_ID")
-    or os.getenv("DISCORD_APPLICATION_ID")
-    or os.getenv("CLIENT_ID")
-    or ""
-).strip()
-INVITE_PERMISSIONS = os.getenv("INVITE_PERMISSIONS", "2147561408").strip()
-WEBSITE_TITLE = "Military Tycoon Vehicle Dex Bot"
-WEBSITE_BACKGROUND_URL = os.getenv("WEBSITE_BACKGROUND_URL", "").strip()
-SERVER_INVITE_URL = os.getenv("SERVER_INVITE_URL", "https://discord.gg/yWJHqqBRSJ").strip()
-BOT_VERSION = os.getenv("BOT_VERSION", "Beta 1.7.0").strip() or "Beta 1.7.0"
-BOT_OWNER_NAME = os.getenv("BOT_OWNER_NAME", "nissan_gtr_r35_nismo").strip() or "nissan_gtr_r35_nismo"
-APPLICATION_DASHBOARD_TOKEN = (
-    os.getenv("APPLICATION_DASHBOARD_TOKEN")
-    or os.getenv("DASHBOARD_TOKEN")
-    or ""
-).strip()
-APPLICATION_DASHBOARD_COOKIE = "dex_app_dashboard"
-APPLICATION_DASHBOARD_SESSION_COOKIE = "dex_app_session"
-APPLICATION_DASHBOARD_BASE_URL = (
-    os.getenv("APPLICATION_DASHBOARD_BASE_URL")
-    or os.getenv("DASHBOARD_BASE_URL")
-    or os.getenv("PUBLIC_BASE_URL")
-    or "https://dexbotfinal.onrender.com"
-).strip().rstrip("/")
-DISCORD_CLIENT_SECRET = (
-    os.getenv("DISCORD_CLIENT_SECRET")
-    or os.getenv("CLIENT_SECRET")
-    or ""
-).strip()
-TERMS_URL = os.getenv("TERMS_URL", f"{APPLICATION_DASHBOARD_BASE_URL}/terms").strip() or f"{APPLICATION_DASHBOARD_BASE_URL}/terms"
-PRIVACY_URL = os.getenv("PRIVACY_URL", f"{APPLICATION_DASHBOARD_BASE_URL}/privacy").strip() or f"{APPLICATION_DASHBOARD_BASE_URL}/privacy"
 
 PERMISSION_OWNER_USER_ID = 1105451323584938075
 INITIAL_ADMIN_USER_IDS = {
@@ -138,20 +86,11 @@ except Exception as error:
     os.makedirs(DATA_DIR, exist_ok=True)
 
 USER_INVENTORIES_FILE = os.path.join(DATA_DIR, "user_inventories.json")
-USER_BALANCES_FILE = os.path.join(DATA_DIR, "user_balances.json")
-MARKET_LISTINGS_FILE = os.path.join(DATA_DIR, "market_listings.json")
 GUILD_CHANNEL_SETTINGS_FILE = os.path.join(DATA_DIR, "guild_channel_settings.json")
 ADMIN_USER_IDS_FILE = os.path.join(DATA_DIR, "admin_user_ids.json")
-SPAWN_RECORDS_FILE = os.path.join(DATA_DIR, "spawn_records.json")
-GIVEAWAYS_FILE = os.path.join(DATA_DIR, "giveaways.json")
-GIVEAWAY_SETTINGS_FILE = os.path.join(DATA_DIR, "giveaway_settings.json")
-MESSAGE_STATS_FILE = os.path.join(DATA_DIR, "message_stats.json")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 ROOT_INDEX_JSON_FILE = os.path.join(SCRIPT_DIR, "data", "index.json")
 PERSISTENT_INDEX_JSON_FILE = os.path.join(DATA_DIR, "index.json")
-MAX_SPAWN_RECORDS = 1000
-INVENTORY_PAGE_SIZE = 20
-SHOP_PAGE_SIZE = 5
 FALLBACK_IMAGE_DIRS = (
     os.path.join(SCRIPT_DIR, "images"),
     os.path.join(SCRIPT_DIR, "data", "images"),
@@ -165,7 +104,6 @@ except Exception as error:
     IMAGES_DIR = ""
 
 RARITY_ORDER = (
-    "art work",
     "specials",
     "limited edition",
     "exotic",
@@ -176,7 +114,6 @@ RARITY_ORDER = (
 )
 
 RARITY_WEIGHTS = {
-    "art work": 0.5,
     "specials": 0.01,
     "limited edition": 0.5,
     "exotic": 4,
@@ -187,7 +124,6 @@ RARITY_WEIGHTS = {
 }
 
 EVENT_RARITY_WEIGHTS = {
-    "art work": 1.5228,
     "specials": 1,
     "limited edition": 10,
     "exotic": 20,
@@ -198,7 +134,6 @@ EVENT_RARITY_WEIGHTS = {
 }
 
 RARITY_COLORS = {
-    "art work": 0x222222,
     "specials": 0x00FF9D,
     "limited edition": 0x8B0000,
     "exotic": 0xFF00D4,
@@ -207,44 +142,6 @@ RARITY_COLORS = {
     "rare": 0x0000FF,
     "common": 0x808080,
 }
-
-
-DEFAULT_CATCH_REWARDS = {
-    "art work": 150,
-    "specials": 200,
-    "limited edition": 150,
-    "exotic": 100,
-    "legendary": 100,
-    "epic": 100,
-    "rare": 100,
-    "common": 100,
-}
-
-
-def _read_money_env(name: str, default: int) -> int:
-    try:
-        return max(0, int(float(os.getenv(name, str(default)).strip())))
-    except (TypeError, ValueError, AttributeError):
-        return max(0, default)
-
-
-CATCH_REWARD_BY_RARITY = {
-    rarity: _read_money_env(
-        f"CATCH_REWARD_{rarity.upper().replace(' ', '_')}",
-        DEFAULT_CATCH_REWARDS.get(rarity, 100),
-    )
-    for rarity in RARITY_ORDER
-}
-FRESH_CATCH_BONUS = _read_money_env("FRESH_CATCH_BONUS", 50)
-SELL_VEHICLE_PRICE = _read_money_env("SELL_VEHICLE_PRICE", 100)
-MONEY_TRADE_ALIASES = {"money", "cash", "coin", "coins", "dollar", "dollars", "$"}
-COIN_EMOJI = os.getenv("COIN_EMOJI", "\U0001FA99").strip() or "\U0001FA99"
-GIVEAWAY_EMOJI = os.getenv("GIVEAWAY_EMOJI", "\U0001F389").strip() or "\U0001F389"
-GIVEAWAY_CHECK_INTERVAL_SECONDS = max(10, _read_money_env("GIVEAWAY_CHECK_INTERVAL_SECONDS", 20))
-GIVEAWAY_MIN_DURATION_SECONDS = 60
-GIVEAWAY_MAX_DURATION_SECONDS = 60 * 60 * 24 * 30
-GIVEAWAY_PARTICIPANTS_PAGE_SIZE = 10
-MESSAGE_STATS_SAVE_INTERVAL_SECONDS = max(1, _read_money_env("MESSAGE_STATS_SAVE_INTERVAL_SECONDS", 15))
 
 EXOTIC_RAINBOW_COLORS = (
     0xFF00D4,  # neon magenta
@@ -265,7 +162,6 @@ SPECIAL_RAINBOW_COLORS = (
 )
 
 RARITY_BUTTON_STYLE = {
-    "art work": discord.ButtonStyle.secondary,
     "specials": discord.ButtonStyle.secondary,
     "limited edition": discord.ButtonStyle.danger,
     "exotic": discord.ButtonStyle.success,
@@ -282,7 +178,6 @@ SPECIAL_CATCH_EMOJI = "\U0001F31F"
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-setup_application_system(bot, DATA_DIR)
 
 BOT_ONLINE = False
 BOT_STARTED_AT = int(time.time())
@@ -294,36 +189,21 @@ pending_trades: Dict[tuple[int, int], int] = {}
 active_trades: Dict[int, "TradeView"] = {}
 
 INVENTORIES_CACHE: Optional[Dict[str, Dict[str, int]]] = None
-BALANCES_CACHE: Optional[Dict[str, int]] = None
-MARKET_LISTINGS_CACHE: Optional[list[Dict[str, Any]]] = None
-GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+GUILD_CHANNEL_SETTINGS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
 ADMIN_USER_IDS_CACHE: Optional[set[int]] = None
-GIVEAWAYS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
-GIVEAWAY_SETTINGS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
-MESSAGE_STATS_CACHE: Optional[Dict[str, Any]] = None
-MESSAGE_STATS_LAST_SAVE = 0.0
 VEHICLES_CACHE: Dict[str, Dict[str, Any]] = {}
 VEHICLES_CACHE_MTIME: Optional[float] = None
 VEHICLES_CACHE_PATH: Optional[str] = None
 VEHICLE_ALIASES_CACHE: Dict[str, str] = {}
 VEHICLE_ALIASES_CACHE_SIGNATURE: Optional[tuple[tuple[str, Optional[float], Optional[int]], ...]] = None
-REGISTERED_GIVEAWAY_VIEW_IDS: set[str] = set()
 
 
 FRESH_INVENTORY_SUFFIX = "|fresh"
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 DIGIT_ID_RE = re.compile(r"(\d+)")
-GIVEAWAY_ID_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
-GIVEAWAY_DURATION_PART_RE = re.compile(r"(\d+)\s*([smhdw])", re.IGNORECASE)
 NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 ORDER_INSENSITIVE_SUFFIX_TOKENS = {"liberty"}
 CATALOG_AUDIT_VEHICLES = ("m50", "overlord", "c17-liberty")
-CATALOG_AUDIT_ENABLED = os.getenv("CATALOG_AUDIT_ENABLED", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 COUNT_SUFFIXES = (
     "",
@@ -558,8 +438,7 @@ def refresh_vehicle_aliases() -> Dict[str, str]:
 
 def display_vehicle_name(name_or_key: str) -> str:
     base_name, is_fresh = split_inventory_key(name_or_key)
-    vehicle_data = VEHICLES_CACHE.get(base_name, {})
-    label = str(vehicle_data.get("display_name") or base_name.replace("-", "_"))
+    label = base_name.replace("-", "_")
     return f"{label} [Fresh]" if is_fresh else label
 
 
@@ -590,18 +469,6 @@ def format_count(num: Any) -> str:
 
     result = f"{num:.2f}".rstrip("0").rstrip(".")
     return f"{result}{COUNT_SUFFIXES[magnitude]}"
-
-
-def format_money(amount: Any) -> str:
-    try:
-        amount_int = int(amount)
-    except (TypeError, ValueError):
-        amount_int = 0
-    return f"{amount_int:,} coins"
-
-
-def format_price(amount: Any) -> str:
-    return f"{COIN_EMOJI} {format_money(amount)}"
 
 
 def parse_count(text: Any) -> Optional[int]:
@@ -750,89 +617,35 @@ def has_admin_access(message: discord.Message) -> bool:
 def display_rarity_name(rarity: str, *, reveal_specials: bool = True) -> str:
     normalized = str(rarity or "").strip().lower()
     if normalized == "specials":
-        return "Specials"
+        return "Specials" if reveal_specials else "???"
     return normalized.title()
 
 
-def parse_testspawn_rarity(value: str) -> Optional[str]:
-    normalized = re.sub(r"[\s_-]+", " ", str(value or "").strip().lower()).strip()
-    compact = normalized.replace(" ", "")
-    aliases = {
-        "art": "art work",
-        "artwork": "art work",
-        "special": "specials",
-        "specials": "specials",
-        "le": "limited edition",
-        "limited": "limited edition",
-        "limitededition": "limited edition",
-    }
-    if compact in aliases:
-        return aliases[compact]
-    for rarity in RARITY_ORDER:
-        if normalized == rarity or compact == rarity.replace(" ", ""):
-            return rarity
-    return None
-
-
-def format_uptime(seconds: int) -> str:
-    seconds = max(0, int(seconds))
-    days, remainder = divmod(seconds, 86_400)
-    hours, remainder = divmod(remainder, 3_600)
-    minutes, seconds = divmod(remainder, 60)
-    if days:
-        return f"{days} days, {hours:02d}:{minutes:02d}:{seconds:02d}"
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def build_help_message(*, include_bot_admin: bool = False) -> str:
-    message = (
-        "**MT Vehicle Bot Commands**\n\n"
-        "**Players**\n"
+def build_help_message() -> str:
+    return (
+        "**MT Vehicle Bot Commands:**\n\n"
+        "**Commands Users Can Use**\n"
         "`/help` - Show this help message\n"
-        "`/about` - Show bot info, stats, and links\n"
         "`/show vehicle_name` - Show a vehicle's picture, rarity, and existing counts\n"
-        "`/game [rounds]` - Start vehicle guessing practice; no vehicles are awarded\n"
         "`/inventory [user]` - View a vehicle inventory\n"
-        "`/leaderboard` - Show vehicle and coin leaderboards\n"
-        "`/shop buy` - Search and buy vehicles from other players\n"
-        "`/shop sell market vehicle amount price` - List vehicles on the player market\n"
-        f"`/shop sell base_price vehicle amount` - Sell vehicles instantly for {format_price(SELL_VEHICLE_PRICE)} each\n"
+        "`/leaderboard` - Show who owns the most vehicles\n"
         "`/trade @user` - Send a trade request to another user\n"
         "`/tradeaccept @user` - Accept a trade request\n"
-        "`/tradeadd item amount` - Add vehicles or coins to a trade\n"
-        "`/traderemove item amount` - Remove vehicles or coins from a trade\n"
-        "\n"
+        "`/tradeadd vehicle_name amount` - Add vehicles to a trade\n"
+        "`/traderemove vehicle_name amount` - Remove vehicles from a trade\n\n"
         "**Server Admins**\n"
         "`/dexchannel #channel` - Set this server's spawn channel (Manage Server)\n"
-        "`/botcomment true|false` - Set wrong-name comments public or private (Manage Server)\n"
-        "`/giveaway create duration winners prize` - Create a giveaway with roles, message requirements, images, and extra entries\n"
-        "`/giveaway edit giveaway_id` - Edit giveaway fields or clear image/requirements/extra entries\n"
-        "`/giveaway delete|end|fix|reroll giveaway_id` - Manage giveaways\n"
-        "`/giveaway remove-participant giveaway_id user` - Remove an entry from a giveaway\n"
-        "`/giveaway creator-roles|manager-roles` - Set giveaway staff roles\n"
-        "`/application panel #channel` - Post or refresh the application panel\n"
-        "`/application log #channel` - Set the application log/review channel\n"
-        "`/application create-panel|edit-panel|delete-panel` - Manage application dropdown options\n"
-        "`/application add-question|edit-question|delete-question` - Manage application questions\n"
-    )
-    if include_bot_admin:
-        message += (
-            "\n"
-            "**Bot Admins**\n"
-            "`!list` - Show vehicles missing pictures\n"
-            "`!vehicles` - Show total caught vehicles and fresh vehicles\n"
-            "`!check <message_id>` - Show the hidden vehicle name for a spawn message\n"
-            "`!testspawn` - Spawn a test vehicle\n"
-            "`!testspawn true|false` - Force the fresh state on a test spawn\n"
-            "`!testspawn rarity [true|false]` - Spawn a test vehicle from any rarity\n"
-            f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
-            "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
-            "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n"
-            "`!addmoney @user amount` - Add coins to a user\n\n"
-        )
-    message += (
+        "\n"
+        "**Bot Admins**\n"
+        "`!list` - Show vehicles missing pictures\n"
+        "`!testspawn` - Spawn a test vehicle\n"
+        "`!testspawn true|false` - Force the fresh state on a test spawn\n"
+        "`!testspawn special [true|false]` - Spawn a special test vehicle\n"
+        f"`!event <count>` - Spawn up to {EVENT_MAX_SPAWNS} event vehicles with boosted event odds\n"
+        "`!addinventory @user vehicle_name count true|false` - Add inventory\n"
+        "`!removeinventory @user vehicle_name count true|false` - Remove inventory\n\n"
         "**Rarities**\n"
-        "`Specials` - 0.01%\n"
+        "`???` - 0.01%\n"
         "`Limited Edition` - 0.5%\n"
         "`Exotic` - 4%\n"
         "`Legendary` - 8%\n"
@@ -842,16 +655,6 @@ def build_help_message(*, include_bot_admin: bool = False) -> str:
         f"*Vehicles spawn automatically every {SPAWN_THRESHOLD} guild messages. Normal/test spawns despawn after "
         f"{SPAWN_DESPAWN_SECONDS} seconds, event spawns after {EVENT_SPAWN_DESPAWN_SECONDS} seconds.*"
     )
-    return message
-
-
-def build_help_embed(*, include_bot_admin: bool = False) -> discord.Embed:
-    embed = discord.Embed(
-        title="MT Vehicle Bot Commands",
-        description=build_help_message(include_bot_admin=include_bot_admin),
-        color=discord.Color.green(),
-    )
-    return embed
 
 
 async def resolve_user_from_token(token: str, guild: Optional[discord.Guild]) -> Optional[discord.abc.User]:
@@ -1030,1550 +833,6 @@ def save_inventories(inventories: Dict[str, Dict[str, int]]) -> None:
         print(f"Error saving {USER_INVENTORIES_FILE}: {error}")
 
 
-def load_balances() -> Dict[str, int]:
-    global BALANCES_CACHE
-
-    if BALANCES_CACHE is not None:
-        return BALANCES_CACHE
-
-    if not os.path.exists(USER_BALANCES_FILE):
-        BALANCES_CACHE = {}
-        return BALANCES_CACHE
-
-    try:
-        with open(USER_BALANCES_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {USER_BALANCES_FILE}: {error}")
-        BALANCES_CACHE = {}
-        return BALANCES_CACHE
-
-    if not isinstance(raw_data, dict):
-        BALANCES_CACHE = {}
-        save_balances(BALANCES_CACHE)
-        return BALANCES_CACHE
-
-    normalized: Dict[str, int] = {}
-    migrated = False
-    for raw_user_id, raw_balance in raw_data.items():
-        user_id = str(raw_user_id)
-        balance = _coerce_non_negative_int(raw_balance)
-        if balance > 0:
-            normalized[user_id] = balance
-        if user_id != raw_user_id or balance != raw_balance:
-            migrated = True
-
-    BALANCES_CACHE = normalized
-    if migrated:
-        save_balances(BALANCES_CACHE)
-
-    return BALANCES_CACHE
-
-
-def save_balances(balances: Dict[str, int]) -> None:
-    global BALANCES_CACHE
-
-    normalized = {
-        str(user_id): _coerce_non_negative_int(balance)
-        for user_id, balance in balances.items()
-        if _coerce_non_negative_int(balance) > 0
-    }
-
-    try:
-        os.makedirs(os.path.dirname(USER_BALANCES_FILE), exist_ok=True)
-        with open(USER_BALANCES_FILE, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, indent=2, sort_keys=True)
-        BALANCES_CACHE = normalized
-    except Exception as error:
-        print(f"Error saving {USER_BALANCES_FILE}: {error}")
-
-
-def get_user_balance(user_id: int) -> int:
-    return _coerce_non_negative_int(load_balances().get(str(user_id), 0))
-
-
-def add_money(user_id: int, amount: int) -> int:
-    amount = _coerce_non_negative_int(amount)
-    if amount <= 0:
-        return get_user_balance(user_id)
-
-    balances = load_balances()
-    user_id_str = str(user_id)
-    balances[user_id_str] = _coerce_non_negative_int(balances.get(user_id_str, 0)) + amount
-    save_balances(balances)
-    return balances[user_id_str]
-
-
-def remove_money(user_id: int, amount: int) -> bool:
-    amount = _coerce_non_negative_int(amount)
-    if amount <= 0:
-        return False
-
-    balances = load_balances()
-    user_id_str = str(user_id)
-    current_balance = _coerce_non_negative_int(balances.get(user_id_str, 0))
-    if current_balance < amount:
-        return False
-
-    remaining = current_balance - amount
-    if remaining > 0:
-        balances[user_id_str] = remaining
-    else:
-        balances.pop(user_id_str, None)
-    save_balances(balances)
-    return True
-
-
-def get_catch_reward_for_rarity(rarity: str) -> int:
-    normalized = str(rarity or "common").strip().lower()
-    return _coerce_non_negative_int(CATCH_REWARD_BY_RARITY.get(normalized, CATCH_REWARD_BY_RARITY["common"]))
-
-
-def get_catch_reward(rarity: str, is_fresh: bool = False) -> int:
-    reward = get_catch_reward_for_rarity(rarity)
-    if is_fresh:
-        reward += FRESH_CATCH_BONUS
-    return _coerce_non_negative_int(reward)
-
-
-def is_money_trade_item(item: str) -> bool:
-    normalized = str(item or "").strip().lower()
-    return normalized in MONEY_TRADE_ALIASES
-
-
-def make_market_listing_id(existing_ids: Optional[set[str]] = None) -> str:
-    existing_ids = existing_ids or set()
-    for _ in range(20):
-        listing_id = f"{int(time.time() * 1000):x}{random.randint(0, 0xFFFF):04x}"[-12:]
-        if listing_id not in existing_ids:
-            return listing_id
-    return f"{int(time.time() * 1000):x}{random.randint(0, 0xFFFFFF):06x}"
-
-
-def _normalize_market_listing(raw_listing: Any, vehicles: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw_listing, dict):
-        return None
-
-    vehicle_name = canonical_vehicle_name(str(raw_listing.get("vehicle_name") or raw_listing.get("name") or ""))
-    if vehicle_name not in vehicles:
-        return None
-
-    count = _coerce_non_negative_int(raw_listing.get("count", 0))
-    price = _coerce_non_negative_int(raw_listing.get("price", raw_listing.get("price_each", 0)))
-    seller_id = str(raw_listing.get("seller_id") or "").strip()
-    if not seller_id.isdigit() or count <= 0 or price <= 0:
-        return None
-
-    listing_id = str(raw_listing.get("id") or "").strip()
-    if not listing_id:
-        listing_id = make_market_listing_id()
-
-    return {
-        "id": listing_id,
-        "seller_id": seller_id,
-        "vehicle_name": vehicle_name,
-        "is_fresh": bool(raw_listing.get("is_fresh", False)),
-        "count": count,
-        "price": price,
-        "created_at": _coerce_non_negative_int(raw_listing.get("created_at", int(time.time()))),
-    }
-
-
-def load_market_listings() -> list[Dict[str, Any]]:
-    global MARKET_LISTINGS_CACHE
-
-    if MARKET_LISTINGS_CACHE is not None:
-        return MARKET_LISTINGS_CACHE
-
-    if not os.path.exists(MARKET_LISTINGS_FILE):
-        MARKET_LISTINGS_CACHE = []
-        return MARKET_LISTINGS_CACHE
-
-    try:
-        with open(MARKET_LISTINGS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {MARKET_LISTINGS_FILE}: {error}")
-        MARKET_LISTINGS_CACHE = []
-        return MARKET_LISTINGS_CACHE
-
-    raw_listings = raw_data.get("listings", []) if isinstance(raw_data, dict) else raw_data
-    if not isinstance(raw_listings, list):
-        MARKET_LISTINGS_CACHE = []
-        save_market_listings(MARKET_LISTINGS_CACHE)
-        return MARKET_LISTINGS_CACHE
-
-    vehicles = get_vehicle_map()
-    normalized: list[Dict[str, Any]] = []
-    used_ids: set[str] = set()
-    migrated = not isinstance(raw_data, list)
-    for raw_listing in raw_listings:
-        listing = _normalize_market_listing(raw_listing, vehicles)
-        if not listing:
-            migrated = True
-            continue
-        if listing["id"] in used_ids:
-            listing["id"] = make_market_listing_id(used_ids)
-            migrated = True
-        used_ids.add(listing["id"])
-        if listing != raw_listing:
-            migrated = True
-        normalized.append(listing)
-
-    normalized.sort(key=lambda listing: int(listing.get("created_at", 0)), reverse=True)
-    MARKET_LISTINGS_CACHE = normalized
-    if migrated:
-        save_market_listings(MARKET_LISTINGS_CACHE)
-    return MARKET_LISTINGS_CACHE
-
-
-def save_market_listings(listings: list[Dict[str, Any]]) -> None:
-    global MARKET_LISTINGS_CACHE
-
-    vehicles = get_vehicle_map()
-    normalized: list[Dict[str, Any]] = []
-    used_ids: set[str] = set()
-    for raw_listing in listings:
-        listing = _normalize_market_listing(raw_listing, vehicles)
-        if not listing:
-            continue
-        if listing["id"] in used_ids:
-            listing["id"] = make_market_listing_id(used_ids)
-        used_ids.add(listing["id"])
-        normalized.append(listing)
-
-    normalized.sort(key=lambda listing: int(listing.get("created_at", 0)), reverse=True)
-    try:
-        os.makedirs(os.path.dirname(MARKET_LISTINGS_FILE), exist_ok=True)
-        with open(MARKET_LISTINGS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, indent=2, sort_keys=True)
-        MARKET_LISTINGS_CACHE = normalized
-    except Exception as error:
-        print(f"Error saving {MARKET_LISTINGS_FILE}: {error}")
-
-
-def get_listing_vehicle_key(listing: Dict[str, Any]) -> str:
-    return make_inventory_key(str(listing.get("vehicle_name", "")), bool(listing.get("is_fresh", False)))
-
-
-def get_listing_display_name(listing: Dict[str, Any]) -> str:
-    vehicle_key = get_listing_vehicle_key(listing)
-    return display_vehicle_name(vehicle_key)
-
-
-def listing_matches_query(listing: Dict[str, Any], query: str) -> bool:
-    if not query:
-        return True
-    needle = normalize_name(query)
-    haystacks = {
-        normalize_name(str(listing.get("vehicle_name", ""))),
-        normalize_name(display_vehicle_name(str(listing.get("vehicle_name", "")))),
-        normalize_name(get_listing_display_name(listing)),
-    }
-    return any(needle in haystack or haystack in needle for haystack in haystacks if haystack)
-
-
-def get_market_listings(
-    *,
-    viewer_id: Optional[int] = None,
-    include_own: bool = False,
-    seller_id: Optional[int] = None,
-    query: str = "",
-) -> list[Dict[str, Any]]:
-    listings = load_market_listings()
-    results: list[Dict[str, Any]] = []
-    for listing in listings:
-        listing_seller_id = str(listing.get("seller_id", ""))
-        if seller_id is not None and listing_seller_id != str(seller_id):
-            continue
-        if viewer_id is not None and not include_own and listing_seller_id == str(viewer_id):
-            continue
-        if not listing_matches_query(listing, query):
-            continue
-        results.append(listing)
-    return results
-
-
-def find_market_listing(listing_id: str) -> Optional[Dict[str, Any]]:
-    listing_id = str(listing_id or "").strip()
-    for listing in load_market_listings():
-        if listing.get("id") == listing_id:
-            return listing
-    return None
-
-
-def create_market_listing(seller_id: int, vehicle_key: str, count: int, price: int) -> tuple[bool, str, Optional[Dict[str, Any]]]:
-    count = _coerce_non_negative_int(count)
-    price = _coerce_non_negative_int(price)
-    if count <= 0 or price <= 0:
-        return False, "Amount and price must be positive.", None
-
-    vehicle_name, is_fresh = split_inventory_key(vehicle_key)
-    vehicle_name = canonical_vehicle_name(vehicle_name)
-    if vehicle_name not in get_vehicle_map():
-        return False, "That vehicle is no longer in the catalog.", None
-
-    available_count = get_available_vehicle_counts_for_user(seller_id).get(make_inventory_key(vehicle_name, is_fresh), 0)
-    if count > available_count:
-        return False, f"You only have {format_count(available_count)} available {display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))}."
-
-    removed_amount = remove_vehicle_count(seller_id, vehicle_name, count, is_fresh=is_fresh)
-    if removed_amount < count:
-        if removed_amount > 0:
-            add_vehicle_count(seller_id, vehicle_name, removed_amount, is_fresh=is_fresh)
-        return False, "Listing failed. Your inventory changed before I could reserve that vehicle.", None
-
-    listings = load_market_listings()
-    listing = {
-        "id": make_market_listing_id({str(item.get("id", "")) for item in listings}),
-        "seller_id": str(seller_id),
-        "vehicle_name": vehicle_name,
-        "is_fresh": is_fresh,
-        "count": count,
-        "price": price,
-        "created_at": int(time.time()),
-    }
-    listings.append(listing)
-    save_market_listings(listings)
-    return True, f"Listed {format_count(count)} x {get_listing_display_name(listing)} for {format_price(price)} each.", listing
-
-
-def sell_vehicle_to_shop(user_id: int, vehicle_key: str, count: int) -> tuple[bool, str]:
-    count = _coerce_non_negative_int(count)
-    if count <= 0:
-        return False, "Enter a positive amount to sell."
-
-    vehicle_name, is_fresh = split_inventory_key(vehicle_key)
-    vehicle_name = canonical_vehicle_name(vehicle_name)
-    if vehicle_name not in get_vehicle_map():
-        return False, "That vehicle is no longer in the catalog."
-
-    inventory_key = make_inventory_key(vehicle_name, is_fresh)
-    available_count = get_available_vehicle_counts_for_user(user_id).get(inventory_key, 0)
-    if count > available_count:
-        return False, f"You only have {format_count(available_count)} available {display_vehicle_name(inventory_key)}."
-
-    removed_amount = remove_vehicle_count(user_id, vehicle_name, count, is_fresh=is_fresh)
-    if removed_amount <= 0:
-        return False, "Sell failed. Your inventory changed before I could remove that vehicle."
-
-    earned = removed_amount * SELL_VEHICLE_PRICE
-    add_money(user_id, earned)
-    return (
-        True,
-        (
-            f"Sold **{format_count(removed_amount)}** x **{display_vehicle_name(inventory_key)}** "
-            f"for **{format_price(earned)}**. Balance: **{format_money(get_user_balance(user_id))}**"
-        ),
-    )
-
-
-def buy_market_listing(buyer_id: int, listing_id: str, count: int) -> tuple[bool, str]:
-    count = _coerce_non_negative_int(count)
-    if count <= 0:
-        return False, "Enter a positive amount to buy."
-
-    listings = load_market_listings()
-    listing_index = next((index for index, item in enumerate(listings) if item.get("id") == listing_id), None)
-    if listing_index is None:
-        return False, "That market listing no longer exists."
-
-    listing = listings[listing_index]
-    seller_id = str(listing.get("seller_id", ""))
-    if seller_id == str(buyer_id):
-        return False, "You cannot buy your own market listing."
-
-    available_count = _coerce_non_negative_int(listing.get("count", 0))
-    price = _coerce_non_negative_int(listing.get("price", 0))
-    vehicle_name = canonical_vehicle_name(str(listing.get("vehicle_name", "")))
-    is_fresh = bool(listing.get("is_fresh", False))
-    if vehicle_name not in get_vehicle_map() or available_count <= 0 or price <= 0:
-        listings.pop(listing_index)
-        save_market_listings(listings)
-        return False, "That listing was invalid and has been removed."
-
-    if count > available_count:
-        return False, f"Only {format_count(available_count)} are available in that listing."
-
-    total_price = price * count
-    if get_user_balance(buyer_id) < total_price:
-        return False, f"You need {format_price(total_price)} but only have {format_money(get_user_balance(buyer_id))}."
-
-    if not remove_money(buyer_id, total_price):
-        return False, "Purchase failed. Your coin balance changed before checkout."
-
-    add_money(int(seller_id), total_price)
-    add_vehicle_count(buyer_id, vehicle_name, count, is_fresh=is_fresh)
-
-    remaining = available_count - count
-    if remaining > 0:
-        listing["count"] = remaining
-    else:
-        listings.pop(listing_index)
-    save_market_listings(listings)
-
-    display_name = display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))
-    return True, f"Bought {format_count(count)} x {display_name} for {format_price(total_price)}."
-
-
-def cancel_market_listing(seller_id: int, listing_id: str) -> tuple[bool, str]:
-    listings = load_market_listings()
-    listing_index = next((index for index, item in enumerate(listings) if item.get("id") == listing_id), None)
-    if listing_index is None:
-        return False, "That market listing no longer exists."
-
-    listing = listings[listing_index]
-    if str(listing.get("seller_id", "")) != str(seller_id):
-        return False, "You can only cancel your own listings."
-
-    vehicle_name = canonical_vehicle_name(str(listing.get("vehicle_name", "")))
-    is_fresh = bool(listing.get("is_fresh", False))
-    count = _coerce_non_negative_int(listing.get("count", 0))
-    if count > 0:
-        add_vehicle_count(seller_id, vehicle_name, count, is_fresh=is_fresh)
-    listings.pop(listing_index)
-    save_market_listings(listings)
-
-    display_name = display_vehicle_name(make_inventory_key(vehicle_name, is_fresh))
-    return True, f"Cancelled listing and returned {format_count(count)} x {display_name}."
-
-
-def load_spawn_records() -> Dict[str, Dict[str, Any]]:
-    if not os.path.exists(SPAWN_RECORDS_FILE):
-        return {}
-
-    try:
-        with open(SPAWN_RECORDS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {SPAWN_RECORDS_FILE}: {error}")
-        return {}
-
-    if not isinstance(raw_data, dict):
-        return {}
-
-    return {
-        str(message_id): record
-        for message_id, record in raw_data.items()
-        if isinstance(record, dict)
-    }
-
-
-def save_spawn_records(records: Dict[str, Dict[str, Any]]) -> None:
-    try:
-        os.makedirs(os.path.dirname(SPAWN_RECORDS_FILE), exist_ok=True)
-        with open(SPAWN_RECORDS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(records, handle, indent=2, sort_keys=True)
-    except Exception as error:
-        print(f"Error saving {SPAWN_RECORDS_FILE}: {error}")
-
-
-def current_message_period_keys(now: Optional[datetime] = None) -> Dict[str, str]:
-    now = now or datetime.now(timezone.utc)
-    iso_year, iso_week, _ = now.isocalendar()
-    return {
-        "day": now.strftime("%Y-%m-%d"),
-        "week": f"{iso_year}-W{iso_week:02d}",
-        "month": now.strftime("%Y-%m"),
-    }
-
-
-def normalize_message_user_stats(record: Any, periods: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    periods = periods or current_message_period_keys()
-    record = record if isinstance(record, dict) else {}
-    normalized = {
-        "total": _coerce_non_negative_int(record.get("total", 0)),
-        "day_key": str(record.get("day_key") or periods["day"]),
-        "day_count": _coerce_non_negative_int(record.get("day_count", 0)),
-        "week_key": str(record.get("week_key") or periods["week"]),
-        "week_count": _coerce_non_negative_int(record.get("week_count", 0)),
-        "month_key": str(record.get("month_key") or periods["month"]),
-        "month_count": _coerce_non_negative_int(record.get("month_count", 0)),
-    }
-    if normalized["day_key"] != periods["day"]:
-        normalized["day_key"] = periods["day"]
-        normalized["day_count"] = 0
-    if normalized["week_key"] != periods["week"]:
-        normalized["week_key"] = periods["week"]
-        normalized["week_count"] = 0
-    if normalized["month_key"] != periods["month"]:
-        normalized["month_key"] = periods["month"]
-        normalized["month_count"] = 0
-    return normalized
-
-
-def load_message_stats() -> Dict[str, Any]:
-    global MESSAGE_STATS_CACHE
-
-    if MESSAGE_STATS_CACHE is not None:
-        return MESSAGE_STATS_CACHE
-
-    if not os.path.exists(MESSAGE_STATS_FILE):
-        MESSAGE_STATS_CACHE = {"guilds": {}}
-        return MESSAGE_STATS_CACHE
-
-    try:
-        with open(MESSAGE_STATS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {MESSAGE_STATS_FILE}: {error}")
-        MESSAGE_STATS_CACHE = {"guilds": {}}
-        return MESSAGE_STATS_CACHE
-
-    guilds = raw_data.get("guilds") if isinstance(raw_data, dict) else {}
-    MESSAGE_STATS_CACHE = {"guilds": guilds if isinstance(guilds, dict) else {}}
-    return MESSAGE_STATS_CACHE
-
-
-def save_message_stats(*, force: bool = False) -> None:
-    global MESSAGE_STATS_CACHE, MESSAGE_STATS_LAST_SAVE
-
-    if MESSAGE_STATS_CACHE is None:
-        return
-
-    now = time.monotonic()
-    if not force and MESSAGE_STATS_LAST_SAVE and now - MESSAGE_STATS_LAST_SAVE < MESSAGE_STATS_SAVE_INTERVAL_SECONDS:
-        return
-
-    try:
-        os.makedirs(os.path.dirname(MESSAGE_STATS_FILE), exist_ok=True)
-        with open(MESSAGE_STATS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(MESSAGE_STATS_CACHE, handle, indent=2, sort_keys=True)
-        MESSAGE_STATS_LAST_SAVE = now
-    except Exception as error:
-        print(f"Error saving {MESSAGE_STATS_FILE}: {error}")
-
-
-def record_guild_message_stat(message: discord.Message) -> None:
-    if not message.guild or message.author.bot:
-        return
-
-    periods = current_message_period_keys()
-    stats = load_message_stats()
-    guilds = stats.setdefault("guilds", {})
-    guild_stats = guilds.setdefault(str(message.guild.id), {})
-    users = guild_stats.setdefault("users", {})
-    user_stats = normalize_message_user_stats(users.get(str(message.author.id)), periods)
-
-    user_stats["total"] = _coerce_non_negative_int(user_stats.get("total", 0)) + 1
-    user_stats["day_count"] = _coerce_non_negative_int(user_stats.get("day_count", 0)) + 1
-    user_stats["week_count"] = _coerce_non_negative_int(user_stats.get("week_count", 0)) + 1
-    user_stats["month_count"] = _coerce_non_negative_int(user_stats.get("month_count", 0)) + 1
-    users[str(message.author.id)] = user_stats
-    save_message_stats()
-
-
-def get_guild_user_message_counts(guild_id: int, user_id: int) -> Dict[str, int]:
-    periods = current_message_period_keys()
-    stats = load_message_stats()
-    guild_stats = stats.get("guilds", {}).get(str(guild_id), {})
-    users = guild_stats.get("users", {}) if isinstance(guild_stats, dict) else {}
-    user_stats = normalize_message_user_stats(users.get(str(user_id)), periods)
-    return {
-        "daily": _coerce_non_negative_int(user_stats.get("day_count", 0)),
-        "weekly": _coerce_non_negative_int(user_stats.get("week_count", 0)),
-        "monthly": _coerce_non_negative_int(user_stats.get("month_count", 0)),
-        "total": _coerce_non_negative_int(user_stats.get("total", 0)),
-    }
-
-
-def _coerce_user_id_list(values: Any) -> list[int]:
-    if not isinstance(values, list):
-        return []
-
-    seen: set[int] = set()
-    user_ids: list[int] = []
-    for raw_user_id in values:
-        parsed_user_id = _parse_user_id_value(raw_user_id)
-        if parsed_user_id is None or parsed_user_id in seen:
-            continue
-        user_ids.append(parsed_user_id)
-        seen.add(parsed_user_id)
-    return user_ids
-
-
-def _normalize_giveaway_id(value: Any) -> str:
-    normalized = str(value or "").strip().lower()
-    normalized = normalized.strip("` ")
-    return normalized if GIVEAWAY_ID_RE.fullmatch(normalized) else ""
-
-
-def _coerce_role_id_list(values: Any) -> list[int]:
-    if not isinstance(values, list):
-        return []
-
-    seen: set[int] = set()
-    role_ids: list[int] = []
-    for raw_role_id in values:
-        parsed_role_id = _parse_user_id_value(raw_role_id)
-        if parsed_role_id is None or parsed_role_id in seen:
-            continue
-        role_ids.append(parsed_role_id)
-        seen.add(parsed_role_id)
-    return role_ids[:25]
-
-
-def _coerce_int_mapping(values: Any, *, maximum: int = 100) -> Dict[str, int]:
-    if not isinstance(values, dict):
-        return {}
-
-    normalized: Dict[str, int] = {}
-    for raw_key, raw_value in values.items():
-        key_id = _parse_user_id_value(raw_key)
-        if key_id is None:
-            continue
-        count = min(maximum, max(0, _coerce_non_negative_int(raw_value)))
-        if count > 0:
-            normalized[str(key_id)] = count
-    return normalized
-
-
-def _coerce_role_entry_mapping(values: Any) -> Dict[str, int]:
-    return _coerce_int_mapping(values, maximum=100)
-
-
-def resolve_role_id_from_text(guild: Optional[discord.Guild], value: str) -> Optional[int]:
-    text = str(value or "").strip()
-    role_match = DIGIT_ID_RE.search(text)
-    if role_match:
-        return int(role_match.group(1))
-    if not guild:
-        return None
-
-    normalized_text = text.lower().strip("@&<> ")
-    if not normalized_text:
-        return None
-    for role in guild.roles:
-        if role.name.lower() == normalized_text:
-            return role.id
-    compact_text = NON_ALNUM_RE.sub("", normalized_text)
-    for role in guild.roles:
-        if NON_ALNUM_RE.sub("", role.name.lower()) == compact_text:
-            return role.id
-    return None
-
-
-def parse_role_entry_mapping(value: Optional[str], guild: Optional[discord.Guild] = None) -> Dict[str, int]:
-    raw = str(value or "").strip()
-    if not raw:
-        return {}
-
-    entries: Dict[str, int] = {}
-    for chunk in re.split(r"[,;\n]+", raw):
-        part = chunk.strip()
-        if not part:
-            continue
-        if ":" in part:
-            role_part, count_part = part.rsplit(":", 1)
-        elif "=" in part:
-            role_part, count_part = part.rsplit("=", 1)
-        else:
-            continue
-        role_id = resolve_role_id_from_text(guild, role_part)
-        if role_id is None:
-            continue
-        count = min(100, max(1, _coerce_non_negative_int(parse_count(count_part) or count_part)))
-        entries[str(role_id)] = count
-    return entries
-
-
-def parse_hex_color_value(value: Any, default: Optional[int] = None) -> Optional[int]:
-    if value is None:
-        return default
-    raw = str(value).strip()
-    if not raw:
-        return default
-    if raw.lower() in {"default", "none", "clear"}:
-        return default
-    raw = raw.removeprefix("#").removeprefix("0x").strip()
-    if len(raw) not in {3, 6}:
-        return default
-    if len(raw) == 3:
-        raw = "".join(char * 2 for char in raw)
-    try:
-        return int(raw, 16) & 0xFFFFFF
-    except ValueError:
-        return default
-
-
-def _clean_optional_url(value: Any) -> str:
-    text = str(value or "").strip()
-    return text if is_http_url(text) else ""
-
-
-def load_giveaway_settings() -> Dict[str, Dict[str, Any]]:
-    global GIVEAWAY_SETTINGS_CACHE
-
-    if GIVEAWAY_SETTINGS_CACHE is not None:
-        return GIVEAWAY_SETTINGS_CACHE
-
-    if not os.path.exists(GIVEAWAY_SETTINGS_FILE):
-        GIVEAWAY_SETTINGS_CACHE = {"guilds": {}}
-        return GIVEAWAY_SETTINGS_CACHE
-
-    try:
-        with open(GIVEAWAY_SETTINGS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {GIVEAWAY_SETTINGS_FILE}: {error}")
-        GIVEAWAY_SETTINGS_CACHE = {"guilds": {}}
-        return GIVEAWAY_SETTINGS_CACHE
-
-    guilds = raw_data.get("guilds") if isinstance(raw_data, dict) else {}
-    if not isinstance(guilds, dict):
-        guilds = {}
-
-    normalized_guilds: Dict[str, Dict[str, Any]] = {}
-    for raw_guild_id, raw_settings in guilds.items():
-        guild_id = _parse_user_id_value(raw_guild_id)
-        if guild_id is None or not isinstance(raw_settings, dict):
-            continue
-        normalized_guilds[str(guild_id)] = {
-            "creator_role_ids": _coerce_role_id_list(raw_settings.get("creator_role_ids")),
-            "manager_role_ids": _coerce_role_id_list(raw_settings.get("manager_role_ids")),
-        }
-
-    GIVEAWAY_SETTINGS_CACHE = {"guilds": normalized_guilds}
-    return GIVEAWAY_SETTINGS_CACHE
-
-
-def save_giveaway_settings(settings: Dict[str, Dict[str, Any]]) -> None:
-    global GIVEAWAY_SETTINGS_CACHE
-
-    guilds = settings.get("guilds") if isinstance(settings, dict) else {}
-    normalized = {"guilds": {}}
-    if isinstance(guilds, dict):
-        for raw_guild_id, raw_settings in guilds.items():
-            guild_id = _parse_user_id_value(raw_guild_id)
-            if guild_id is None or not isinstance(raw_settings, dict):
-                continue
-            normalized["guilds"][str(guild_id)] = {
-                "creator_role_ids": _coerce_role_id_list(raw_settings.get("creator_role_ids")),
-                "manager_role_ids": _coerce_role_id_list(raw_settings.get("manager_role_ids")),
-            }
-
-    try:
-        os.makedirs(os.path.dirname(GIVEAWAY_SETTINGS_FILE), exist_ok=True)
-        with open(GIVEAWAY_SETTINGS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, indent=2, sort_keys=True)
-        GIVEAWAY_SETTINGS_CACHE = normalized
-    except Exception as error:
-        print(f"Error saving {GIVEAWAY_SETTINGS_FILE}: {error}")
-
-
-def get_giveaway_guild_settings(guild_id: int) -> Dict[str, Any]:
-    settings = load_giveaway_settings()
-    guilds = settings.setdefault("guilds", {})
-    guild_settings = guilds.setdefault(
-        str(guild_id),
-        {"creator_role_ids": [], "manager_role_ids": []},
-    )
-    guild_settings["creator_role_ids"] = _coerce_role_id_list(guild_settings.get("creator_role_ids"))
-    guild_settings["manager_role_ids"] = _coerce_role_id_list(guild_settings.get("manager_role_ids"))
-    return guild_settings
-
-
-def member_has_any_role(member: discord.Member, role_ids: Iterable[int]) -> bool:
-    role_id_set = {int(role_id) for role_id in role_ids if _parse_user_id_value(role_id) is not None}
-    return any(role.id in role_id_set for role in member.roles)
-
-
-def has_giveaway_manager_access(interaction: discord.Interaction) -> bool:
-    if not interaction.guild or not isinstance(interaction.user, discord.Member):
-        return False
-    if interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator:
-        return True
-    settings = get_giveaway_guild_settings(interaction.guild.id)
-    return member_has_any_role(interaction.user, settings.get("manager_role_ids", []))
-
-
-def has_giveaway_creator_access(interaction: discord.Interaction) -> bool:
-    if has_giveaway_manager_access(interaction):
-        return True
-    if not interaction.guild or not isinstance(interaction.user, discord.Member):
-        return False
-    settings = get_giveaway_guild_settings(interaction.guild.id)
-    return member_has_any_role(interaction.user, settings.get("creator_role_ids", []))
-
-
-def _normalize_giveaway_record(raw_giveaway_id: Any, record: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(record, dict):
-        return None
-
-    giveaway_id = _normalize_giveaway_id(record.get("id") or raw_giveaway_id)
-    if not giveaway_id:
-        return None
-
-    guild_id = _parse_user_id_value(record.get("guild_id"))
-    channel_id = _parse_user_id_value(record.get("channel_id"))
-    host_id = _parse_user_id_value(record.get("host_id"))
-    if guild_id is None or channel_id is None or host_id is None:
-        return None
-
-    prize = truncate(str(record.get("prize") or "Giveaway prize").strip(), 180)
-    winners = min(20, max(1, _coerce_non_negative_int(record.get("winners", 1))))
-    end_at = max(0, _coerce_non_negative_int(record.get("end_at", 0)))
-    created_at = max(0, _coerce_non_negative_int(record.get("created_at", int(time.time()))))
-    ended_at = max(0, _coerce_non_negative_int(record.get("ended_at", 0)))
-    message_id = _parse_user_id_value(record.get("message_id")) or 0
-    forced_winner_id = _parse_user_id_value(record.get("forced_winner_id"))
-    participant_entries = _coerce_int_mapping(record.get("participant_entries"), maximum=100)
-    for participant_id in _coerce_user_id_list(record.get("participant_ids")):
-        participant_entries.setdefault(str(participant_id), 1)
-
-    normalized: Dict[str, Any] = {
-        "id": giveaway_id,
-        "guild_id": guild_id,
-        "channel_id": channel_id,
-        "message_id": message_id,
-        "host_id": host_id,
-        "prize": prize,
-        "winners": winners,
-        "end_at": end_at,
-        "created_at": created_at,
-        "participant_ids": _coerce_user_id_list(record.get("participant_ids")),
-        "forced_winner_id": forced_winner_id,
-        "ended": bool(record.get("ended", False)),
-        "ended_at": ended_at,
-        "winner_ids": _coerce_user_id_list(record.get("winner_ids")),
-        "participant_entries": participant_entries,
-        "required_role_id": _parse_user_id_value(record.get("required_role_id")),
-        "requirement_bypass_role_id": _parse_user_id_value(record.get("requirement_bypass_role_id")),
-        "required_daily_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_daily_messages", 0))),
-        "required_weekly_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_weekly_messages", 0))),
-        "required_monthly_messages": min(1_000_000, _coerce_non_negative_int(record.get("required_monthly_messages", 0))),
-        "required_total_messages": min(10_000_000, _coerce_non_negative_int(record.get("required_total_messages", 0))),
-        "winner_role_id": _parse_user_id_value(record.get("winner_role_id")),
-        "winner_dm_message": truncate(record.get("winner_dm_message", ""), 1500),
-        "create_message": truncate(record.get("create_message", ""), 1500),
-        "image_url": _clean_optional_url(record.get("image_url")),
-        "thumbnail_url": _clean_optional_url(record.get("thumbnail_url")),
-        "color": parse_hex_color_value(record.get("color"), None),
-        "end_color": parse_hex_color_value(record.get("end_color"), None),
-        "extra_entries": _coerce_role_entry_mapping(record.get("extra_entries")),
-    }
-    if normalized["ended"] and not normalized["ended_at"]:
-        normalized["ended_at"] = int(time.time())
-    return normalized
-
-
-def load_giveaways() -> Dict[str, Dict[str, Any]]:
-    global GIVEAWAYS_CACHE
-
-    if GIVEAWAYS_CACHE is not None:
-        return GIVEAWAYS_CACHE
-
-    if not os.path.exists(GIVEAWAYS_FILE):
-        GIVEAWAYS_CACHE = {}
-        return GIVEAWAYS_CACHE
-
-    try:
-        with open(GIVEAWAYS_FILE, "r", encoding="utf-8") as handle:
-            raw_data = json.load(handle)
-    except Exception as error:
-        print(f"Error loading {GIVEAWAYS_FILE}: {error}")
-        GIVEAWAYS_CACHE = {}
-        return GIVEAWAYS_CACHE
-
-    if not isinstance(raw_data, dict):
-        GIVEAWAYS_CACHE = {}
-        save_giveaways(GIVEAWAYS_CACHE)
-        return GIVEAWAYS_CACHE
-
-    normalized: Dict[str, Dict[str, Any]] = {}
-    migrated = False
-    for raw_giveaway_id, raw_record in raw_data.items():
-        record = _normalize_giveaway_record(raw_giveaway_id, raw_record)
-        if record is None:
-            migrated = True
-            continue
-        normalized[record["id"]] = record
-        if record != raw_record or record["id"] != raw_giveaway_id:
-            migrated = True
-
-    GIVEAWAYS_CACHE = normalized
-    if migrated:
-        save_giveaways(GIVEAWAYS_CACHE)
-    return GIVEAWAYS_CACHE
-
-
-def save_giveaways(giveaways: Dict[str, Dict[str, Any]]) -> None:
-    global GIVEAWAYS_CACHE
-
-    normalized: Dict[str, Dict[str, Any]] = {}
-    for giveaway_id, record in giveaways.items():
-        normalized_record = _normalize_giveaway_record(giveaway_id, record)
-        if normalized_record is not None:
-            normalized[normalized_record["id"]] = normalized_record
-
-    try:
-        os.makedirs(os.path.dirname(GIVEAWAYS_FILE), exist_ok=True)
-        with open(GIVEAWAYS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, indent=2, sort_keys=True)
-        GIVEAWAYS_CACHE = normalized
-    except Exception as error:
-        print(f"Error saving {GIVEAWAYS_FILE}: {error}")
-
-
-def base36(value: int) -> str:
-    alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-    value = max(0, int(value))
-    if value == 0:
-        return "0"
-
-    digits: list[str] = []
-    while value:
-        value, remainder = divmod(value, 36)
-        digits.append(alphabet[remainder])
-    return "".join(reversed(digits))
-
-
-def generate_giveaway_id() -> str:
-    giveaways = load_giveaways()
-    for _ in range(50):
-        candidate = f"gw{base36(int(time.time()))[-5:]}{secrets.token_hex(2)}"
-        if candidate not in giveaways:
-            return candidate
-    return f"gw{secrets.token_hex(6)}"
-
-
-def parse_giveaway_duration(value: str) -> Optional[int]:
-    raw = str(value or "").strip().lower()
-    if not raw:
-        return None
-
-    if raw.isdigit():
-        seconds = int(raw) * 60
-    else:
-        seconds = 0
-        consumed = ""
-        unit_seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
-        for amount, unit in GIVEAWAY_DURATION_PART_RE.findall(raw):
-            seconds += int(amount) * unit_seconds[unit.lower()]
-            consumed += f"{amount}{unit}"
-        compact_raw = re.sub(r"\s+", "", raw)
-        if not seconds or consumed.lower() != compact_raw:
-            return None
-
-    if seconds < GIVEAWAY_MIN_DURATION_SECONDS or seconds > GIVEAWAY_MAX_DURATION_SECONDS:
-        return None
-    return seconds
-
-
-def format_discord_timestamp(timestamp: int, style: str = "R") -> str:
-    return f"<t:{max(0, int(timestamp))}:{style}>"
-
-
-def find_giveaway_id(lookup: str) -> Optional[str]:
-    lookup = str(lookup or "").strip().strip("`")
-    if not lookup:
-        return None
-
-    giveaways = load_giveaways()
-    normalized_lookup = lookup.lower()
-    if normalized_lookup in giveaways:
-        return normalized_lookup
-
-    for giveaway_id, giveaway in giveaways.items():
-        if str(giveaway.get("message_id") or "") == lookup:
-            return giveaway_id
-    return None
-
-
-def _giveaway_participant_count(giveaway: Dict[str, Any]) -> int:
-    return len(_coerce_user_id_list(giveaway.get("participant_ids")))
-
-
-def giveaway_participant_entries(giveaway: Dict[str, Any], user_id: int) -> int:
-    participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
-    return max(1, participant_entries.get(str(user_id), 1))
-
-
-def giveaway_member_entry_count(giveaway: Dict[str, Any], member: discord.Member) -> int:
-    entries = 1
-    extra_entries = _coerce_role_entry_mapping(giveaway.get("extra_entries"))
-    for raw_role_id, raw_entries in extra_entries.items():
-        role_id = _parse_user_id_value(raw_role_id)
-        if role_id is None:
-            continue
-        if any(role.id == role_id for role in member.roles):
-            entries = max(entries, max(1, int(raw_entries)))
-    return min(entries, 100)
-
-
-def get_giveaway_message_requirements(giveaway: Dict[str, Any]) -> Dict[str, int]:
-    return {
-        "daily": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_daily_messages", 0))),
-        "weekly": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_weekly_messages", 0))),
-        "monthly": min(1_000_000, _coerce_non_negative_int(giveaway.get("required_monthly_messages", 0))),
-        "total": min(10_000_000, _coerce_non_negative_int(giveaway.get("required_total_messages", 0))),
-    }
-
-
-def format_giveaway_message_requirements(giveaway: Dict[str, Any]) -> str:
-    requirements = get_giveaway_message_requirements(giveaway)
-    labels = {
-        "daily": "messages today",
-        "weekly": "messages this week",
-        "monthly": "messages this month",
-        "total": "messages total",
-    }
-    lines = [
-        f"- **{format_count(required)}** {labels[key]}"
-        for key, required in requirements.items()
-        if required > 0
-    ]
-    return "\n".join(lines)
-
-
-def giveaway_entry_block_reason(guild: discord.Guild, member: discord.Member, giveaway: Dict[str, Any]) -> Optional[str]:
-    bypass_role_id = _parse_user_id_value(giveaway.get("requirement_bypass_role_id"))
-    if bypass_role_id and any(role.id == bypass_role_id for role in member.roles):
-        return None
-
-    required_role_id = _parse_user_id_value(giveaway.get("required_role_id"))
-    if required_role_id and not any(role.id == required_role_id for role in member.roles):
-        role = guild.get_role(required_role_id)
-        role_text = role.mention if role else f"`{required_role_id}`"
-        return f"You need {role_text} to enter this giveaway."
-    message_requirements = get_giveaway_message_requirements(giveaway)
-    if any(required > 0 for required in message_requirements.values()):
-        counts = get_guild_user_message_counts(guild.id, member.id)
-        missing_lines = []
-        labels = {
-            "daily": "today",
-            "weekly": "this week",
-            "monthly": "this month",
-            "total": "total",
-        }
-        for key, required in message_requirements.items():
-            if required > 0 and counts.get(key, 0) < required:
-                missing_lines.append(
-                    f"{labels[key]}: {format_count(counts.get(key, 0))}/{format_count(required)}"
-                )
-        if missing_lines:
-            return "You do not meet the message requirements for this giveaway: " + ", ".join(missing_lines)
-    return None
-
-
-def format_giveaway_role(guild: Optional[discord.Guild], role_id: Any) -> str:
-    parsed_role_id = _parse_user_id_value(role_id)
-    if parsed_role_id is None:
-        return ""
-    role = guild.get_role(parsed_role_id) if guild else None
-    return role.mention if role else f"<@&{parsed_role_id}>"
-
-
-def format_giveaway_extra_entries(guild: Optional[discord.Guild], giveaway: Dict[str, Any]) -> str:
-    entries = _coerce_role_entry_mapping(giveaway.get("extra_entries"))
-    if not entries:
-        return ""
-    lines = []
-    for raw_role_id, count in entries.items():
-        role_text = format_giveaway_role(guild, raw_role_id)
-        if role_text:
-            lines.append(f"{role_text} - **{format_count(count)} entries**")
-    return "\n".join(lines[:10])
-
-
-def giveaway_message_from_template(template: str, giveaway: Dict[str, Any], user_id: int) -> str:
-    text = str(template or "").strip()
-    if not text:
-        text = "You won **{prize}** in **{guild}**!"
-    replacements = {
-        "{prize}": str(giveaway.get("prize", "Giveaway prize")),
-        "{giveaway_id}": str(giveaway.get("id", "")),
-        "{user}": f"<@{user_id}>",
-        "{guild}": bot.get_guild(int(giveaway.get("guild_id") or 0)).name
-        if bot.get_guild(int(giveaway.get("guild_id") or 0))
-        else "the server",
-    }
-    for key, value in replacements.items():
-        text = text.replace(key, value)
-    return truncate(text, 1800)
-
-
-def build_giveaway_embed(giveaway: Dict[str, Any]) -> discord.Embed:
-    end_at = int(giveaway.get("end_at") or 0)
-    participants = _giveaway_participant_count(giveaway)
-    guild = bot.get_guild(int(giveaway.get("guild_id") or 0))
-    active_color = parse_hex_color_value(giveaway.get("color"), 0x3498DB) or 0x3498DB
-    ended_color = parse_hex_color_value(giveaway.get("end_color"), 0xE74C3C) or 0xE74C3C
-    color = discord.Color(ended_color if giveaway.get("ended") else active_color)
-
-    if giveaway.get("ended"):
-        winner_ids = _coerce_user_id_list(giveaway.get("winner_ids"))
-        winner_text = ", ".join(f"<@{user_id}>" for user_id in winner_ids) if winner_ids else "No valid entries"
-        description = (
-            f"Winner{'s' if len(winner_ids) != 1 else ''}: {winner_text}\n"
-            f"Entries: **{format_count(participants)}**\n"
-            f"Ended at: {format_discord_timestamp(int(giveaway.get('ended_at') or end_at), 'F')}"
-        )
-        embed = discord.Embed(
-            title=f"\U0001F389 GIVEAWAY ENDED \U0001F389\n{giveaway.get('prize', 'Giveaway prize')}",
-            description=description,
-            color=color,
-        )
-    else:
-        description = (
-            f"Click {GIVEAWAY_EMOJI} button to enter!\n"
-            f"Winners: **{format_count(giveaway.get('winners', 1))}**\n"
-            f"Hosted by: <@{giveaway.get('host_id')}>\n"
-            f"Ends: {format_discord_timestamp(end_at, 'R')}\n"
-            f"Ends at: {format_discord_timestamp(end_at, 'F')}"
-        )
-        requirement_lines = []
-        if giveaway.get("required_role_id"):
-            requirement_lines.append(f"Must have role: {format_giveaway_role(guild, giveaway.get('required_role_id'))}")
-        message_requirements_text = format_giveaway_message_requirements(giveaway)
-        if message_requirements_text:
-            requirement_lines.append(f"Must have sent:\n{message_requirements_text}")
-        if giveaway.get("requirement_bypass_role_id"):
-            requirement_lines.append(
-                f"Requirement bypass role: {format_giveaway_role(guild, giveaway.get('requirement_bypass_role_id'))}"
-            )
-        if requirement_lines:
-            description = f"{description}\n\n**Requirements**\n" + "\n".join(requirement_lines)
-        extra_entries_text = format_giveaway_extra_entries(guild, giveaway)
-        if extra_entries_text:
-            description = f"{description}\n\n**Extra Entries**\n{extra_entries_text}"
-        embed = discord.Embed(
-            title=str(giveaway.get("prize", "Giveaway prize")),
-            description=description,
-            color=color,
-        )
-
-    embed.set_footer(text=f"Giveaway ID: {giveaway.get('id')} | Entries: {format_count(participants)}")
-    if giveaway.get("image_url"):
-        embed.set_image(url=str(giveaway["image_url"]))
-    if giveaway.get("thumbnail_url"):
-        embed.set_thumbnail(url=str(giveaway["thumbnail_url"]))
-    if bot.user and bot.user.display_avatar:
-        embed.set_author(name=bot.user.display_name, icon_url=bot.user.display_avatar.url)
-    return embed
-
-
-def choose_giveaway_winners(
-    giveaway: Dict[str, Any],
-    *,
-    exclude_user_ids: Optional[Iterable[int]] = None,
-    respect_forced_winner: bool = True,
-) -> list[int]:
-    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
-    forced_winner_id = _parse_user_id_value(giveaway.get("forced_winner_id"))
-    winner_count = min(20, max(1, _coerce_non_negative_int(giveaway.get("winners", 1))))
-    excluded = {
-        parsed_user_id
-        for raw_user_id in (exclude_user_ids or [])
-        if (parsed_user_id := _parse_user_id_value(raw_user_id)) is not None
-    }
-
-    winners: list[int] = []
-    if respect_forced_winner and forced_winner_id is not None and forced_winner_id not in excluded:
-        winners.append(forced_winner_id)
-
-    tickets: list[int] = []
-    for user_id in participant_ids:
-        if user_id in winners or user_id in excluded:
-            continue
-        tickets.extend([user_id] * giveaway_participant_entries(giveaway, user_id))
-
-    while tickets and len(winners) < winner_count:
-        winner_id = random.choice(tickets)
-        winners.append(winner_id)
-        tickets = [ticket for ticket in tickets if ticket != winner_id]
-    return winners[:winner_count]
-
-
-async def fetch_giveaway_message(giveaway: Dict[str, Any]) -> Optional[discord.Message]:
-    channel_id = _parse_user_id_value(giveaway.get("channel_id"))
-    message_id = _parse_user_id_value(giveaway.get("message_id"))
-    if channel_id is None or message_id is None:
-        return None
-
-    try:
-        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
-        print(f"Could not fetch giveaway channel {channel_id}: {error}")
-        return None
-
-    if not hasattr(channel, "fetch_message"):
-        return None
-
-    try:
-        return await channel.fetch_message(message_id)  # type: ignore[attr-defined]
-    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
-        print(f"Could not fetch giveaway message {message_id}: {error}")
-        return None
-
-
-async def update_giveaway_message(giveaway_id: str) -> bool:
-    giveaway = load_giveaways().get(giveaway_id)
-    if not giveaway:
-        return False
-
-    message = await fetch_giveaway_message(giveaway)
-    if message is None:
-        return False
-
-    try:
-        view = None if giveaway.get("ended") else GiveawayView(giveaway_id)
-        await message.edit(embed=build_giveaway_embed(giveaway), view=view)
-        return True
-    except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"Could not update giveaway message {giveaway_id}: {error}")
-        return False
-
-
-async def deliver_giveaway_winner_rewards(giveaway: Dict[str, Any], winner_ids: Iterable[int]) -> list[str]:
-    results: list[str] = []
-    guild = bot.get_guild(int(giveaway.get("guild_id") or 0))
-    winner_role_id = _parse_user_id_value(giveaway.get("winner_role_id"))
-    winner_role = guild.get_role(winner_role_id) if guild and winner_role_id else None
-
-    for winner_id in _coerce_user_id_list(list(winner_ids)):
-        if guild and winner_role:
-            try:
-                member = guild.get_member(winner_id) or await guild.fetch_member(winner_id)
-            except discord.HTTPException:
-                member = None
-            if member is not None:
-                try:
-                    await member.add_roles(winner_role, reason=f"Giveaway winner {giveaway.get('id')}")
-                    results.append(f"Gave {winner_role.mention} to <@{winner_id}>.")
-                except discord.HTTPException as error:
-                    results.append(f"Could not give {winner_role.mention} to <@{winner_id}>: `{truncate(error, 140)}`")
-
-        if giveaway.get("winner_dm_message"):
-            try:
-                user = bot.get_user(winner_id) or await bot.fetch_user(winner_id)
-                await user.send(giveaway_message_from_template(str(giveaway.get("winner_dm_message", "")), giveaway, winner_id))
-            except discord.HTTPException:
-                results.append(f"Could not DM <@{winner_id}>.")
-    return results
-
-
-async def end_giveaway(giveaway_id: str, *, manual: bool = False) -> tuple[bool, str]:
-    giveaways = load_giveaways()
-    giveaway = giveaways.get(giveaway_id)
-    if not giveaway:
-        return False, "Giveaway not found."
-    if giveaway.get("ended"):
-        return False, "Giveaway already ended."
-
-    winner_ids = choose_giveaway_winners(giveaway)
-    giveaway["ended"] = True
-    giveaway["ended_at"] = int(time.time())
-    giveaway["winner_ids"] = winner_ids
-    giveaways[giveaway_id] = giveaway
-    save_giveaways(giveaways)
-
-    await update_giveaway_message(giveaway_id)
-    reward_results = await deliver_giveaway_winner_rewards(giveaway, winner_ids)
-
-    if not manual:
-        message = await fetch_giveaway_message(giveaway)
-        if message is not None:
-            if winner_ids:
-                winner_mentions = ", ".join(f"<@{user_id}>" for user_id in winner_ids)
-                announcement = f"\U0001F389 Congratulations {winner_mentions}! You won **{giveaway['prize']}**."
-            else:
-                announcement = f"\U0001F389 Giveaway **{giveaway['prize']}** ended with no valid entries."
-            if reward_results:
-                announcement = f"{announcement}\n" + "\n".join(reward_results[:3])
-            try:
-                await message.channel.send(announcement)
-            except (discord.Forbidden, discord.HTTPException) as error:
-                print(f"Could not send giveaway winner announcement {giveaway_id}: {error}")
-
-    return True, "Giveaway ended."
-
-
-def register_giveaway_view(giveaway_id: str) -> None:
-    if giveaway_id in REGISTERED_GIVEAWAY_VIEW_IDS:
-        return
-
-    giveaway = load_giveaways().get(giveaway_id)
-    if not giveaway or giveaway.get("ended") or not giveaway.get("message_id"):
-        return
-
-    try:
-        bot.add_view(GiveawayView(giveaway_id), message_id=int(giveaway["message_id"]))
-        REGISTERED_GIVEAWAY_VIEW_IDS.add(giveaway_id)
-    except Exception as error:
-        print(f"Could not register persistent giveaway view {giveaway_id}: {error}")
-
-
-def restore_giveaway_views() -> None:
-    for giveaway_id, giveaway in load_giveaways().items():
-        if giveaway.get("ended"):
-            continue
-        register_giveaway_view(giveaway_id)
-
-
-def build_giveaway_participants_embed(giveaway: Dict[str, Any], page: int = 0) -> discord.Embed:
-    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
-    total_pages = max(1, (len(participant_ids) + GIVEAWAY_PARTICIPANTS_PAGE_SIZE - 1) // GIVEAWAY_PARTICIPANTS_PAGE_SIZE)
-    page = min(max(0, page), total_pages - 1)
-    start = page * GIVEAWAY_PARTICIPANTS_PAGE_SIZE
-    visible_ids = participant_ids[start : start + GIVEAWAY_PARTICIPANTS_PAGE_SIZE]
-
-    if visible_ids:
-        lines = []
-        for index, user_id in enumerate(visible_ids, start=1):
-            entry_count = giveaway_participant_entries(giveaway, user_id)
-            entry_label = "entry" if entry_count == 1 else "entries"
-            lines.append(f"**{start + index}.** <@{user_id}> (**{format_count(entry_count)} {entry_label}**)")
-    else:
-        lines = ["No participants yet."]
-
-    embed = discord.Embed(
-        title=f"Giveaway Participants (Page {page + 1}/{total_pages})",
-        description=(
-            f"Participants for **{giveaway.get('prize', 'Giveaway prize')}**:\n\n"
-            + "\n".join(lines)
-            + f"\n\nTotal Participants: **{format_count(len(participant_ids))}**"
-        ),
-        color=discord.Color.blue(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_author(name=bot.user.display_name, icon_url=bot.user.display_avatar.url)
-    return embed
-
-
-def remove_giveaway_participant(giveaway_id: str, user_id: int) -> tuple[bool, Optional[Dict[str, Any]]]:
-    giveaways = load_giveaways()
-    giveaway = giveaways.get(giveaway_id)
-    if not giveaway:
-        return False, None
-
-    participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
-    if user_id not in participant_ids:
-        return False, giveaway
-
-    giveaway["participant_ids"] = [participant_id for participant_id in participant_ids if participant_id != user_id]
-    participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
-    participant_entries.pop(str(user_id), None)
-    giveaway["participant_entries"] = participant_entries
-    giveaways[giveaway_id] = giveaway
-    save_giveaways(giveaways)
-    return True, giveaway
-
-
-class GiveawayRemoveParticipantModal(discord.ui.Modal, title="Remove Participant"):
-    user_text = discord.ui.TextInput(
-        label="User ID or mention",
-        placeholder="@user or 123456789012345678",
-        required=True,
-        max_length=80,
-    )
-
-    def __init__(self, giveaway_id: str, page: int):
-        super().__init__()
-        self.giveaway_id = giveaway_id
-        self.page = page
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not await require_giveaway_manager(interaction):
-            return
-        user_id_match = DIGIT_ID_RE.search(str(self.user_text.value or ""))
-        if not user_id_match:
-            await safe_send(interaction, "I could not find a user ID in that input.", ephemeral=True)
-            return
-
-        target_user_id = int(user_id_match.group(1))
-        removed, giveaway = remove_giveaway_participant(self.giveaway_id, target_user_id)
-        if not giveaway:
-            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
-            return
-        if not removed:
-            await safe_send(interaction, "That user is not participating in this giveaway.", ephemeral=True)
-            return
-
-        await update_giveaway_message(self.giveaway_id)
-        embed = build_giveaway_participants_embed(giveaway, self.page)
-        view = GiveawayParticipantsView(self.giveaway_id, self.page)
-        try:
-            await interaction.response.edit_message(embed=embed, view=view)
-        except (discord.NotFound, discord.HTTPException):
-            await safe_send(interaction, f"Removed <@{target_user_id}> from the giveaway.", ephemeral=True)
-
-
-class GiveawayParticipantsView(discord.ui.View):
-    def __init__(self, giveaway_id: str, page: int = 0):
-        super().__init__(timeout=120)
-        self.giveaway_id = giveaway_id
-        self.page = page
-        giveaway = load_giveaways().get(giveaway_id, {})
-        participant_count = _giveaway_participant_count(giveaway)
-        total_pages = max(1, (participant_count + GIVEAWAY_PARTICIPANTS_PAGE_SIZE - 1) // GIVEAWAY_PARTICIPANTS_PAGE_SIZE)
-
-        previous_button = discord.ui.Button(
-            emoji="\u25C0",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page <= 0,
-        )
-        next_button = discord.ui.Button(
-            emoji="\u25B6",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page >= total_pages - 1,
-        )
-        previous_button.callback = self.previous_page
-        next_button.callback = self.next_page
-        self.add_item(previous_button)
-        self.add_item(next_button)
-        remove_button = discord.ui.Button(
-            label="Remove A Participant",
-            style=discord.ButtonStyle.danger,
-            disabled=participant_count <= 0,
-        )
-        remove_button.callback = self.remove_participant
-        self.add_item(remove_button)
-
-    async def previous_page(self, interaction: discord.Interaction):
-        await self.show_page(interaction, self.page - 1)
-
-    async def next_page(self, interaction: discord.Interaction):
-        await self.show_page(interaction, self.page + 1)
-
-    async def remove_participant(self, interaction: discord.Interaction):
-        if not await require_giveaway_manager(interaction):
-            return
-        await interaction.response.send_modal(GiveawayRemoveParticipantModal(self.giveaway_id, self.page))
-
-    async def show_page(self, interaction: discord.Interaction, page: int):
-        giveaway = load_giveaways().get(self.giveaway_id)
-        if not giveaway:
-            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
-            return
-
-        view = GiveawayParticipantsView(self.giveaway_id, page)
-        embed = build_giveaway_participants_embed(giveaway, page)
-        try:
-            await interaction.response.edit_message(embed=embed, view=view)
-        except (discord.NotFound, discord.HTTPException) as error:
-            print(f"Could not edit giveaway participants page: {error}")
-
-
-class GiveawayView(discord.ui.View):
-    def __init__(self, giveaway_id: str):
-        super().__init__(timeout=None)
-        self.giveaway_id = giveaway_id
-        giveaway = load_giveaways().get(giveaway_id, {})
-        ended = bool(giveaway.get("ended"))
-        participant_count = _giveaway_participant_count(giveaway)
-
-        entry_button = discord.ui.Button(
-            label=format_count(participant_count),
-            emoji=GIVEAWAY_EMOJI,
-            style=discord.ButtonStyle.primary,
-            custom_id=f"giveaway:enter:{giveaway_id}",
-            disabled=ended,
-        )
-        participant_button = discord.ui.Button(
-            label="Participants",
-            emoji="\U0001F465",
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"giveaway:participants:{giveaway_id}",
-        )
-        entry_button.callback = self.entry_button
-        participant_button.callback = self.participants_button
-        self.add_item(entry_button)
-        self.add_item(participant_button)
-
-    async def entry_button(self, interaction: discord.Interaction):
-        giveaways = load_giveaways()
-        giveaway = giveaways.get(self.giveaway_id)
-        if not giveaway:
-            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
-            return
-
-        if giveaway.get("ended") or int(giveaway.get("end_at") or 0) <= int(time.time()):
-            await safe_send(interaction, "This giveaway has ended.", ephemeral=True)
-            return
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await safe_send(interaction, "Use this button inside the server.", ephemeral=True)
-            return
-
-        participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
-        participant_entries = _coerce_int_mapping(giveaway.get("participant_entries"), maximum=100)
-        if interaction.user.id in participant_ids:
-            participant_ids = [user_id for user_id in participant_ids if user_id != interaction.user.id]
-            participant_entries.pop(str(interaction.user.id), None)
-            response_text = "You left this giveaway."
-        else:
-            blocked_reason = giveaway_entry_block_reason(interaction.guild, interaction.user, giveaway)
-            if blocked_reason:
-                await safe_send(interaction, blocked_reason, ephemeral=True)
-                return
-            entry_count = giveaway_member_entry_count(giveaway, interaction.user)
-            participant_ids.append(interaction.user.id)
-            participant_entries[str(interaction.user.id)] = entry_count
-            response_text = f"You entered this giveaway with {format_count(entry_count)} entr{'y' if entry_count == 1 else 'ies'}."
-
-        giveaway["participant_ids"] = participant_ids
-        giveaway["participant_entries"] = participant_entries
-        giveaways[self.giveaway_id] = giveaway
-        save_giveaways(giveaways)
-
-        if interaction.message:
-            try:
-                await interaction.message.edit(embed=build_giveaway_embed(giveaway), view=GiveawayView(self.giveaway_id))
-            except (discord.Forbidden, discord.HTTPException) as error:
-                print(f"Could not update giveaway entry count {self.giveaway_id}: {error}")
-
-        await safe_send(interaction, response_text, ephemeral=True)
-
-    async def participants_button(self, interaction: discord.Interaction):
-        giveaway = load_giveaways().get(self.giveaway_id)
-        if not giveaway:
-            await safe_send(interaction, "Giveaway not found.", ephemeral=True)
-            return
-
-        await safe_send(
-            interaction,
-            embed=build_giveaway_participants_embed(giveaway),
-            view=GiveawayParticipantsView(self.giveaway_id),
-            ephemeral=True,
-        )
-
-
-@tasks.loop(seconds=GIVEAWAY_CHECK_INTERVAL_SECONDS)
-async def giveaway_end_task():
-    now = int(time.time())
-    for giveaway_id, giveaway in list(load_giveaways().items()):
-        if giveaway.get("ended"):
-            continue
-        if int(giveaway.get("end_at") or 0) <= now:
-            try:
-                await end_giveaway(giveaway_id)
-            except Exception as error:
-                print(f"Giveaway end task failed for {giveaway_id}: {error}")
-
-
-def remember_spawn_message(message: discord.Message, view: "CatchView") -> None:
-    records = load_spawn_records()
-    records[str(message.id)] = {
-        "vehicle_name": view.vehicle_name,
-        "is_fresh": bool(view.is_fresh),
-        "rarity": view.rarity,
-        "guild_id": message.guild.id if message.guild else None,
-        "channel_id": message.channel.id,
-        "created_at": int(time.time()),
-    }
-
-    if len(records) > MAX_SPAWN_RECORDS:
-        records = dict(
-            sorted(
-                records.items(),
-                key=lambda item: int(item[1].get("created_at") or 0),
-                reverse=True,
-            )[:MAX_SPAWN_RECORDS]
-        )
-
-    save_spawn_records(records)
-
-
 def prune_inventories_to_vehicle_names(vehicle_names: set[str]) -> None:
     if not vehicle_names:
         return
@@ -2653,38 +912,6 @@ def get_global_vehicle_counts(vehicle_name: str) -> tuple[int, int]:
     return regular_count, fresh_count
 
 
-def get_global_inventory_totals(vehicles: Optional[Dict[str, Dict[str, Any]]] = None) -> tuple[int, int]:
-    if vehicles is None:
-        vehicles = get_vehicle_map()
-
-    total_count = 0
-    fresh_count = 0
-
-    for user_inventory in load_inventories().values():
-        if not isinstance(user_inventory, dict):
-            continue
-
-        for vehicle_key, raw_count in user_inventory.items():
-            try:
-                count = int(raw_count)
-            except (TypeError, ValueError):
-                continue
-
-            if count <= 0:
-                continue
-
-            base_name, is_fresh = split_inventory_key(str(vehicle_key))
-            canonical_name = canonical_vehicle_name(base_name)
-            if canonical_name not in vehicles:
-                continue
-
-            total_count += count
-            if is_fresh:
-                fresh_count += count
-
-    return total_count, fresh_count
-
-
 def get_user_inventory_totals(user_inventory: Dict[str, int], vehicles: Dict[str, Dict[str, Any]]) -> tuple[int, int]:
     total_count = 0
     unique_vehicle_names: set[str] = set()
@@ -2716,7 +943,7 @@ def build_missing_vehicle_list_pages() -> list[str]:
     missing_vehicle_names = [
         display_vehicle_name(vehicle_name)
         for vehicle_name, vehicle_data in vehicles.items()
-        if not _vehicle_has_picture(vehicle_data)
+        if not _vehicle_is_spawnable(vehicle_data)
     ]
     missing_vehicle_names.sort(key=str.lower)
 
@@ -2764,10 +991,7 @@ async def resolve_leaderboard_user_label(guild: Optional[discord.Guild], user_id
         return f"User {user_id}"
 
 
-async def _create_vehicle_leaderboard_embed(
-    guild: Optional[discord.Guild],
-    viewer_id: Optional[int] = None,
-) -> discord.Embed:
+async def create_leaderboard_embed(guild: Optional[discord.Guild], viewer_id: Optional[int] = None) -> discord.Embed:
     inventories = load_inventories()
     vehicles = get_vehicle_map()
     leaderboard_rows: list[tuple[int, int, int]] = []
@@ -2827,126 +1051,6 @@ async def _create_vehicle_leaderboard_embed(
     return embed
 
 
-async def _create_money_leaderboard_embed(
-    guild: Optional[discord.Guild],
-    viewer_id: Optional[int] = None,
-) -> discord.Embed:
-    balances = load_balances()
-    leaderboard_rows: list[tuple[int, int]] = []
-
-    for raw_user_id, raw_balance in balances.items():
-        try:
-            user_id = int(raw_user_id)
-        except (TypeError, ValueError):
-            continue
-
-        balance = _coerce_non_negative_int(raw_balance)
-        if balance <= 0:
-            continue
-
-        leaderboard_rows.append((balance, user_id))
-
-    leaderboard_rows.sort(key=lambda row: (-row[0], row[1]))
-
-    embed = discord.Embed(title="Money Leaderboard", color=discord.Color.green())
-    if not leaderboard_rows:
-        embed.description = "No one has coins yet."
-        if viewer_id is not None:
-            embed.description += "\n\nYour rank is not ranked yet."
-        return embed
-
-    lines: list[str] = []
-    for position, (balance, user_id) in enumerate(leaderboard_rows[:10], start=1):
-        label = discord.utils.escape_markdown(await resolve_leaderboard_user_label(guild, user_id))
-        lines.append(f"**{position}.** {label} - **{format_money(balance)}**")
-
-    if viewer_id is not None:
-        viewer_rank: Optional[int] = None
-        viewer_balance = 0
-        for position, (balance, user_id) in enumerate(leaderboard_rows, start=1):
-            if user_id == viewer_id:
-                viewer_rank = position
-                viewer_balance = balance
-                break
-
-        lines.append("")
-        if viewer_rank is None:
-            lines.append("Your rank is not ranked yet.")
-        else:
-            lines.append(
-                f"Your rank is **#{format_count(viewer_rank)}** with **{format_money(viewer_balance)}**."
-            )
-
-    embed.description = "\n".join(lines)
-    embed.set_footer(text=f"Ranked {format_count(len(leaderboard_rows))} players by coin balance")
-    return embed
-
-
-async def create_leaderboard_embed(
-    guild: Optional[discord.Guild],
-    viewer_id: Optional[int] = None,
-    mode: str = "vehicles",
-) -> discord.Embed:
-    if str(mode or "").lower() == "money":
-        return await _create_money_leaderboard_embed(guild, viewer_id)
-    return await _create_vehicle_leaderboard_embed(guild, viewer_id)
-
-
-class LeaderboardModeButton(discord.ui.Button):
-    def __init__(self, leaderboard_view: "LeaderboardView", mode: str, label: str):
-        super().__init__(
-            label=label,
-            style=discord.ButtonStyle.primary if leaderboard_view.mode == mode else discord.ButtonStyle.secondary,
-            disabled=leaderboard_view.mode == mode,
-        )
-        self.leaderboard_view = leaderboard_view
-        self.mode = mode
-
-    async def callback(self, interaction: discord.Interaction):
-        if not await safe_defer(interaction):
-            return
-
-        view = LeaderboardView(self.leaderboard_view.owner, self.mode)
-        embed = await create_leaderboard_embed(interaction.guild, self.leaderboard_view.owner.id, self.mode)
-        try:
-            await interaction.edit_original_response(embed=embed, view=view)
-        except (discord.NotFound, discord.HTTPException) as error:
-            print(f"Error editing leaderboard message after button click: {error}")
-            if interaction.message:
-                try:
-                    await interaction.message.edit(embed=embed, view=view)
-                except Exception as fallback_error:
-                    print(f"Fallback leaderboard message edit failed: {fallback_error}")
-
-
-class LeaderboardView(discord.ui.View):
-    def __init__(self, owner: discord.abc.User, mode: str = "vehicles"):
-        super().__init__(timeout=120)
-        self.owner = owner
-        self.mode = "money" if str(mode or "").lower() == "money" else "vehicles"
-
-        self.add_item(LeaderboardModeButton(self, "vehicles", "Vehicles"))
-        self.add_item(LeaderboardModeButton(self, "money", "Money"))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner.id:
-            await interaction.response.send_message(
-                "Only the person who used the command can use these buttons.",
-                ephemeral=True,
-            )
-            return False
-        return True
-
-    async def on_error(
-        self,
-        interaction: discord.Interaction,
-        error: Exception,
-        item: discord.ui.Item[Any],
-    ) -> None:
-        print(f"Leaderboard button error on {getattr(item, 'label', 'unknown')}: {error}")
-        await safe_send(interaction, "Leaderboard button failed. Please try `/leaderboard` again.", ephemeral=True)
-
-
 def add_to_inventory(user_id: int, vehicle_name: str, is_fresh: bool = False) -> bool:
     return add_vehicle_count(user_id, vehicle_name, 1, is_fresh=is_fresh)
 
@@ -2998,7 +1102,7 @@ def remove_vehicle_count(user_id: int, vehicle_name: str, count: int, is_fresh: 
     return amount_removed
 
 
-def load_guild_channel_settings() -> Dict[str, Dict[str, Any]]:
+def load_guild_channel_settings() -> Dict[str, Dict[str, int]]:
     global GUILD_CHANNEL_SETTINGS_CACHE
 
     if GUILD_CHANNEL_SETTINGS_CACHE is not None:
@@ -3020,13 +1124,13 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, Any]]:
         GUILD_CHANNEL_SETTINGS_CACHE = {}
         return GUILD_CHANNEL_SETTINGS_CACHE
 
-    normalized: Dict[str, Dict[str, Any]] = {}
+    normalized: Dict[str, Dict[str, int]] = {}
     for raw_guild_id, raw_settings in raw_data.items():
         guild_id = str(raw_guild_id)
         if not isinstance(raw_settings, dict):
             continue
 
-        parsed_settings: Dict[str, Any] = {}
+        parsed_settings: Dict[str, int] = {}
         for key in ("dex_channel_id",):
             value = raw_settings.get(key)
             try:
@@ -3036,15 +1140,6 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, Any]]:
             if parsed_value > 0:
                 parsed_settings[key] = parsed_value
 
-        if "bot_comment_public" in raw_settings:
-            raw_public = raw_settings.get("bot_comment_public")
-            if isinstance(raw_public, bool):
-                parsed_settings["bot_comment_public"] = raw_public
-            else:
-                parsed_public = parse_bool_true_false(str(raw_public))
-                if parsed_public is not None:
-                    parsed_settings["bot_comment_public"] = parsed_public
-
         if parsed_settings:
             normalized[guild_id] = parsed_settings
 
@@ -3052,7 +1147,7 @@ def load_guild_channel_settings() -> Dict[str, Dict[str, Any]]:
     return GUILD_CHANNEL_SETTINGS_CACHE
 
 
-def save_guild_channel_settings(settings: Dict[str, Dict[str, Any]]) -> None:
+def save_guild_channel_settings(settings: Dict[str, Dict[str, int]]) -> None:
     global GUILD_CHANNEL_SETTINGS_CACHE
 
     try:
@@ -3078,20 +1173,6 @@ def get_guild_channel_setting(guild_id: int, key: str) -> Optional[int]:
     return parsed if parsed > 0 else None
 
 
-def get_guild_bool_setting(guild_id: int, key: str, default: bool = False) -> bool:
-    settings = load_guild_channel_settings()
-    guild_settings = settings.get(str(guild_id), {})
-    if not isinstance(guild_settings, dict):
-        return default
-
-    value = guild_settings.get(key)
-    if isinstance(value, bool):
-        return value
-
-    parsed = parse_bool_true_false(str(value))
-    return default if parsed is None else parsed
-
-
 def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
     settings = load_guild_channel_settings()
     guild_key = str(guild_id)
@@ -3102,24 +1183,6 @@ def set_guild_channel_setting(guild_id: int, key: str, channel_id: int) -> None:
     guild_settings[key] = int(channel_id)
     settings[guild_key] = guild_settings
     save_guild_channel_settings(settings)
-
-
-def set_guild_bool_setting(guild_id: int, key: str, value: bool) -> None:
-    settings = load_guild_channel_settings()
-    guild_key = str(guild_id)
-    guild_settings = settings.get(guild_key, {})
-    if not isinstance(guild_settings, dict):
-        guild_settings = {}
-
-    guild_settings[key] = bool(value)
-    settings[guild_key] = guild_settings
-    save_guild_channel_settings(settings)
-
-
-def wrong_guess_comments_are_public(guild_id: Optional[int]) -> bool:
-    if guild_id is None:
-        return True
-    return get_guild_bool_setting(guild_id, "bot_comment_public", default=True)
 
 
 def get_configured_text_channel(guild: discord.Guild, key: str) -> Optional[discord.TextChannel]:
@@ -3218,10 +1281,6 @@ def _merge_vehicle_entry(
 
     existing["rarity"] = _rarer_rarity(existing.get("rarity"), vehicle_data.get("rarity"))
 
-    for metadata_key in ("display_name", "spawnable", "showable"):
-        if metadata_key in vehicle_data and (metadata_key not in existing or not is_alias):
-            existing[metadata_key] = vehicle_data[metadata_key]
-
 
 def load_vehicles() -> Dict[str, Dict[str, Any]]:
     global VEHICLES_CACHE, VEHICLES_CACHE_MTIME, VEHICLES_CACHE_PATH
@@ -3263,9 +1322,6 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
         image_url = ""
         rarity = "common"
         code = None
-        display_name = ""
-        spawnable: Optional[bool] = None
-        showable: Optional[bool] = None
 
         if isinstance(raw_value, dict):
             image_url = str(raw_value.get("pic_link") or raw_value.get("url") or "").strip()
@@ -3273,11 +1329,6 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
             rarity = rarity_value if rarity_value in RARITY_WEIGHTS else "common"
             if raw_value.get("code") is not None:
                 code = str(raw_value.get("code"))
-            display_name = str(raw_value.get("display_name") or raw_value.get("name") or "").strip()
-            if raw_value.get("spawnable") is not None:
-                spawnable = parse_bool_true_false(str(raw_value.get("spawnable")))
-            if raw_value.get("showable") is not None:
-                showable = parse_bool_true_false(str(raw_value.get("showable")))
         else:
             image_url = str(raw_value).strip()
 
@@ -3287,12 +1338,6 @@ def load_vehicles() -> Dict[str, Dict[str, Any]]:
         }
         if code:
             vehicle_data["code"] = code
-        if display_name:
-            vehicle_data["display_name"] = display_name
-        if spawnable is not None:
-            vehicle_data["spawnable"] = spawnable
-        if showable is not None:
-            vehicle_data["showable"] = showable
 
         local_path = _resolve_local_image(vehicle_name)
         if not local_path and is_alias:
@@ -3400,9 +1445,6 @@ def build_catalog_debug_message(vehicle_query: str) -> str:
 
 
 def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
-    if not CATALOG_AUDIT_ENABLED:
-        return
-
     for vehicle_name in CATALOG_AUDIT_VEHICLES:
         vehicle_data = vehicles.get(vehicle_name)
         if not vehicle_data:
@@ -3414,20 +1456,8 @@ def log_catalog_audit(vehicles: Dict[str, Dict[str, Any]]) -> None:
         print(f"Catalog audit: {vehicle_name} rarity={rarity} pic={has_pic}")
 
 
-def _vehicle_has_picture(vehicle_data: Dict[str, Any]) -> bool:
-    return bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
-
-
-def _vehicle_is_showable(vehicle_data: Dict[str, Any]) -> bool:
-    if vehicle_data.get("showable") is False:
-        return False
-    return True
-
-
 def _vehicle_is_spawnable(vehicle_data: Dict[str, Any]) -> bool:
-    if vehicle_data.get("spawnable") is False:
-        return False
-    return _vehicle_has_picture(vehicle_data)
+    return bool(vehicle_data.get("local_path") or is_http_url(vehicle_data.get("url")))
 
 
 def get_random_vehicle(
@@ -3580,51 +1610,17 @@ def _user_rarity_counts(user_inventory: Dict[str, int], vehicles: Dict[str, Dict
     return counts
 
 
-def get_user_inventory_count_breakdown(
-    user_inventory: Dict[str, int],
-    vehicles: Dict[str, Dict[str, Any]],
-) -> tuple[int, int]:
-    total_count = 0
-    fresh_count = 0
-
-    if not isinstance(user_inventory, dict):
-        return total_count, fresh_count
-
-    for vehicle_key, raw_count in user_inventory.items():
-        try:
-            count = int(raw_count)
-        except (TypeError, ValueError):
-            continue
-
-        if count <= 0:
-            continue
-
-        vehicle_name, is_fresh = split_inventory_key(str(vehicle_key))
-        vehicle_name = canonical_vehicle_name(vehicle_name)
-        if vehicle_name not in vehicles:
-            continue
-
-        total_count += count
-        if is_fresh:
-            fresh_count += count
-
-    return total_count, fresh_count
-
-
 def create_overview_embed(user: discord.abc.User) -> discord.Embed:
     inventories = load_inventories()
     user_inventory = inventories.get(str(user.id), {})
     vehicles = get_vehicle_map()
 
     counts = _user_rarity_counts(user_inventory, vehicles)
-    total, fresh_total = get_user_inventory_count_breakdown(user_inventory, vehicles)
-    _, unique_total = get_user_inventory_totals(user_inventory, vehicles)
-    money_balance = get_user_balance(user.id)
+    total = sum(counts.values())
 
     embed = discord.Embed(title=f"{user.name}'s Inventory", color=discord.Color.blue())
     if total <= 0:
         embed.description = "You have not caught any vehicles yet."
-        embed.set_footer(text=f"Coins: {format_money(money_balance)}")
         return embed
 
     lines = [
@@ -3632,14 +1628,7 @@ def create_overview_embed(user: discord.abc.User) -> discord.Embed:
         for rarity in RARITY_ORDER
     ]
     embed.description = "\n".join(lines)
-    embed.set_footer(
-        text=(
-            f"Unique vehicles: {format_count(unique_total)} | "
-            f"Total vehicles: {format_count(total)} | "
-            f"Fresh vehicles: {format_count(fresh_total)} | "
-            f"Coins: {format_money(money_balance)}"
-        )
-    )
+    embed.set_footer(text=f"Total vehicles: {format_count(total)}")
     return embed
 
 
@@ -3714,59 +1703,20 @@ class InventoryOverview(discord.ui.View):
 
 
 class RarityInventoryView(discord.ui.View):
-    def __init__(
-        self,
-        target_user: discord.abc.User,
-        rarity: str,
-        owner: discord.abc.User,
-        page: int = 0,
-    ):
+    def __init__(self, target_user: discord.abc.User, rarity: str, owner: discord.abc.User):
         super().__init__(timeout=120)
         self.target_user = target_user
         self.rarity = rarity
         self.owner = owner
         self.vehicle_counts = get_user_rarity_vehicle_counts(target_user.id, rarity)
-        sorted_items = self._sorted_items()
-        self.page_count = max(1, (len(sorted_items) + INVENTORY_PAGE_SIZE - 1) // INVENTORY_PAGE_SIZE)
-        self.page = min(max(0, page), self.page_count - 1)
 
         back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
         back_button.callback = self.back_callback
         self.add_item(back_button)
 
-        prev_button = discord.ui.Button(
-            label="Prev",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page <= 0,
-        )
-        prev_button.callback = self.prev_callback
-        self.add_item(prev_button)
-
-        next_button = discord.ui.Button(
-            label="Next",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page >= self.page_count - 1,
-        )
-        next_button.callback = self.next_callback
-        self.add_item(next_button)
-
-    def _sorted_items(self) -> list[tuple[str, int]]:
-        return sorted(
-            self.vehicle_counts.items(),
-            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-        )
-
     async def back_callback(self, interaction: discord.Interaction):
         view = InventoryOverview(self.target_user, self.owner)
         await interaction.response.edit_message(embed=create_overview_embed(self.target_user), view=view)
-
-    async def prev_callback(self, interaction: discord.Interaction):
-        view = RarityInventoryView(self.target_user, self.rarity, self.owner, self.page - 1)
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    async def next_callback(self, interaction: discord.Interaction):
-        view = RarityInventoryView(self.target_user, self.rarity, self.owner, self.page + 1)
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner.id:
@@ -3788,31 +1738,23 @@ class RarityInventoryView(discord.ui.View):
             embed.description = "No vehicles of this rarity yet."
             return embed
 
-        sorted_items = self._sorted_items()
-        page_start = self.page * INVENTORY_PAGE_SIZE
-        page_items = sorted_items[page_start : page_start + INVENTORY_PAGE_SIZE]
+        sorted_items = sorted(
+            self.vehicle_counts.items(),
+            key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
+        )
 
         lines = [
             f"- {format_count(count)} | {display_vehicle_name(vehicle_key)}"
-            for vehicle_key, count in page_items
+            for vehicle_key, count in sorted_items[:30]
         ]
 
         total_unique = len(sorted_items)
         total_caught = sum(self.vehicle_counts.values())
-        fresh_caught = sum(
-            count
-            for vehicle_key, count in self.vehicle_counts.items()
-            if split_inventory_key(vehicle_key)[1]
-        )
         embed.description = "\n".join(lines)
-        embed.set_footer(
-            text=(
-                f"Unique: {total_unique} | "
-                f"Total caught: {format_count(total_caught)} | "
-                f"Fresh vehicles: {format_count(fresh_caught)} | "
-                f"Page {self.page + 1}/{self.page_count}"
-            )
-        )
+        embed.set_footer(text=f"Unique: {total_unique} | Total caught: {format_count(total_caught)}")
+
+        if total_unique > 30:
+            embed.description += f"\n...and {total_unique - 30} more"
 
         return embed
 
@@ -3832,28 +1774,21 @@ def get_trade_offer_for_user(trade_view: "TradeView", user_id: int) -> Optional[
     return None
 
 
-def get_available_vehicle_counts(user_id: int, current_offer: Optional[Dict[str, int]] = None) -> Dict[str, int]:
-    inventories = load_inventories()
-    user_inventory = inventories.get(str(user_id), {})
-    if not isinstance(user_inventory, dict):
-        return {}
-
-    current_offer = current_offer or {}
-    available: Dict[str, int] = {}
-    for vehicle_name, owned_count in user_inventory.items():
-        remaining = _coerce_non_negative_int(owned_count) - _coerce_non_negative_int(current_offer.get(vehicle_name, 0))
-        if remaining > 0:
-            available[vehicle_name] = remaining
-    return available
-
-
 def get_trade_available_vehicles(user_id: int) -> Dict[str, int]:
     trade_view = get_active_trade_for_user(user_id)
     if not trade_view:
         return {}
 
+    inventories = load_inventories()
+    user_inventory = inventories.get(str(user_id), {})
     current_offer = get_trade_offer_for_user(trade_view, user_id) or {}
-    return get_available_vehicle_counts(user_id, current_offer)
+
+    available: Dict[str, int] = {}
+    for vehicle_name, owned_count in user_inventory.items():
+        remaining = owned_count - current_offer.get(vehicle_name, 0)
+        if remaining > 0:
+            available[vehicle_name] = remaining
+    return available
 
 
 class TradeView(discord.ui.View):
@@ -3863,8 +1798,6 @@ class TradeView(discord.ui.View):
         self.user_b = user_b
         self.offer_a: Dict[str, int] = {}
         self.offer_b: Dict[str, int] = {}
-        self.money_offer_a = 0
-        self.money_offer_b = 0
         self.ready_a = False
         self.ready_b = False
         self.cancelled = False
@@ -3874,40 +1807,19 @@ class TradeView(discord.ui.View):
         self.countdown_task: Optional[asyncio.Task] = None
         self.countdown_remaining = 0
 
-    def get_money_offer(self, user_id: int) -> int:
-        if user_id == self.user_a.id:
-            return self.money_offer_a
-        if user_id == self.user_b.id:
-            return self.money_offer_b
-        return 0
-
-    def add_money_offer(self, user_id: int, amount: int) -> int:
-        amount = int(amount)
-        if user_id == self.user_a.id:
-            self.money_offer_a = max(0, self.money_offer_a + amount)
-            return self.money_offer_a
-        if user_id == self.user_b.id:
-            self.money_offer_b = max(0, self.money_offer_b + amount)
-            return self.money_offer_b
-        return 0
-
-    def _format_offer_block(self, offer: Dict[str, int], money_offer: int) -> str:
-        if not offer and money_offer <= 0:
-            return "*No vehicles or coins added yet*"
+    def _format_offer_block(self, offer: Dict[str, int]) -> str:
+        if not offer:
+            return "*No vehicles added yet*"
 
         sorted_items = sorted(
             offer.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        lines = []
-        if money_offer > 0:
-            lines.append(f"\u2022 {format_money(money_offer)}")
-
-        lines.extend(
+        lines = [
             f"\u2022 {format_count(count)} | {display_vehicle_name(name)}"
             for name, count in sorted_items[:20]
-        )
+        ]
         if len(sorted_items) > 20:
             lines.append(f"...and {len(sorted_items) - 20} more")
         return "\n".join(lines)
@@ -3917,12 +1829,12 @@ class TradeView(discord.ui.View):
 
         embed.add_field(
             name=f"\U0001F381 {self.user_a.name}'s Offer",
-            value=self._format_offer_block(self.offer_a, self.money_offer_a),
+            value=self._format_offer_block(self.offer_a),
             inline=True,
         )
         embed.add_field(
             name=f"\U0001F381 {self.user_b.name}'s Offer",
-            value=self._format_offer_block(self.offer_b, self.money_offer_b),
+            value=self._format_offer_block(self.offer_b),
             inline=True,
         )
 
@@ -4042,25 +1954,6 @@ class TradeView(discord.ui.View):
         inventories = load_inventories()
         inv_a = inventories.get(str(self.user_a.id), {})
         inv_b = inventories.get(str(self.user_b.id), {})
-        balances = load_balances()
-        balance_a = _coerce_non_negative_int(balances.get(str(self.user_a.id), 0))
-        balance_b = _coerce_non_negative_int(balances.get(str(self.user_b.id), 0))
-
-        if balance_a < self.money_offer_a:
-            channel = interaction.channel if interaction else self.message.channel
-            await channel.send(f"Trade failed: {self.user_a.name} no longer has enough coins.")
-            self.cancelled = True
-            self.cancelled_by = f"{self.user_a.name} missing coins"
-            await self.update_message()
-            return
-
-        if balance_b < self.money_offer_b:
-            channel = interaction.channel if interaction else self.message.channel
-            await channel.send(f"Trade failed: {self.user_b.name} no longer has enough coins.")
-            self.cancelled = True
-            self.cancelled_by = f"{self.user_b.name} missing coins"
-            await self.update_message()
-            return
 
         for name, count in self.offer_a.items():
             if inv_a.get(name, 0) < count:
@@ -4092,517 +1985,13 @@ class TradeView(discord.ui.View):
                 del inv_b[name]
             inv_a[name] = inv_a.get(name, 0) + count
 
-        if self.money_offer_a > 0:
-            balances[str(self.user_a.id)] = balance_a - self.money_offer_a
-            balances[str(self.user_b.id)] = balance_b + self.money_offer_a
-            balance_b = balances[str(self.user_b.id)]
-
-        if self.money_offer_b > 0:
-            balances[str(self.user_b.id)] = balance_b - self.money_offer_b
-            balances[str(self.user_a.id)] = balances.get(str(self.user_a.id), 0) + self.money_offer_b
-
         inventories[str(self.user_a.id)] = inv_a
         inventories[str(self.user_b.id)] = inv_b
         save_inventories(inventories)
-        save_balances(balances)
 
         self.completed = True
         await self.update_message()
         self.stop()
-
-
-class MarketSearchModal(discord.ui.Modal, title="Search market"):
-    query = discord.ui.TextInput(
-        label="Vehicle name",
-        placeholder="Example: m50, bismarck, fresh police heli",
-        required=False,
-        max_length=100,
-    )
-
-    def __init__(self, market_view: "ShopBuyView"):
-        super().__init__()
-        self.market_view = market_view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        query = str(self.query.value or "").strip()
-        view = ShopBuyView(self.market_view.viewer, query=query, page=0)
-        view.message = self.market_view.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-
-class MarketBuyModal(discord.ui.Modal, title="Buy market listing"):
-    amount = discord.ui.TextInput(
-        label="Amount to buy",
-        placeholder="1",
-        default="1",
-        required=True,
-        max_length=20,
-    )
-
-    def __init__(self, market_view: "ShopBuyView", listing_id: str):
-        super().__init__()
-        self.market_view = market_view
-        self.listing_id = listing_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-
-        parsed_amount = parse_count(str(self.amount.value))
-        if parsed_amount is None or parsed_amount <= 0:
-            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-            return
-
-        ok, message = buy_market_listing(interaction.user.id, self.listing_id, parsed_amount)
-        await safe_send(interaction, message, ephemeral=True)
-        await self.market_view.refresh_message()
-
-
-class MarketBuyButton(discord.ui.Button):
-    def __init__(self, market_view: "ShopBuyView", listing_id: str, index_label: int):
-        super().__init__(label=f"Buy {index_label}", style=discord.ButtonStyle.success, emoji=COIN_EMOJI)
-        self.market_view = market_view
-        self.listing_id = listing_id
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(MarketBuyModal(self.market_view, self.listing_id))
-
-
-class ShopBuyView(discord.ui.View):
-    def __init__(self, viewer: discord.abc.User, query: str = "", page: int = 0):
-        super().__init__(timeout=180)
-        self.viewer = viewer
-        self.query = query.strip()
-        self.message: Optional[discord.Message] = None
-
-        listings = self.filtered_listings()
-        self.page_count = max(1, (len(listings) + SHOP_PAGE_SIZE - 1) // SHOP_PAGE_SIZE)
-        self.page = min(max(0, page), self.page_count - 1)
-
-        search_button = discord.ui.Button(label="Search", style=discord.ButtonStyle.primary)
-        search_button.callback = self.search_callback
-        self.add_item(search_button)
-
-        clear_button = discord.ui.Button(
-            label="Clear",
-            style=discord.ButtonStyle.secondary,
-            disabled=not self.query,
-        )
-        clear_button.callback = self.clear_callback
-        self.add_item(clear_button)
-
-        prev_button = discord.ui.Button(label="Prev", style=discord.ButtonStyle.secondary, disabled=self.page <= 0)
-        prev_button.callback = self.prev_callback
-        self.add_item(prev_button)
-
-        next_button = discord.ui.Button(
-            label="Next",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page >= self.page_count - 1,
-        )
-        next_button.callback = self.next_callback
-        self.add_item(next_button)
-
-        for index, listing in enumerate(self.page_items(), start=1):
-            self.add_item(MarketBuyButton(self, str(listing.get("id", "")), index))
-
-    def filtered_listings(self) -> list[Dict[str, Any]]:
-        return get_market_listings(viewer_id=self.viewer.id, include_own=False, query=self.query)
-
-    def page_items(self) -> list[Dict[str, Any]]:
-        listings = self.filtered_listings()
-        start = self.page * SHOP_PAGE_SIZE
-        return listings[start : start + SHOP_PAGE_SIZE]
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.viewer.id:
-            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
-            return False
-        return True
-
-    async def refresh_message(self):
-        if not self.message:
-            return
-        view = ShopBuyView(self.viewer, query=self.query, page=self.page)
-        view.message = self.message
-        try:
-            await self.message.edit(embed=view.create_embed(), view=view)
-        except Exception as error:
-            print(f"Error refreshing shop buy view: {error}")
-
-    async def search_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(MarketSearchModal(self))
-
-    async def clear_callback(self, interaction: discord.Interaction):
-        view = ShopBuyView(self.viewer, query="", page=0)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    async def prev_callback(self, interaction: discord.Interaction):
-        view = ShopBuyView(self.viewer, query=self.query, page=self.page - 1)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    async def next_callback(self, interaction: discord.Interaction):
-        view = ShopBuyView(self.viewer, query=self.query, page=self.page + 1)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    def create_embed(self) -> discord.Embed:
-        listings = self.filtered_listings()
-        title = "Vehicle Market"
-        if self.query:
-            title += f" - search: {escape(self.query)}"
-        embed = discord.Embed(title=title, color=discord.Color.gold())
-        embed.set_footer(
-            text=(
-                f"Balance: {format_money(get_user_balance(self.viewer.id))} | "
-                f"Listings: {format_count(len(listings))} | Page {self.page + 1}/{self.page_count}"
-            )
-        )
-
-        if not listings:
-            embed.description = "No market listings found."
-            return embed
-
-        vehicles = get_vehicle_map()
-        lines = []
-        for index, listing in enumerate(self.page_items(), start=1):
-            vehicle_name = str(listing.get("vehicle_name", ""))
-            rarity = str(vehicles.get(vehicle_name, {}).get("rarity", "common")).lower()
-            fresh_text = "Fresh" if listing.get("is_fresh") else "Normal"
-            lines.append(
-                "\n".join(
-                    [
-                        f"**{index}. {get_listing_display_name(listing)}**",
-                        f"Rarity: **{display_rarity_name(rarity)}** | Type: **{fresh_text}**",
-                        f"Price: **{format_price(listing.get('price', 0))} each** | Amount: **{format_count(listing.get('count', 0))}**",
-                        f"Seller: <@{listing.get('seller_id')}> | ID: `{listing.get('id')}`",
-                    ]
-                )
-            )
-        embed.description = "\n\n".join(lines)
-        return embed
-
-
-class MarketSellModal(discord.ui.Modal, title="List vehicle on market"):
-    vehicle_name = discord.ui.TextInput(
-        label="Vehicle name",
-        placeholder="Example: m50 or fresh m50",
-        required=True,
-        max_length=100,
-    )
-    amount = discord.ui.TextInput(
-        label="Amount to list",
-        placeholder="1",
-        default="1",
-        required=True,
-        max_length=20,
-    )
-    price = discord.ui.TextInput(
-        label="Price per vehicle",
-        placeholder="Example: 250",
-        required=True,
-        max_length=20,
-    )
-
-    def __init__(self, sell_view: "ShopSellView"):
-        super().__init__()
-        self.sell_view = sell_view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-
-        parsed_amount = parse_count(str(self.amount.value))
-        parsed_price = parse_count(str(self.price.value))
-        if parsed_amount is None or parsed_amount <= 0:
-            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-            return
-        if parsed_price is None or parsed_price <= 0:
-            await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
-            return
-
-        matched_vehicle = match_user_available_vehicle(interaction.user.id, str(self.vehicle_name.value))
-        if not matched_vehicle:
-            await safe_send(interaction, f"No available vehicle matching '{self.vehicle_name.value}' found.", ephemeral=True)
-            return
-
-        available_count = get_available_vehicle_counts_for_user(interaction.user.id).get(matched_vehicle, 0)
-        if parsed_amount > available_count:
-            await safe_send(
-                interaction,
-                f"You only have {format_count(available_count)} available {display_vehicle_name(matched_vehicle)}.",
-                ephemeral=True,
-            )
-            return
-
-        ok, message, _ = create_market_listing(interaction.user.id, matched_vehicle, parsed_amount, parsed_price)
-        await safe_send(interaction, message, ephemeral=True)
-        await self.sell_view.refresh_message()
-
-
-class BaseSellModal(discord.ui.Modal, title="Sell for base price"):
-    vehicle_name = discord.ui.TextInput(
-        label="Vehicle name",
-        placeholder="Example: m50 or fresh m50",
-        required=True,
-        max_length=100,
-    )
-    amount = discord.ui.TextInput(
-        label="Amount to sell",
-        placeholder="1",
-        default="1",
-        required=True,
-        max_length=20,
-    )
-
-    def __init__(self, sell_view: "ShopSellView"):
-        super().__init__()
-        self.sell_view = sell_view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-
-        parsed_amount = parse_count(str(self.amount.value))
-        if parsed_amount is None or parsed_amount <= 0:
-            await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-            return
-
-        matched_vehicle = match_user_available_vehicle(interaction.user.id, str(self.vehicle_name.value))
-        if not matched_vehicle:
-            await safe_send(interaction, f"No available vehicle matching '{self.vehicle_name.value}' found.", ephemeral=True)
-            return
-
-        _ok, message = sell_vehicle_to_shop(interaction.user.id, matched_vehicle, parsed_amount)
-        await safe_send(interaction, message, ephemeral=True)
-        await self.sell_view.refresh_message()
-
-
-class ShopSellView(discord.ui.View):
-    def __init__(self, viewer: discord.abc.User):
-        super().__init__(timeout=180)
-        self.viewer = viewer
-        self.message: Optional[discord.Message] = None
-
-        market_button = discord.ui.Button(label="Market Listing", style=discord.ButtonStyle.primary, emoji=COIN_EMOJI)
-        market_button.callback = self.market_callback
-        self.add_item(market_button)
-
-        base_button = discord.ui.Button(label="Base Price", style=discord.ButtonStyle.success)
-        base_button.callback = self.base_callback
-        self.add_item(base_button)
-
-        listings_button = discord.ui.Button(label="My Listings", style=discord.ButtonStyle.secondary)
-        listings_button.callback = self.my_listings_callback
-        self.add_item(listings_button)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.viewer.id:
-            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
-            return False
-        return True
-
-    async def refresh_message(self):
-        if not self.message:
-            return
-        view = ShopSellView(self.viewer)
-        view.message = self.message
-        try:
-            await self.message.edit(embed=view.create_embed(), view=view)
-        except Exception as error:
-            print(f"Error refreshing shop sell view: {error}")
-
-    async def market_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(MarketSellModal(self))
-
-    async def base_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(BaseSellModal(self))
-
-    async def my_listings_callback(self, interaction: discord.Interaction):
-        view = MyListingsView(self.viewer)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    def create_embed(self) -> discord.Embed:
-        available = get_available_vehicle_counts_for_user(self.viewer.id)
-        own_listings = get_market_listings(seller_id=self.viewer.id, include_own=True)
-        embed = discord.Embed(title="Sell Vehicles", color=discord.Color.green())
-        embed.description = (
-            "**Market Listing** lets you choose your own price and wait for another player to buy.\n"
-            f"**Base Price** sells instantly for {format_price(SELL_VEHICLE_PRICE)} each."
-        )
-        embed.set_footer(
-            text=(
-                f"Balance: {format_money(get_user_balance(self.viewer.id))} | "
-                f"Available stacks: {format_count(len(available))} | "
-                f"Market listings: {format_count(len(own_listings))}"
-            )
-        )
-        return embed
-
-
-class CancelListingButton(discord.ui.Button):
-    def __init__(self, listings_view: "MyListingsView", listing_id: str, index_label: int):
-        super().__init__(label=f"Cancel {index_label}", style=discord.ButtonStyle.danger)
-        self.listings_view = listings_view
-        self.listing_id = listing_id
-
-    async def callback(self, interaction: discord.Interaction):
-        if not await safe_defer(interaction, ephemeral=True):
-            return
-        ok, message = cancel_market_listing(interaction.user.id, self.listing_id)
-        await safe_send(interaction, message, ephemeral=True)
-        await self.listings_view.refresh_message()
-
-
-class MyListingsView(discord.ui.View):
-    def __init__(self, viewer: discord.abc.User, page: int = 0):
-        super().__init__(timeout=180)
-        self.viewer = viewer
-        self.message: Optional[discord.Message] = None
-        listings = self.filtered_listings()
-        self.page_count = max(1, (len(listings) + SHOP_PAGE_SIZE - 1) // SHOP_PAGE_SIZE)
-        self.page = min(max(0, page), self.page_count - 1)
-
-        back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
-        back_button.callback = self.back_callback
-        self.add_item(back_button)
-
-        prev_button = discord.ui.Button(label="Prev", style=discord.ButtonStyle.secondary, disabled=self.page <= 0)
-        prev_button.callback = self.prev_callback
-        self.add_item(prev_button)
-
-        next_button = discord.ui.Button(
-            label="Next",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.page >= self.page_count - 1,
-        )
-        next_button.callback = self.next_callback
-        self.add_item(next_button)
-
-        for index, listing in enumerate(self.page_items(), start=1):
-            self.add_item(CancelListingButton(self, str(listing.get("id", "")), index))
-
-    def filtered_listings(self) -> list[Dict[str, Any]]:
-        return get_market_listings(seller_id=self.viewer.id, include_own=True)
-
-    def page_items(self) -> list[Dict[str, Any]]:
-        listings = self.filtered_listings()
-        start = self.page * SHOP_PAGE_SIZE
-        return listings[start : start + SHOP_PAGE_SIZE]
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.viewer.id:
-            await interaction.response.send_message("Only the person who opened this shop can use it.", ephemeral=True)
-            return False
-        return True
-
-    async def refresh_message(self):
-        if not self.message:
-            return
-        view = MyListingsView(self.viewer, page=self.page)
-        view.message = self.message
-        try:
-            await self.message.edit(embed=view.create_embed(), view=view)
-        except Exception as error:
-            print(f"Error refreshing my listings view: {error}")
-
-    async def back_callback(self, interaction: discord.Interaction):
-        view = ShopSellView(self.viewer)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    async def prev_callback(self, interaction: discord.Interaction):
-        view = MyListingsView(self.viewer, page=self.page - 1)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    async def next_callback(self, interaction: discord.Interaction):
-        view = MyListingsView(self.viewer, page=self.page + 1)
-        view.message = self.message
-        await interaction.response.edit_message(embed=view.create_embed(), view=view)
-
-    def create_embed(self) -> discord.Embed:
-        listings = self.filtered_listings()
-        embed = discord.Embed(title="My Market Listings", color=discord.Color.green())
-        embed.set_footer(text=f"Listings: {format_count(len(listings))} | Page {self.page + 1}/{self.page_count}")
-
-        if not listings:
-            embed.description = "You have no active market listings."
-            return embed
-
-        vehicles = get_vehicle_map()
-        lines = []
-        for index, listing in enumerate(self.page_items(), start=1):
-            vehicle_name = str(listing.get("vehicle_name", ""))
-            rarity = str(vehicles.get(vehicle_name, {}).get("rarity", "common")).lower()
-            fresh_text = "Fresh" if listing.get("is_fresh") else "Normal"
-            lines.append(
-                "\n".join(
-                    [
-                        f"**{index}. {get_listing_display_name(listing)}**",
-                        f"Rarity: **{display_rarity_name(rarity)}** | Type: **{fresh_text}**",
-                        f"Price: **{format_price(listing.get('price', 0))} each** | Amount: **{format_count(listing.get('count', 0))}**",
-                        f"ID: `{listing.get('id')}`",
-                    ]
-                )
-            )
-        embed.description = "\n\n".join(lines)
-        return embed
-
-
-def get_available_vehicle_counts_for_user(user_id: int) -> Dict[str, int]:
-    active_trade = get_active_trade_for_user(user_id)
-    active_offer = get_trade_offer_for_user(active_trade, user_id) if active_trade else None
-    return get_available_vehicle_counts(user_id, active_offer)
-
-
-def match_user_available_vehicle(user_id: int, query: str) -> Optional[str]:
-    available = get_available_vehicle_counts_for_user(user_id)
-    query = str(query or "").strip()
-    if not query:
-        return None
-    if query in available:
-        return query
-
-    normalized_query = normalize_name(query)
-    if normalized_query.startswith("fresh"):
-        trimmed_query = query.strip()[5:].strip(" :-_")
-        matched_base = find_best_vehicle_match(
-            [split_inventory_key(name)[0] for name in available.keys()],
-            trimmed_query,
-        )
-        if matched_base:
-            fresh_key = make_inventory_key(matched_base, True)
-            if fresh_key in available:
-                return fresh_key
-
-    return find_best_vehicle_match(available.keys(), query)
-
-
-def build_available_vehicle_choices(user_id: int, current: str) -> list[app_commands.Choice[str]]:
-    available = get_available_vehicle_counts_for_user(user_id)
-    current_lower = str(current or "").lower()
-
-    sorted_items = sorted(
-        available.items(),
-        key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
-    )
-
-    return [
-        app_commands.Choice(
-            name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
-            value=name,
-        )
-        for name, count in sorted_items
-        if not current_lower
-        or current_lower in name.lower()
-        or current_lower in display_vehicle_name(name).lower()
-        or current_lower in display_vehicle_name(name).lower().replace(" ", "_")
-    ][:25]
-
 
 def register_trade_commands(discord_bot: commands.Bot):
     @discord_bot.tree.command(name="inventory", description="View a vehicle inventory")
@@ -4612,135 +2001,10 @@ def register_trade_commands(discord_bot: commands.Bot):
         view = InventoryOverview(target_user, interaction.user)
         await interaction.response.send_message(embed=create_overview_embed(target_user), view=view)
 
-    @discord_bot.tree.command(name="shop", description="Open the vehicle coin shop")
+    @discord_bot.tree.command(name="tradeadd", description="Add a vehicle to your active trade offer")
     @app_commands.guild_only()
-    @app_commands.describe(
-        action="Buy from the market or sell your vehicles",
-        sell_type="Use market to list for players, or base_price to sell instantly to the shop",
-        vehicle="Vehicle to sell",
-        amount="Amount to sell",
-        price="Market price per vehicle. Only used with sell_type: market",
-    )
-    @app_commands.choices(
-        action=[
-            app_commands.Choice(name="buy", value="buy"),
-            app_commands.Choice(name="sell", value="sell"),
-        ],
-        sell_type=[
-            app_commands.Choice(name="market", value="market"),
-            app_commands.Choice(name="shop (base price)", value="base_price"),
-        ],
-    )
-    async def shop_slash(
-        interaction: discord.Interaction,
-        action: app_commands.Choice[str],
-        sell_type: Optional[str] = None,
-        vehicle: Optional[str] = None,
-        amount: Optional[str] = None,
-        price: Optional[str] = None,
-    ):
-        selected_action = str(action.value).lower()
-        if selected_action == "buy":
-            if sell_type or vehicle or amount or price:
-                await safe_send(
-                    interaction,
-                    "Sell type, vehicle, amount, and price are only used with `/shop sell`.",
-                    ephemeral=True,
-                )
-                return
-
-            view = ShopBuyView(interaction.user)
-            await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
-            try:
-                view.message = await interaction.original_response()
-            except Exception as error:
-                print(f"Error storing shop buy message: {error}")
-            return
-
-        selected_sell_type = str(sell_type or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if selected_sell_type in {"shop", "base", "baseprice"}:
-            selected_sell_type = "base_price"
-
-        direct_values = [vehicle, amount, price]
-        has_direct_sell = any(value not in (None, "") for value in direct_values)
-        if has_direct_sell or selected_sell_type:
-            if not selected_sell_type:
-                selected_sell_type = "market"
-
-            if selected_sell_type not in {"market", "base_price"}:
-                await safe_send(interaction, "Choose `market` or `base_price` for the sell type.", ephemeral=True)
-                return
-
-            if selected_sell_type == "market" and (not vehicle or not amount or not price):
-                await safe_send(
-                    interaction,
-                    "For market selling, use `/shop sell sell_type:market vehicle:<name> amount:<amount> price:<price>`.",
-                    ephemeral=True,
-                )
-                return
-
-            if selected_sell_type == "base_price":
-                if not vehicle or not amount:
-                    await safe_send(
-                        interaction,
-                        "For base price selling, use `/shop sell sell_type:base_price vehicle:<name> amount:<amount>`.",
-                        ephemeral=True,
-                    )
-                    return
-                if price:
-                    await safe_send(
-                        interaction,
-                        f"Do not set a price for base price selling. The shop pays {format_price(SELL_VEHICLE_PRICE)} each.",
-                        ephemeral=True,
-                    )
-                    return
-
-            if not await safe_defer(interaction, ephemeral=True):
-                return
-
-            parsed_amount = parse_count(amount)
-            if parsed_amount is None or parsed_amount <= 0:
-                await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
-                return
-
-            matched_vehicle = match_user_available_vehicle(interaction.user.id, vehicle)
-            if not matched_vehicle:
-                await safe_send(interaction, f"No available vehicle matching '{vehicle}' found.", ephemeral=True)
-                return
-
-            if selected_sell_type == "base_price":
-                _ok, message = sell_vehicle_to_shop(interaction.user.id, matched_vehicle, parsed_amount)
-                await safe_send(interaction, message, ephemeral=True)
-                return
-
-            parsed_price = parse_count(price)
-            if parsed_price is None or parsed_price <= 0:
-                await safe_send(interaction, "Invalid price. Enter a positive coin price.", ephemeral=True)
-                return
-
-            ok, message, _ = create_market_listing(interaction.user.id, matched_vehicle, parsed_amount, parsed_price)
-            await safe_send(interaction, message, ephemeral=True)
-            return
-
-        view = ShopSellView(interaction.user)
-        await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
-        try:
-            view.message = await interaction.original_response()
-        except Exception as error:
-            print(f"Error storing shop sell message: {error}")
-
-    @shop_slash.autocomplete("vehicle")
-    async def shop_vehicle_autocomplete(interaction: discord.Interaction, current: str):
-        namespace = getattr(interaction, "namespace", None)
-        action_value = getattr(getattr(namespace, "action", None), "value", getattr(namespace, "action", None))
-        if str(action_value or "").lower() != "sell":
-            return []
-        return build_available_vehicle_choices(interaction.user.id, current)
-
-    @discord_bot.tree.command(name="tradeadd", description="Add a vehicle or coins to your active trade offer")
-    @app_commands.guild_only()
-    @app_commands.describe(item="Vehicle or coins to add", amount="How many vehicles or coins")
-    async def tradeadd_slash(interaction: discord.Interaction, item: str, amount: str = "1"):
+    @app_commands.describe(vehicle_name="The vehicle to add", amount="How many to add")
+    async def tradeadd_slash(interaction: discord.Interaction, vehicle_name: str, amount: str):
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -4758,31 +2022,10 @@ def register_trade_commands(discord_bot: commands.Bot):
             await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
             return
 
-        if is_money_trade_item(item):
-            current_money_offer = trade_view.get_money_offer(interaction.user.id)
-            available_money = get_user_balance(interaction.user.id) - current_money_offer
-            if parsed_amount > available_money:
-                await safe_send(
-                    interaction,
-                    f"You do not have enough coins. Available: {format_money(max(0, available_money))}",
-                    ephemeral=True,
-                )
-                return
-
-            trade_view.add_money_offer(interaction.user.id, parsed_amount)
-            trade_view.reset_countdown()
-            await trade_view.update_message()
-            await safe_send(
-                interaction,
-                f"Added **{format_money(parsed_amount)}** to your offer.",
-                ephemeral=True,
-            )
-            return
-
         available_vehicles = get_trade_available_vehicles(interaction.user.id)
-        matched_vehicle = item if item in available_vehicles else find_best_vehicle_match(available_vehicles.keys(), item)
+        matched_vehicle = vehicle_name if vehicle_name in available_vehicles else find_best_vehicle_match(available_vehicles.keys(), vehicle_name)
         if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{item}' found in your inventory.", ephemeral=True)
+            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your inventory.", ephemeral=True)
             return
 
         available = available_vehicles[matched_vehicle]
@@ -4805,34 +2048,17 @@ def register_trade_commands(discord_bot: commands.Bot):
             ephemeral=True,
         )
 
-    @tradeadd_slash.autocomplete("item")
-    async def tradeadd_item_autocomplete(interaction: discord.Interaction, current: str):
-        trade_view = get_active_trade_for_user(interaction.user.id)
+    @tradeadd_slash.autocomplete("vehicle_name")
+    async def tradeadd_vehicle_autocomplete(interaction: discord.Interaction, current: str):
         available_vehicles = get_trade_available_vehicles(interaction.user.id)
         current_lower = current.lower()
-        choices = []
-
-        if (
-            not current_lower
-            or "money".startswith(current_lower)
-            or "coins".startswith(current_lower)
-            or current_lower in {"$", "cash"}
-        ):
-            current_money_offer = trade_view.get_money_offer(interaction.user.id) if trade_view else 0
-            available_money = max(0, get_user_balance(interaction.user.id) - current_money_offer)
-            choices.append(
-                app_commands.Choice(
-                    name=f"Coins ({format_money(available_money)} available)",
-                    value="money",
-                )
-            )
 
         sorted_items = sorted(
             available_vehicles.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        choices.extend(
+        return [
             app_commands.Choice(
                 name=f"{display_vehicle_name(name)} ({format_count(count)} owned)",
                 value=name,
@@ -4841,13 +2067,12 @@ def register_trade_commands(discord_bot: commands.Bot):
             if not current_lower
             or current_lower in name.lower()
             or current_lower in display_vehicle_name(name).lower()
-        )
-        return choices[:25]
+        ][:25]
 
-    @discord_bot.tree.command(name="traderemove", description="Remove a vehicle or coins from your active trade offer")
+    @discord_bot.tree.command(name="traderemove", description="Remove a vehicle from your active trade offer")
     @app_commands.guild_only()
-    @app_commands.describe(item="Vehicle or coins to remove", amount="How many vehicles or coins")
-    async def traderemove_slash(interaction: discord.Interaction, item: str, amount: str = "1"):
+    @app_commands.describe(vehicle_name="The vehicle to remove", amount="How many to remove")
+    async def traderemove_slash(interaction: discord.Interaction, vehicle_name: str, amount: str = "1"):
         if not await safe_defer(interaction, ephemeral=True):
             return
 
@@ -4861,8 +2086,7 @@ def register_trade_commands(discord_bot: commands.Bot):
             return
 
         current_offer = get_trade_offer_for_user(trade_view, interaction.user.id)
-        current_money_offer = trade_view.get_money_offer(interaction.user.id)
-        if not current_offer and current_money_offer <= 0:
+        if not current_offer:
             await safe_send(interaction, "Your offer is empty.", ephemeral=True)
             return
 
@@ -4871,25 +2095,9 @@ def register_trade_commands(discord_bot: commands.Bot):
             await safe_send(interaction, "Invalid amount. Enter a positive number.", ephemeral=True)
             return
 
-        if is_money_trade_item(item):
-            if current_money_offer <= 0:
-                await safe_send(interaction, "You do not have coins in your current offer.", ephemeral=True)
-                return
-
-            amount_to_remove = min(parsed_amount, current_money_offer)
-            trade_view.add_money_offer(interaction.user.id, -amount_to_remove)
-            trade_view.reset_countdown()
-            await trade_view.update_message()
-            await safe_send(
-                interaction,
-                f"Removed **{format_money(amount_to_remove)}** from your offer.",
-                ephemeral=True,
-            )
-            return
-
-        matched_vehicle = item if item in current_offer else find_best_vehicle_match(current_offer.keys(), item)
+        matched_vehicle = vehicle_name if vehicle_name in current_offer else find_best_vehicle_match(current_offer.keys(), vehicle_name)
         if not matched_vehicle:
-            await safe_send(interaction, f"No vehicle matching '{item}' found in your current offer.", ephemeral=True)
+            await safe_send(interaction, f"No vehicle matching '{vehicle_name}' found in your current offer.", ephemeral=True)
             return
 
         amount_to_remove = min(parsed_amount, current_offer[matched_vehicle])
@@ -4905,36 +2113,21 @@ def register_trade_commands(discord_bot: commands.Bot):
             ephemeral=True,
         )
 
-    @traderemove_slash.autocomplete("item")
-    async def traderemove_item_autocomplete(interaction: discord.Interaction, current: str):
+    @traderemove_slash.autocomplete("vehicle_name")
+    async def traderemove_vehicle_autocomplete(interaction: discord.Interaction, current: str):
         trade_view = get_active_trade_for_user(interaction.user.id)
         if not trade_view:
             return []
 
         current_offer = get_trade_offer_for_user(trade_view, interaction.user.id) or {}
         current_lower = current.lower()
-        choices = []
-
-        current_money_offer = trade_view.get_money_offer(interaction.user.id)
-        if current_money_offer > 0 and (
-            not current_lower
-            or "money".startswith(current_lower)
-            or "coins".startswith(current_lower)
-            or current_lower in {"$", "cash"}
-        ):
-            choices.append(
-                app_commands.Choice(
-                    name=f"Coins ({format_money(current_money_offer)} in offer)",
-                    value="money",
-                )
-            )
 
         sorted_items = sorted(
             current_offer.items(),
             key=lambda item: (-item[1], display_vehicle_name(item[0]).lower()),
         )
 
-        choices.extend(
+        return [
             app_commands.Choice(
                 name=f"{display_vehicle_name(name)} ({format_count(count)} in offer)",
                 value=name,
@@ -4943,8 +2136,7 @@ def register_trade_commands(discord_bot: commands.Bot):
             if not current_lower
             or current_lower in name.lower()
             or current_lower in display_vehicle_name(name).lower()
-        )
-        return choices[:25]
+        ][:25]
 
     @discord_bot.tree.command(name="trade", description="Send a trade request to another user")
     @app_commands.guild_only()
@@ -4991,7 +2183,7 @@ def register_trade_commands(discord_bot: commands.Bot):
             view.message = await safe_send(
                 interaction,
                 f"\U0001F91D Trade started between {user.mention} and {interaction.user.mention}.\n"
-                "Use `/tradeadd` to add vehicles or coins and `/traderemove` to remove them.",
+                "Use `/tradeadd` to add and `/traderemove` to remove vehicles.",
                 embed=view.create_embed(),
                 view=view,
                 wait=True,
@@ -5023,11 +2215,7 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
 
         guessed_name = normalize_name(str(self.guess.value))
         if guessed_name != normalize_name(self.correct_name):
-            public_comment = wrong_guess_comments_are_public(self.view.guild_id)
-            await interaction.response.send_message(
-                f"{interaction.user.mention} wrong name.",
-                ephemeral=not public_comment,
-            )
+            await interaction.response.send_message(f"{interaction.user.mention} wrong name.", ephemeral=False)
             return
 
         self.view.caught = True
@@ -5048,13 +2236,8 @@ class CatchModal(discord.ui.Modal, title="Catch the MT vehicle"):
         if awarded_fresh:
             caught_label = f"{caught_label} [Fresh]"
 
-        reward = get_catch_reward(self.view.rarity, awarded_fresh)
-        if reward > 0:
-            add_money(interaction.user.id, reward)
-        reward_text = f" and earned **{format_money(reward)}**" if reward > 0 else ""
-
         await interaction.response.send_message(
-            f"\U0001F389 {catch_status_emoji}{interaction.user.mention} caught **{caught_label}** (`{display_code}`){reward_text}",
+            f"\U0001F389 {catch_status_emoji}{interaction.user.mention} caught **{caught_label}** (`{display_code}`)",
             ephemeral=False,
         )
         add_to_inventory(interaction.user.id, self.correct_name, is_fresh=awarded_fresh)
@@ -5284,7 +2467,6 @@ async def spawn_vehicle(
         sender = ctx.send if ctx else channel.send
         sent = await sender(embed=embed, file=file, view=view)
         view.add_message(sent)
-        remember_spawn_message(sent, view)
         register_active_spawn(view)
         return True
     except Exception as error:
@@ -5300,122 +2482,6 @@ async def spawn_in_guild(guild: discord.Guild):
         await spawn_vehicle(vehicles, channel, guild=guild)
     else:
         print(f"No suitable channel found in {guild.name}")
-
-
-def _known_vehicle_name(candidate: str) -> Optional[str]:
-    candidate = str(candidate or "").strip()
-    if not candidate:
-        return None
-
-    vehicles = get_vehicle_map()
-    canonical_name = canonical_vehicle_name(candidate)
-    if canonical_name in vehicles:
-        return canonical_name
-
-    return find_best_vehicle_match(vehicles.keys(), candidate)
-
-
-def _vehicle_name_from_spawn_record(message_id: int) -> Optional[str]:
-    record = load_spawn_records().get(str(message_id))
-    if not record:
-        return None
-
-    vehicle_name = str(record.get("vehicle_name") or "").strip()
-    return _known_vehicle_name(vehicle_name) or vehicle_name or None
-
-
-def _vehicle_name_from_active_spawn(message_id: int) -> Optional[str]:
-    prune_active_spawns()
-    for views in active_spawns.values():
-        for view in views:
-            if any(spawn_message.id == message_id for spawn_message in view.messages):
-                return _known_vehicle_name(view.vehicle_name) or view.vehicle_name
-    return None
-
-
-def _vehicle_name_from_text(text: str) -> Optional[str]:
-    text = str(text or "").strip()
-    if not text:
-        return None
-
-    candidates: list[str] = []
-    caught_match = re.search(r"\*\*(.+?)\*\*", text)
-    if caught_match:
-        candidates.append(caught_match.group(1))
-
-    if "Captured by" in text and ":" in text:
-        candidates.append(text.split(":", 1)[1])
-
-    for candidate in candidates:
-        clean_candidate = re.sub(r"\s*\[Fresh\]\s*$", "", candidate.strip(), flags=re.IGNORECASE)
-        known_name = _known_vehicle_name(clean_candidate)
-        if known_name:
-            return known_name
-
-    return None
-
-
-def _vehicle_name_from_message_embed(message: discord.Message) -> Optional[str]:
-    vehicle_name = _vehicle_name_from_text(message.content)
-    if vehicle_name:
-        return vehicle_name
-
-    for embed in message.embeds:
-        for text in (
-            embed.title or "",
-            embed.description or "",
-            embed.footer.text if embed.footer else "",
-        ):
-            vehicle_name = _vehicle_name_from_text(text)
-            if vehicle_name:
-                return vehicle_name
-
-    return None
-
-
-async def _fetch_message_for_check(source_message: discord.Message, message_id: int) -> Optional[discord.Message]:
-    channels: list[Any] = []
-    if hasattr(source_message.channel, "fetch_message"):
-        channels.append(source_message.channel)
-
-    if source_message.guild:
-        source_channel_id = getattr(source_message.channel, "id", None)
-        channels.extend(
-            channel
-            for channel in source_message.guild.text_channels
-            if channel.id != source_channel_id
-        )
-
-    seen_channel_ids: set[int] = set()
-    for channel in channels:
-        channel_id = getattr(channel, "id", None)
-        if channel_id in seen_channel_ids:
-            continue
-        if channel_id is not None:
-            seen_channel_ids.add(channel_id)
-
-        try:
-            return await channel.fetch_message(message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            continue
-
-    return None
-
-
-async def resolve_spawn_message_vehicle_name(source_message: discord.Message, message_id: int) -> Optional[str]:
-    vehicle_name = _vehicle_name_from_active_spawn(message_id)
-    if vehicle_name:
-        return vehicle_name
-
-    vehicle_name = _vehicle_name_from_spawn_record(message_id)
-    if vehicle_name:
-        return vehicle_name
-
-    fetched_message = await _fetch_message_for_check(source_message, message_id)
-    if fetched_message:
-        return _vehicle_name_from_message_embed(fetched_message)
-
-    return None
 
 
 async def spawn_event_wave(
@@ -5466,2211 +2532,6 @@ async def rainbow_task():
         await asyncio.gather(*update_tasks, return_exceptions=True)
 
 
-def _bot_display_name() -> str:
-    return WEBSITE_TITLE
-
-
-def _bot_avatar_url() -> str:
-    if not bot.user:
-        return ""
-    try:
-        return str(bot.user.display_avatar.replace(size=512, static_format="png").url)
-    except Exception:
-        return str(bot.user.display_avatar.url)
-
-
-def _client_id_from_token() -> str:
-    token_prefix = TOKEN.split(".", 1)[0].strip()
-    if not token_prefix:
-        return ""
-
-    try:
-        padded_prefix = token_prefix + "=" * (-len(token_prefix) % 4)
-        decoded = base64.urlsafe_b64decode(padded_prefix.encode("ascii")).decode("ascii")
-    except Exception:
-        return ""
-
-    return decoded if decoded.isdigit() else ""
-
-
-def _bot_client_id() -> str:
-    if DISCORD_CLIENT_ID:
-        return DISCORD_CLIENT_ID
-    if bot.user:
-        return str(bot.user.id)
-    return _client_id_from_token()
-
-
-def _bot_invite_url() -> str:
-    client_id = _bot_client_id()
-    if not client_id:
-        return ""
-    return (
-        "https://discord.com/oauth2/authorize"
-        f"?client_id={client_id}"
-        f"&permissions={INVITE_PERMISSIONS or '2147561408'}"
-        "&scope=bot%20applications.commands"
-    )
-
-
-def _discord_icon_html() -> str:
-    return """
-      <span class="discord-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" focusable="false">
-          <path d="M20.32 4.37A19.8 19.8 0 0 0 15.96 3c-.19.33-.4.78-.55 1.14a18.4 18.4 0 0 0-4.82 0C10.44 3.78 10.22 3.33 10.03 3A19.74 19.74 0 0 0 5.67 4.37C2.91 8.45 2.16 12.43 2.53 16.35A19.9 19.9 0 0 0 7.9 19c.43-.58.82-1.2 1.15-1.86-.63-.24-1.23-.53-1.8-.86.15-.11.3-.23.45-.35a14.1 14.1 0 0 0 12.6 0c.15.12.3.24.45.35-.57.33-1.17.62-1.8.86.33.66.72 1.28 1.15 1.86a19.86 19.86 0 0 0 5.37-2.65c.44-4.55-.75-8.5-3.15-11.98ZM9.55 14.01c-1.05 0-1.91-.97-1.91-2.16 0-1.19.84-2.16 1.91-2.16 1.08 0 1.93.98 1.91 2.16 0 1.19-.84 2.16-1.91 2.16Zm4.9 0c-1.05 0-1.91-.97-1.91-2.16 0-1.19.84-2.16 1.91-2.16 1.08 0 1.93.98 1.91 2.16 0 1.19-.83 2.16-1.91 2.16Z"/>
-        </svg>
-      </span>
-    """
-
-
-def _website_status_payload() -> Dict[str, Any]:
-    vehicles = get_vehicle_map()
-    total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
-    ready = bot.is_ready()
-    return {
-        "online": bool(ready and not bot.is_closed()),
-        "bot_name": _bot_display_name(),
-        "guild_count": len(bot.guilds) if ready else 0,
-        "vehicle_count": len(vehicles),
-        "catalog_vehicle_count": len(vehicles),
-        "total_vehicle_count": total_vehicle_count,
-        "fresh_vehicle_count": fresh_vehicle_count,
-        "last_update": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-        "invite_url": _bot_invite_url(),
-        "avatar_url": _bot_avatar_url(),
-        "server_invite_url": SERVER_INVITE_URL,
-    }
-
-
-def build_about_embed() -> discord.Embed:
-    vehicles = get_vehicle_map()
-    total_vehicle_count, _ = get_global_inventory_totals(vehicles)
-    uptime_text = format_uptime(int(time.time()) - BOT_STARTED_AT)
-    guild_count = len(bot.guilds) if bot.is_ready() else 0
-    player_count = len(load_inventories())
-
-    lines = [
-        "Military Tycoon vehicle dex and inventory bot.",
-        "Catch vehicles, trade, sell, and practice guessing.",
-        "",
-        f"*Running version **{BOT_VERSION}**.*",
-        f"The bot has been online for **{uptime_text}**.",
-        "",
-        f"**{format_count(len(vehicles))}** vehicles to collect",
-        f"**{format_count(total_vehicle_count)}** vehicles caught",
-        f"**{format_count(player_count)}** players with inventories",
-        f"**{format_count(guild_count)}** servers playing",
-        "",
-        f"This instance is owned by **{BOT_OWNER_NAME}**.",
-    ]
-
-    link_parts = []
-    invite_url = _bot_invite_url()
-    if invite_url:
-        link_parts.append(f"[Invite me]({invite_url})")
-    if SERVER_INVITE_URL:
-        link_parts.append(f"[Discord server]({SERVER_INVITE_URL})")
-    if link_parts:
-        lines.extend(["", " - ".join(link_parts)])
-
-    policy_parts = []
-    if TERMS_URL:
-        policy_parts.append(f"[Terms of Service]({TERMS_URL})")
-    if PRIVACY_URL:
-        policy_parts.append(f"[Privacy Policy]({PRIVACY_URL})")
-    if policy_parts:
-        lines.append(" - ".join(policy_parts))
-
-    embed = discord.Embed(
-        title="Military Tycoon Vehicle Dex Bot",
-        description="\n".join(lines),
-        color=discord.Color.blue(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-    embed.set_footer(text=f"discord.py {discord.__version__}")
-    return embed
-
-
-def _render_website(headers: Any = None) -> bytes:
-    headers = headers or {}
-    status = _website_status_payload()
-    is_online = bool(status["online"])
-    invite_url = str(status["invite_url"])
-    server_invite_url = str(status.get("server_invite_url") or "")
-    background_layer = (
-        f'url("{escape(WEBSITE_BACKGROUND_URL)}") center / cover no-repeat,'
-        if WEBSITE_BACKGROUND_URL
-        else ""
-    )
-    invite_html = (
-        f'<a class="button primary" href="{escape(invite_url)}" target="_blank" rel="noopener">Add to server</a>'
-        if invite_url
-        else '<span class="button primary disabled" title="Set DISCORD_CLIENT_ID if the bot is offline">Add to server</span>'
-    )
-    server_html = (
-        f'<a class="button secondary" href="{escape(server_invite_url)}" target="_blank" rel="noopener">Join Discord</a>'
-        if server_invite_url
-        else ""
-    )
-    avatar_url = str(status.get("avatar_url") or "")
-    profile_html = (
-        f'<img class="profile" src="{escape(avatar_url)}" alt="Military Tycoon Dex logo">'
-        if avatar_url
-        else '<div class="profile fallback">MT<br>DEX</div>'
-    )
-    brand_icon_html = (
-        f'<img class="brand-icon" src="{escape(avatar_url)}" alt="">'
-        if avatar_url
-        else '<span class="brand-mark">DEX</span>'
-    )
-    session_payload = _dashboard_session_payload(headers)
-    login_href = "/applications/login" if _dashboard_oauth_enabled() else "/applications"
-    if session_payload:
-        session_name = escape(str(session_payload.get("name") or "Discord admin"))
-        session_avatar_url = str(session_payload.get("avatar_url") or "")
-        session_avatar_html = (
-            f'<img src="{escape(session_avatar_url)}" alt="">'
-            if session_avatar_url
-            else brand_icon_html
-        )
-        top_auth_html = f"""
-          <a class="top-login" href="/applications">Applications</a>
-          <div class="user-chip" title="Logged in with Discord">
-            {session_avatar_html}
-            <span class="user-text">
-              <span>{session_name}</span><br>
-              <span class="plan-badge">Admin</span>
-            </span>
-          </div>
-        """
-    else:
-        top_auth_html = f'<a class="top-login" href="{login_href}" aria-label="Login with Discord">{_discord_icon_html()}<span>Login</span></a>'
-    status_text = "Online" if is_online else "Offline"
-    status_class = "online" if is_online else "offline"
-
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Military Tycoon Vehicle Dex Bot</title>
-  <style>
-    :root {{
-      color-scheme: dark;
-      --black: #090b0a;
-      --gunmetal: #151a18;
-      --steel: #263238;
-      --olive: #3d4a2b;
-      --moss: #66713a;
-      --sand: #c6aa72;
-      --amber: #ff9d3d;
-      --text: #f8f4e8;
-      --muted: rgba(248, 244, 232, 0.84);
-      --line: rgba(248, 244, 232, 0.28);
-      --green: #54f08c;
-      --red: #ff6578;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        linear-gradient(90deg, rgba(5, 7, 5, 0.9), rgba(15, 20, 17, 0.56) 45%, rgba(5, 7, 5, 0.82)),
-        {background_layer}
-        radial-gradient(circle at 16% 72%, rgba(198, 170, 114, 0.28), transparent 30%),
-        linear-gradient(135deg, #111714 0%, #263126 29%, #5b6335 48%, #997044 68%, #191e1d 100%);
-      color: var(--text);
-      overflow-x: hidden;
-    }}
-    body::before {{
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(118deg, transparent 0 12%, rgba(92, 102, 55, 0.35) 12% 24%, transparent 24% 37%, rgba(31, 39, 35, 0.45) 37% 51%, transparent 51% 64%, rgba(181, 142, 82, 0.2) 64% 75%, transparent 75%),
-        linear-gradient(43deg, transparent 0 18%, rgba(10, 12, 11, 0.38) 18% 29%, transparent 29% 43%, rgba(76, 88, 48, 0.28) 43% 54%, transparent 54%);
-      mix-blend-mode: soft-light;
-    }}
-    body::after {{
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(84, 240, 140, 0.12) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(84, 240, 140, 0.08) 1px, transparent 1px),
-        linear-gradient(135deg, transparent 0 47%, rgba(255, 157, 61, 0.18) 48% 49%, transparent 50% 100%);
-      background-size: 80px 80px, 80px 80px, 260px 260px;
-      opacity: 0.48;
-      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent 75%);
-    }}
-    .topbar {{
-      position: relative;
-      z-index: 2;
-      min-height: 72px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 22px;
-      padding: 14px clamp(18px, 4vw, 46px);
-      background: rgba(8, 11, 10, 0.72);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(14px);
-    }}
-    .brand {{
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 900;
-      letter-spacing: 0;
-    }}
-    .brand-icon, .brand-mark {{
-      width: 38px;
-      height: 38px;
-      object-fit: contain;
-      border-radius: 50%;
-    }}
-    .brand-mark {{
-      display: grid;
-      place-items: center;
-      border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.08);
-      font-size: 11px;
-    }}
-    .nav {{
-      display: flex;
-      align-items: center;
-      gap: clamp(14px, 2.4vw, 34px);
-      flex: 1;
-      justify-content: center;
-      min-width: 0;
-    }}
-    .nav a {{
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 900;
-      font-size: 15px;
-      line-height: 1;
-      padding: 10px 0;
-      border-bottom: 3px solid transparent;
-      white-space: nowrap;
-      opacity: 0.9;
-    }}
-    .nav a:hover,
-    .nav a.active {{
-      color: #21ffd0;
-      border-bottom-color: #21ffd0;
-      opacity: 1;
-    }}
-    .top-actions {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      justify-content: flex-end;
-      min-width: max-content;
-    }}
-    .top-login {{
-      border: 1px solid rgba(33, 255, 208, 0.45);
-      background: rgba(33, 255, 208, 0.12);
-      color: #d9fff8;
-      border-radius: 999px;
-      padding: 9px 14px;
-      font-weight: 900;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      white-space: nowrap;
-    }}
-    .discord-icon,
-    .discord-icon svg {{
-      width: 18px;
-      height: 18px;
-      display: inline-block;
-      flex: 0 0 auto;
-    }}
-    .discord-icon svg {{
-      fill: currentColor;
-      vertical-align: -3px;
-    }}
-    .user-chip {{
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      color: var(--text);
-      font-weight: 900;
-      white-space: nowrap;
-    }}
-    .user-chip img,
-    .user-avatar {{
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      object-fit: cover;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.16);
-    }}
-    .plan-badge {{
-      display: inline-flex;
-      align-items: center;
-      width: max-content;
-      border-radius: 6px;
-      background: #22b9ff;
-      color: #fff;
-      padding: 3px 7px;
-      font-size: 11px;
-      font-weight: 1000;
-      margin-top: 2px;
-    }}
-    main {{
-      position: relative;
-      z-index: 1;
-      min-height: calc(100vh - 72px);
-      display: grid;
-      place-items: center;
-      padding: clamp(34px, 6vw, 92px) clamp(18px, 5vw, 72px);
-    }}
-    h1 {{
-      margin: 0;
-      font-size: clamp(44px, 6vw, 82px);
-      line-height: 1.05;
-      letter-spacing: 0;
-      text-shadow: 0 6px 28px rgba(0, 0, 0, 0.48);
-    }}
-    p {{
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.5;
-    }}
-    .hero {{
-      width: min(1120px, 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: clamp(42px, 8vw, 98px);
-    }}
-    .profile-wrap {{
-      flex: 0 1 430px;
-      display: flex;
-      justify-content: center;
-      filter: drop-shadow(0 28px 44px rgba(0, 0, 0, 0.62));
-    }}
-    .profile {{
-      width: min(430px, 42vw);
-      max-width: 100%;
-      aspect-ratio: 1;
-      object-fit: contain;
-      display: block;
-    }}
-    .profile.fallback {{
-      border: 5px solid rgba(255, 255, 255, 0.85);
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      text-align: center;
-      font-size: 68px;
-      font-weight: 900;
-      line-height: 0.9;
-      color: white;
-      background: rgba(0, 0, 0, 0.18);
-    }}
-    .content {{
-      flex: 1 1 420px;
-      min-width: 0;
-      padding: 28px 0;
-    }}
-    .status {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 8px 13px;
-      font-weight: 700;
-      white-space: nowrap;
-      margin-bottom: 18px;
-      background: rgba(9, 11, 10, 0.58);
-      backdrop-filter: blur(10px);
-    }}
-    .dot {{
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--red);
-    }}
-    .status.online .dot {{ background: var(--green); }}
-    .status.online {{ color: var(--green); }}
-    .status.offline {{ color: var(--red); }}
-    .grid {{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 9px;
-      margin: 22px 0 28px;
-    }}
-    .metric {{
-      border: 0;
-      border-radius: 0;
-      padding: 0;
-      min-height: 0;
-    }}
-    .label {{
-      color: var(--muted);
-      font-size: 22px;
-      margin-bottom: 0;
-      display: inline;
-      text-shadow: 0 4px 20px rgba(0, 0, 0, 0.38);
-    }}
-    .value {{
-      font-size: 24px;
-      font-weight: 900;
-      overflow-wrap: anywhere;
-      display: inline;
-      color: #fff;
-    }}
-    .value.time {{
-      font-size: 20px;
-      line-height: 1.35;
-    }}
-    .actions {{
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }}
-    .button {{
-      appearance: none;
-      border: 2px solid rgba(255, 255, 255, 0.88);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text);
-      font-weight: 800;
-      padding: 12px 28px;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 220px;
-      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
-      backdrop-filter: blur(10px);
-    }}
-    .button.primary {{
-      background: linear-gradient(135deg, rgba(255, 157, 61, 0.88), rgba(198, 170, 114, 0.72));
-      color: #16130d;
-      border-color: rgba(255, 226, 159, 0.9);
-    }}
-    .button.secondary {{
-      background: rgba(12, 16, 14, 0.62);
-    }}
-    .button:hover {{
-      transform: translateY(-1px);
-      background: #fff;
-      color: #151914;
-    }}
-    .button.disabled {{
-      background: rgba(0, 0, 0, 0.12);
-      color: rgba(255, 255, 255, 0.7);
-    }}
-    code {{
-      color: var(--text);
-      background: rgba(0, 0, 0, 0.18);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 6px;
-      padding: 2px 6px;
-    }}
-    @media (max-width: 760px) {{
-      .topbar {{
-        align-items: center;
-        flex-wrap: wrap;
-      }}
-      .nav {{
-        order: 3;
-        width: 100%;
-        justify-content: flex-start;
-        overflow-x: auto;
-        padding-bottom: 2px;
-      }}
-      .top-actions {{ margin-left: auto; }}
-      .user-chip .user-text {{ display: none; }}
-      main {{ padding: 28px; }}
-      .hero {{
-        flex-direction: column;
-        gap: 28px;
-        text-align: center;
-      }}
-      .profile {{ width: min(270px, 72vw); }}
-      h1 {{ font-size: 42px; }}
-      .actions {{ justify-content: center; }}
-      .content {{ padding: 0; }}
-      .button {{ min-width: min(280px, 100%); }}
-    }}
-  </style>
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="/">
-      {brand_icon_html}
-      <span>Military Tycoon Dex</span>
-    </a>
-    <nav class="nav" aria-label="Main navigation">
-      <a class="active" href="/">Home</a>
-      <a href="/applications">Applications</a>
-      <a href="/discord">Support</a>
-      <a href="/invite">Invite</a>
-    </nav>
-    <div class="top-actions">
-      {top_auth_html}
-    </div>
-  </header>
-  <main>
-    <section class="hero">
-      <div class="profile-wrap">
-        {profile_html}
-      </div>
-      <div class="content">
-        <div class="status {status_class}" id="status-pill">
-          <span class="dot"></span>
-          <span id="status-text">{status_text}</span>
-        </div>
-        <h1>Military Tycoon Vehicle Dex Bot</h1>
-        <section class="grid">
-          <div class="metric">
-            <span class="label">Serving </span>
-            <span class="value" id="guild-count">{status["guild_count"]}</span>
-            <span class="label"> servers</span>
-          </div>
-          <div class="metric">
-            <span class="label">With </span>
-            <span class="value" id="total-vehicle-count">{status["total_vehicle_count"]}</span>
-            <span class="label"> total vehicles | </span>
-            <span class="value" id="fresh-vehicle-count">{status["fresh_vehicle_count"]}</span>
-            <span class="label"> fresh vehicles</span>
-          </div>
-          <div class="metric">
-            <span class="label">Last update </span>
-            <span class="value time" id="last-update">{escape(str(status["last_update"]))}</span>
-          </div>
-        </section>
-        <section class="actions">
-          {invite_html}
-          {server_html}
-        </section>
-        <p>Use <code>/help</code></p>
-      </div>
-    </section>
-  </main>
-  <script>
-    async function refreshStatus() {{
-      try {{
-        const res = await fetch('/status', {{ cache: 'no-store' }});
-        if (!res.ok) return;
-        const data = await res.json();
-        const pill = document.getElementById('status-pill');
-        const statusText = document.getElementById('status-text');
-        pill.classList.toggle('online', Boolean(data.online));
-        pill.classList.toggle('offline', !data.online);
-        statusText.textContent = data.online ? 'Online' : 'Offline';
-        document.getElementById('guild-count').textContent = data.guild_count;
-        document.getElementById('total-vehicle-count').textContent = data.total_vehicle_count;
-        document.getElementById('fresh-vehicle-count').textContent = data.fresh_vehicle_count;
-        document.getElementById('last-update').textContent = data.last_update;
-      }} catch (error) {{}}
-    }}
-    setInterval(refreshStatus, 15000);
-  </script>
-</body>
-</html>"""
-    return html.encode("utf-8")
-
-
-def _form_value(form: Dict[str, list[str]], key: str, default: str = "") -> str:
-    return (form.get(key, [default])[0] or default).strip()
-
-
-def _parse_int_value(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value or "").strip())
-    except (TypeError, ValueError):
-        return default
-
-
-def _dashboard_cookie_value(headers: Any, cookie_name: str) -> str:
-    cookie_header = str(headers.get("Cookie") or "")
-    for cookie in cookie_header.split(";"):
-        name, separator, value = cookie.strip().partition("=")
-        if separator and name == cookie_name:
-            return value.strip()
-    return ""
-
-
-def _dashboard_cookie_token(headers: Any) -> str:
-    return _dashboard_cookie_value(headers, APPLICATION_DASHBOARD_COOKIE)
-
-
-def _dashboard_secret() -> str:
-    return APPLICATION_DASHBOARD_TOKEN or TOKEN
-
-
-def _dashboard_sign(value: str) -> str:
-    secret = _dashboard_secret()
-    if not secret:
-        return ""
-    return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), "sha256").hexdigest()
-
-
-def _dashboard_pack(payload: Dict[str, Any]) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    value = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-    signature = _dashboard_sign(value)
-    return f"{value}.{signature}" if signature else ""
-
-
-def _dashboard_unpack(value: str) -> Dict[str, Any]:
-    if not value or "." not in value:
-        return {}
-    payload, signature = value.rsplit(".", 1)
-    expected_signature = _dashboard_sign(payload)
-    if not expected_signature or not hmac.compare_digest(signature, expected_signature):
-        return {}
-    try:
-        padded = payload + ("=" * (-len(payload) % 4))
-        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
-        parsed = json.loads(decoded.decode("utf-8"))
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _dashboard_oauth_enabled() -> bool:
-    return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and APPLICATION_DASHBOARD_BASE_URL)
-
-
-def _dashboard_oauth_redirect_uri() -> str:
-    return f"{APPLICATION_DASHBOARD_BASE_URL}/applications/callback"
-
-
-def _dashboard_discord_user_agent() -> str:
-    return f"Military Tycoon Dex Dashboard ({APPLICATION_DASHBOARD_BASE_URL}; discord.py)"
-
-
-def _dashboard_make_state() -> str:
-    return _dashboard_pack({"ts": int(time.time()), "nonce": secrets.token_urlsafe(16)})
-
-
-def _dashboard_state_valid(state: str) -> bool:
-    payload = _dashboard_unpack(state)
-    try:
-        created_at = int(payload.get("ts") or 0)
-    except (TypeError, ValueError):
-        return False
-    return bool(created_at and time.time() - created_at <= 600)
-
-
-def _dashboard_discord_login_url() -> str:
-    if not _dashboard_oauth_enabled():
-        return ""
-    query = urlencode(
-        {
-            "client_id": DISCORD_CLIENT_ID,
-            "redirect_uri": _dashboard_oauth_redirect_uri(),
-            "response_type": "code",
-            "scope": "identify guilds",
-            "state": _dashboard_make_state(),
-        }
-    )
-    return f"https://discord.com/oauth2/authorize?{query}"
-
-
-def _dashboard_session_payload(headers: Any) -> Dict[str, Any]:
-    payload = _dashboard_unpack(_dashboard_cookie_value(headers, APPLICATION_DASHBOARD_SESSION_COOKIE))
-    try:
-        expires_at = int(payload.get("exp") or 0)
-    except (TypeError, ValueError):
-        return {}
-    if not expires_at or expires_at < int(time.time()):
-        return {}
-    return payload
-
-
-def _dashboard_session_user_id(headers: Any) -> int:
-    payload = _dashboard_session_payload(headers)
-    try:
-        return int(payload.get("uid") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _dashboard_session_admin_guild_ids(headers: Any) -> set[int]:
-    payload = _dashboard_session_payload(headers)
-    guild_ids = payload.get("guild_ids")
-    if not isinstance(guild_ids, list):
-        return set()
-    normalized: set[int] = set()
-    for raw_guild_id in guild_ids:
-        try:
-            normalized.add(int(raw_guild_id))
-        except (TypeError, ValueError):
-            continue
-    return normalized
-
-
-def _dashboard_owner_token_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
-    if not APPLICATION_DASHBOARD_TOKEN:
-        return False
-    candidates = [
-        _form_value(params, "token"),
-        _dashboard_cookie_token(headers),
-    ]
-    return any(candidate and hmac.compare_digest(candidate, APPLICATION_DASHBOARD_TOKEN) for candidate in candidates)
-
-
-def _dashboard_authorized(params: Dict[str, list[str]], headers: Any) -> bool:
-    return bool(_dashboard_owner_token_authorized(params, headers) or _dashboard_session_payload(headers))
-
-
-def _dashboard_can_manage_guild(guild_id: int, params: Dict[str, list[str]], headers: Any) -> bool:
-    if _dashboard_owner_token_authorized(params, headers):
-        return True
-    return guild_id in _dashboard_session_admin_guild_ids(headers)
-
-
-def _dashboard_visible_guilds(params: Dict[str, list[str]], headers: Any) -> list[discord.Guild]:
-    guilds = sorted(bot.guilds, key=lambda item: item.name.lower())
-    return [guild for guild in guilds if _dashboard_can_manage_guild(guild.id, params, headers)]
-
-
-def _dashboard_oauth_request(url: str, *, data: Optional[Dict[str, str]] = None, token: str = "") -> Any:
-    encoded_data = urlencode(data).encode("utf-8") if data is not None else None
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": _dashboard_discord_user_agent(),
-    }
-    if data is not None:
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = Request(url, data=encoded_data, headers=headers, method="POST" if data is not None else "GET")
-    try:
-        with urlopen(request, timeout=15) as response:
-            raw_body = response.read().decode("utf-8")
-    except HTTPError as error:
-        raw_error = error.read().decode("utf-8", errors="replace")
-        message = raw_error.strip()
-        try:
-            payload = json.loads(raw_error)
-            if isinstance(payload, dict):
-                message = str(payload.get("message") or payload.get("error_description") or payload.get("error") or message)
-        except json.JSONDecodeError:
-            pass
-        raise RuntimeError(f"Discord HTTP {error.code}: {truncate(message, 160)}") from error
-    except URLError as error:
-        raise RuntimeError(f"Could not reach Discord OAuth API: {truncate(str(error.reason), 120)}") from error
-    return json.loads(raw_body)
-
-
-def _handle_dashboard_oauth_callback(params: Dict[str, list[str]]) -> tuple[int, str, Optional[str]]:
-    if not _dashboard_oauth_enabled():
-        return 400, "Discord login is not configured. Set DISCORD_CLIENT_SECRET on Render.", None
-    if not _dashboard_state_valid(_form_value(params, "state")):
-        return 400, "Discord login expired. Please try again.", None
-    code = _form_value(params, "code")
-    if not code:
-        return 400, "Discord did not return a login code.", None
-    try:
-        token_payload = _dashboard_oauth_request(
-            "https://discord.com/api/oauth2/token",
-            data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": _dashboard_oauth_redirect_uri(),
-            },
-        )
-        if not isinstance(token_payload, dict):
-            return 401, "Discord login failed: invalid token response.", None
-        access_token = str(token_payload.get("access_token") or "")
-        if not access_token:
-            return 401, "Discord login failed: missing access token.", None
-        user_payload = _dashboard_oauth_request("https://discord.com/api/users/@me", token=access_token)
-        guilds_payload = _dashboard_oauth_request("https://discord.com/api/users/@me/guilds", token=access_token)
-    except Exception as error:
-        print(f"Dashboard OAuth failed: {error}")
-        return (
-            400,
-            "Discord login failed. Check that the redirect URL and Client Secret are correct, then try again. "
-            f"Details: {truncate(error, 180)}",
-            None,
-        )
-
-    if not isinstance(user_payload, dict):
-        return 401, "Discord login failed: invalid user response.", None
-    try:
-        user_id = int(user_payload.get("id") or 0)
-    except (TypeError, ValueError):
-        user_id = 0
-    if not user_id:
-        return 401, "Discord login failed: missing user id.", None
-
-    bot_guild_ids = {guild.id for guild in bot.guilds}
-    admin_guild_ids: set[int] = set()
-    if isinstance(guilds_payload, list):
-        for guild_payload in guilds_payload:
-            try:
-                guild_id = int(guild_payload.get("id") or 0)
-                permissions = int(guild_payload.get("permissions") or 0)
-            except (AttributeError, TypeError, ValueError):
-                continue
-            is_owner = bool(guild_payload.get("owner"))
-            has_admin_access = bool(is_owner or permissions & 0x8 or permissions & 0x20)
-            if guild_id in bot_guild_ids and has_admin_access:
-                admin_guild_ids.add(guild_id)
-
-    if not admin_guild_ids:
-        return 403, "You are not an admin in any server that uses this bot.", None
-
-    username = str(user_payload.get("global_name") or user_payload.get("username") or "Discord admin")
-    avatar_hash = str(user_payload.get("avatar") or "")
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128" if avatar_hash else ""
-    session_cookie = _dashboard_pack(
-        {
-            "uid": user_id,
-            "name": username[:80],
-            "avatar_url": avatar_url,
-            "guild_ids": sorted(admin_guild_ids),
-            "exp": int(time.time()) + 7 * 24 * 60 * 60,
-        }
-    )
-    return 302, _dashboard_url(), session_cookie
-
-
-def _dashboard_url(guild_id: Optional[int] = None, notice: str = "") -> str:
-    query = []
-    if guild_id:
-        query.append(f"guild_id={guild_id}")
-    if notice:
-        query.append(f"notice={quote(notice)}")
-    return "/applications" + (f"?{'&'.join(query)}" if query else "")
-
-
-def _dashboard_role_options(guild: discord.Guild, selected_role_id: int) -> str:
-    options = [
-        f'<option value="0"{"" if selected_role_id else " selected"}>No accepted role</option>'
-    ]
-    roles = [role for role in guild.roles if not role.is_default()]
-    roles.sort(key=lambda role: role.position, reverse=True)
-    for role in roles:
-        selected = " selected" if role.id == selected_role_id else ""
-        managed = " (managed)" if role.managed else ""
-        options.append(
-            f'<option value="{role.id}"{selected}>{escape(role.name)}{managed}</option>'
-        )
-    return "\n".join(options)
-
-
-def _dashboard_channel_options(guild: discord.Guild, selected_channel_id: int, *, include_empty: bool = True) -> str:
-    options = []
-    if include_empty:
-        options.append(f'<option value="0"{"" if selected_channel_id else " selected"}>Not set</option>')
-    channels = sorted(
-        guild.text_channels,
-        key=lambda channel: ((channel.category.name if channel.category else ""), channel.position, channel.name.lower()),
-    )
-    for channel in channels:
-        selected = " selected" if channel.id == selected_channel_id else ""
-        category = f"{channel.category.name} / " if channel.category else ""
-        options.append(
-            f'<option value="{channel.id}"{selected}>{escape(category)}#{escape(channel.name)}</option>'
-        )
-    return "\n".join(options)
-
-
-async def _dashboard_post_application_panel(guild_id: int, channel_id: int) -> str:
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        return "That server is not loaded by the bot."
-    channel = await application_system.resolve_text_channel(guild, channel_id)
-    if channel is None:
-        return "That application channel was not found."
-    missing_permissions = application_system.bot_channel_permission_errors(channel)
-    if missing_permissions:
-        return f"Cannot post in #{channel.name}. Missing: {', '.join(missing_permissions)}."
-
-    guild_state = application_system.get_guild_state(guild.id)
-    if not guild_state.get("panels"):
-        return "Create at least one panel before posting."
-
-    existing_message_id = int(guild_state.get("application_message_id") or 0)
-    existing_channel_id = int(guild_state.get("application_channel_id") or 0)
-    if existing_message_id and existing_channel_id == channel.id:
-        try:
-            message = await channel.fetch_message(existing_message_id)
-            await message.edit(
-                embed=application_system.build_application_panel_embed(guild),
-                view=application_system.ApplicationSelectView(guild.id),
-            )
-            return f"Application panel updated in #{channel.name}."
-        except discord.HTTPException:
-            pass
-
-    try:
-        message = await channel.send(
-            embed=application_system.build_application_panel_embed(guild),
-            view=application_system.ApplicationSelectView(guild.id),
-        )
-    except discord.HTTPException as error:
-        return f"Could not post panel: {truncate(error, 160)}"
-
-    guild_state["application_channel_id"] = channel.id
-    guild_state["application_message_id"] = message.id
-    application_system.save_state()
-    return f"Application panel posted in #{channel.name}."
-
-
-def _run_dashboard_coro(coro: Any) -> str:
-    if bot.loop.is_closed():
-        return "Bot event loop is closed."
-    try:
-        return asyncio.run_coroutine_threadsafe(coro, bot.loop).result(timeout=30)
-    except Exception as error:
-        return f"Dashboard action failed: {truncate(error, 180)}"
-
-
-def _dashboard_page(title: str, body: str, *, show_logout: bool = True) -> bytes:
-    logout_html = '<a class="button secondary" href="/applications/logout">Logout</a>' if show_logout else ""
-    applications_active = " active" if title in {"Select a server", "Application dashboard", "Dashboard login"} else ""
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(title)} - Military Tycoon Dex</title>
-  <style>
-    :root {{
-      color-scheme: dark;
-      --bg: #0b0f0c;
-      --panel: #171d18;
-      --panel-2: #20271f;
-      --line: rgba(245, 238, 216, 0.18);
-      --text: #f7f1df;
-      --muted: rgba(247, 241, 223, 0.72);
-      --accent: #d1a85f;
-      --teal: #21ffd0;
-      --teal-2: #0aa67a;
-      --green: #2ecc71;
-      --red: #f45b69;
-      --blue: #5d7cff;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        linear-gradient(135deg, rgba(11, 15, 12, .96), rgba(25, 33, 26, .88)),
-        radial-gradient(circle at 18% 10%, rgba(209, 168, 95, .24), transparent 32%),
-        radial-gradient(circle at 92% 14%, rgba(74, 95, 56, .38), transparent 30%);
-      color: var(--text);
-      min-height: 100vh;
-    }}
-    body::before {{
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(115deg, transparent 0 17%, rgba(33,255,208,.06) 17% 27%, transparent 27% 47%, rgba(209,168,95,.08) 47% 58%, transparent 58%),
-        radial-gradient(circle at 74% 18%, rgba(33,255,208,.13), transparent 26%);
-      opacity: .85;
-    }}
-    header {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 18px clamp(18px, 4vw, 44px);
-      border-bottom: 1px solid var(--line);
-      background: rgba(10, 13, 11, .72);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      backdrop-filter: blur(12px);
-    }}
-    header, main {{ position: relative; }}
-    main {{
-      width: min(1220px, 100%);
-      margin: 0 auto;
-      padding: 26px clamp(14px, 3vw, 36px) 56px;
-    }}
-    h1, h2, h3 {{ margin: 0 0 12px; letter-spacing: 0; }}
-    p {{ color: var(--muted); line-height: 1.5; }}
-    a {{ color: var(--accent); }}
-    .grid {{
-      display: grid;
-      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: start;
-    }}
-    .card {{
-      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)), var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 18px;
-      box-shadow: 0 20px 48px rgba(0,0,0,.28);
-    }}
-    .stack {{ display: grid; gap: 14px; }}
-    .row {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
-    .row.spread {{ justify-content: space-between; }}
-    label {{ display: block; font-weight: 700; font-size: 13px; color: var(--muted); margin-bottom: 6px; }}
-    input, textarea, select {{
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #101510;
-      color: var(--text);
-      padding: 10px 11px;
-      font: inherit;
-    }}
-    input:focus, textarea:focus, select:focus {{
-      outline: none;
-      border-color: rgba(33,255,208,.72);
-      box-shadow: 0 0 0 3px rgba(33,255,208,.12);
-    }}
-    textarea {{ min-height: 84px; resize: vertical; }}
-    button, .button {{
-      border: 1px solid rgba(255,255,255,.2);
-      border-radius: 7px;
-      background: var(--accent);
-      color: #10100c;
-      padding: 10px 14px;
-      font-weight: 900;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 40px;
-      transition: transform .16s ease, background .16s ease, border-color .16s ease;
-    }}
-    button:hover, .button:hover {{ transform: translateY(-1px); }}
-    button.secondary, .button.secondary {{ background: #2d362d; color: var(--text); }}
-    button.danger {{ background: var(--red); color: white; }}
-    button.green, .button.green {{ background: var(--green); color: #071007; }}
-    .button.discord {{ background: #5865f2; color: white; width: 100%; margin-top: 14px; }}
-    .button.discord .discord-icon {{ margin-right: 2px; }}
-    .notice {{
-      border: 1px solid rgba(209,168,95,.48);
-      background: rgba(209,168,95,.12);
-      color: #ffe0a1;
-      border-radius: 8px;
-      padding: 12px 14px;
-      margin-bottom: 16px;
-    }}
-    .muted {{ color: var(--muted); }}
-    .panel {{
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      border-radius: 8px;
-      padding: 14px;
-      margin-top: 14px;
-    }}
-    .panel-head {{
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }}
-    .panel-title {{
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }}
-    .question {{
-      border-left: 3px solid var(--accent);
-      padding: 12px;
-      background: rgba(0,0,0,.16);
-      border-radius: 6px;
-      margin-top: 10px;
-    }}
-    .question-head {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-    }}
-    .danger-zone {{
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid var(--line);
-    }}
-    .two {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
-    .three {{ display: grid; grid-template-columns: 1fr 1fr 140px; gap: 10px; align-items: end; }}
-    .four {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }}
-    .pill {{
-      display: inline-flex;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 5px 9px;
-      color: var(--muted);
-      font-size: 12px;
-      gap: 6px;
-      width: max-content;
-    }}
-    .pill.good {{ border-color: rgba(46,204,113,.42); background: rgba(46,204,113,.1); color: #b9ffd6; }}
-    .pill.warn {{ border-color: rgba(209,168,95,.48); background: rgba(209,168,95,.12); color: #ffe0a1; }}
-    .brand {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 900;
-    }}
-    .dash-nav {{
-      display: flex;
-      align-items: center;
-      gap: clamp(12px, 2vw, 28px);
-      flex: 1;
-      justify-content: center;
-    }}
-    .dash-nav a {{
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 900;
-      opacity: .82;
-      border-bottom: 3px solid transparent;
-      padding: 8px 0;
-      white-space: nowrap;
-    }}
-    .dash-nav a:hover, .dash-nav a.active {{
-      opacity: 1;
-      color: var(--teal);
-      border-bottom-color: var(--teal);
-    }}
-    .brand-mark {{
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      display: inline-grid;
-      place-items: center;
-      background: linear-gradient(135deg, #76e4b0, #d1a85f);
-      color: #10100c;
-      font-weight: 1000;
-    }}
-    .dashboard-hero {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 18px;
-      align-items: center;
-      margin-bottom: 18px;
-    }}
-    .stat-row {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }}
-    .stat {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: rgba(0,0,0,.16);
-    }}
-    .stat strong {{
-      display: block;
-      font-size: 22px;
-      margin-top: 4px;
-    }}
-    .nav-list {{
-      display: grid;
-      gap: 8px;
-    }}
-    .nav-item {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: rgba(255,255,255,.03);
-    }}
-    .nav-item strong {{ display: block; }}
-    .setup-steps {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }}
-    .setup-step {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: rgba(255,255,255,.035);
-    }}
-    .setup-step span {{
-      display: inline-grid;
-      place-items: center;
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      background: rgba(33,255,208,.16);
-      color: var(--teal);
-      font-weight: 1000;
-      margin-bottom: 8px;
-    }}
-    .empty-state {{
-      border: 1px dashed rgba(245,238,216,.24);
-      border-radius: 8px;
-      padding: 24px;
-      background: rgba(0,0,0,.14);
-      text-align: center;
-    }}
-    .admin-lock {{
-      border-color: rgba(46,204,113,.42);
-      background: rgba(46,204,113,.1);
-      color: #b9ffd6;
-    }}
-    .token-note {{
-      border-color: rgba(244,91,105,.38);
-      background: rgba(244,91,105,.08);
-      color: #ffd4da;
-    }}
-    .server-tabs {{
-      display: inline-flex;
-      overflow: hidden;
-      border-radius: 8px;
-      background: #263033;
-      margin-bottom: 22px;
-    }}
-    .tab {{
-      display: inline-flex;
-      align-items: center;
-      min-height: 44px;
-      padding: 0 22px;
-      font-weight: 900;
-      color: var(--text);
-      border-right: 1px solid rgba(255,255,255,.08);
-    }}
-    .tab.active {{
-      background: #0aa67a;
-      color: #fff;
-    }}
-    .tab.locked {{
-      color: #ffe16b;
-    }}
-    .server-header {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
-      gap: 20px;
-      align-items: end;
-      margin-bottom: 20px;
-    }}
-    .server-header h1 {{
-      margin-top: 12px;
-      font-size: clamp(30px, 4vw, 46px);
-    }}
-    .search-box span {{
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      clip: rect(0,0,0,0);
-      overflow: hidden;
-    }}
-    .search-box input {{
-      min-height: 46px;
-      background: #0d1118;
-      border-color: rgba(255,255,255,.12);
-      border-radius: 7px;
-    }}
-    .server-tools {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      align-items: end;
-    }}
-    .server-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 18px;
-    }}
-    .server-card {{
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 7px;
-      background: #191b2a;
-    }}
-    .server-meta {{
-      display: grid;
-      grid-template-columns: 54px minmax(0, 1fr);
-      gap: 13px;
-      align-items: center;
-      padding: 16px;
-      min-height: 100px;
-    }}
-    .server-meta h3 {{
-      margin: 0 0 4px;
-      font-size: 18px;
-      overflow-wrap: anywhere;
-    }}
-    .server-meta p {{
-      margin: 0;
-      color: #bec8d6;
-    }}
-    .server-icon {{
-      width: 48px;
-      height: 48px;
-      border-radius: 7px;
-      object-fit: cover;
-      background: #6f7885;
-    }}
-    .server-icon.fallback {{
-      display: grid;
-      place-items: center;
-      font-weight: 1000;
-      color: #111827;
-    }}
-    .server-action {{
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 42px;
-      color: #21ffd0;
-      text-decoration: none;
-      font-weight: 900;
-      background: rgba(33,255,208,.12);
-    }}
-    .server-action:hover {{
-      background: rgba(33,255,208,.2);
-    }}
-    .login-hero {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
-      gap: clamp(22px, 5vw, 64px);
-      align-items: center;
-      min-height: 68vh;
-    }}
-    .login-copy h1 {{
-      font-size: clamp(42px, 6vw, 74px);
-      line-height: 1.05;
-    }}
-    .login-copy .lead {{
-      max-width: 720px;
-      font-size: 17px;
-    }}
-    .login-copy strong {{ color: var(--teal); }}
-    .login-points {{
-      display: grid;
-      gap: 10px;
-      margin-top: 18px;
-      max-width: 640px;
-    }}
-    .login-point {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px 14px;
-      background: rgba(255,255,255,.035);
-    }}
-    .login-point strong {{
-      color: var(--teal);
-      display: block;
-      margin-bottom: 4px;
-    }}
-    .login-panel {{
-      background: rgba(17,23,20,.78);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 22px;
-      box-shadow: 0 28px 70px rgba(0,0,0,.34);
-    }}
-    @media (max-width: 850px) {{
-      .grid, .two, .three, .four, .dashboard-hero, .stat-row, .server-header, .server-tools, .setup-steps, .login-hero {{ grid-template-columns: 1fr; }}
-      header {{ position: static; flex-wrap: wrap; }}
-      .dash-nav {{ justify-content: flex-start; width: 100%; overflow-x: auto; order: 3; }}
-      .server-tabs {{ display: flex; width: 100%; overflow-x: auto; }}
-    }}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand">
-      <span class="brand-mark">D</span>
-      <span>Military Tycoon Dex</span>
-    </div>
-    <nav class="dash-nav" aria-label="Dashboard navigation">
-      <a href="/">Home</a>
-      <a class="{applications_active}" href="/applications">Applications</a>
-      <a href="/discord">Support</a>
-    </nav>
-    <div class="row">
-      <a class="button secondary" href="/">Website</a>
-      {logout_html}
-    </div>
-  </header>
-  <main>{body}</main>
-</body>
-</html>"""
-    return html.encode("utf-8")
-
-
-def _render_dashboard_login(error: str = "") -> bytes:
-    discord_login_url = _dashboard_discord_login_url()
-    if not APPLICATION_DASHBOARD_TOKEN and not discord_login_url:
-        return _dashboard_page(
-            "Dashboard disabled",
-            """
-            <section class="card">
-              <h1>Application dashboard disabled</h1>
-              <p>Set <code>DISCORD_CLIENT_SECRET</code> for Discord admin login or <code>APPLICATION_DASHBOARD_TOKEN</code> for owner fallback access.</p>
-            </section>
-            """,
-            show_logout=False,
-        )
-    error_html = f'<div class="notice">{escape(error)}</div>' if error else ""
-    discord_html = (
-        f"""
-        <a class="button discord" href="{escape(discord_login_url)}">
-          {_discord_icon_html()}
-          <span>Login</span>
-        </a>
-        <p class="muted">Only server owners, Administrators, and users with Manage Server can edit that server.</p>
-        """
-        if discord_login_url
-        else f"""
-        <div class="notice token-note">
-          Discord admin login is not configured yet. Set <code>DISCORD_CLIENT_SECRET</code> and add this redirect URL in the Discord Developer Portal:
-          <br><code>{escape(_dashboard_oauth_redirect_uri())}</code>
-        </div>
-        """
-    )
-    token_html = (
-        f"""
-        <details style="margin-top:16px;">
-          <summary class="muted" style="cursor:pointer;font-weight:800;">Owner token fallback</summary>
-          <form method="post" action="/applications" style="margin-top:12px;">
-            <input type="hidden" name="action" value="login">
-            <label>Owner dashboard token</label>
-            <input name="token" type="password" autocomplete="current-password" required>
-            <div class="row" style="margin-top:14px;">
-              <button type="submit">Open owner dashboard</button>
-            </div>
-          </form>
-        </details>
-        """
-        if APPLICATION_DASHBOARD_TOKEN and not discord_login_url
-        else ""
-    )
-    return _dashboard_page(
-        "Dashboard login",
-        f"""
-        <section class="login-hero">
-          <div class="login-copy">
-            <span class="pill admin-lock">Server admin dashboard</span>
-            <h1><strong>MT Dex</strong> Application Panel</h1>
-            <p class="lead">Manage application panels for the servers where your Discord account has Owner, Administrator, or Manage Server permission.</p>
-            <div class="login-points">
-              <div class="login-point"><strong>Server-safe access</strong><span class="muted">Only manageable servers appear after login.</span></div>
-              <div class="login-point"><strong>Panel builder</strong><span class="muted">Create application options, questions, dropdown answers, logs, tickets, and accepted roles from one place.</span></div>
-              <div class="login-point"><strong>Saved per server</strong><span class="muted">Each server keeps its own application setup on the Render disk.</span></div>
-            </div>
-          </div>
-          <div class="login-panel">
-            <span class="pill good">Secure Discord login</span>
-            <h2 style="margin-top:12px;">Login</h2>
-            <p>Use Discord to open the admin panel for servers you can manage.</p>
-            {error_html}
-            {discord_html}
-            {token_html}
-          </div>
-        </section>
-        """,
-        show_logout=False,
-    )
-
-
-def _dashboard_guild_icon_html(guild: discord.Guild) -> str:
-    if guild.icon:
-        try:
-            return f'<img class="server-icon" src="{escape(str(guild.icon.replace(size=96, static_format="png").url))}" alt="">'
-        except Exception:
-            pass
-    initials = "".join(part[:1] for part in guild.name.split()[:2]).upper() or "DX"
-    return f'<div class="server-icon fallback">{escape(initials)}</div>'
-
-
-def _render_application_server_selection(
-    guilds: list[discord.Guild],
-    params: Dict[str, list[str]],
-    headers: Any,
-) -> bytes:
-    notice = _form_value(params, "notice")
-    notice_html = f'<div class="notice">{escape(notice)}</div>' if notice else ""
-    session_payload = _dashboard_session_payload(headers)
-    account_name = str(session_payload.get("name") or "Owner token")
-    access_label = "Owner fallback" if _dashboard_owner_token_authorized(params, headers) else "Discord admin"
-
-    cards = []
-    for guild in guilds:
-        member = guild.get_member(_dashboard_session_user_id(headers))
-        role_label = "Owner" if _dashboard_owner_token_authorized(params, headers) else "Admin"
-        if member and member.guild_permissions.administrator:
-            role_label = "Admin"
-        elif member and member.guild_permissions.manage_guild:
-            role_label = "Manager"
-        cards.append(
-            f"""
-            <article class="server-card" data-name="{escape(guild.name.lower())}">
-              <div class="server-meta">
-                {_dashboard_guild_icon_html(guild)}
-                <div>
-                  <h3>{escape(guild.name)}</h3>
-                  <p>{escape(role_label)}</p>
-                </div>
-              </div>
-              <a class="server-action" href="{_dashboard_url(guild.id)}">Configure</a>
-            </article>
-            """
-        )
-
-    body = f"""
-    {notice_html}
-    <section class="server-tabs" aria-label="Dashboard sections">
-      <span class="tab active">Server Selection</span>
-      <span class="tab locked">Applications</span>
-      <span class="tab locked">Settings</span>
-    </section>
-    <section class="server-header">
-      <div>
-        <span class="pill admin-lock">{escape(access_label)}</span>
-        <h1>Select a Server</h1>
-        <p>Only servers where <strong>{escape(account_name)}</strong> has Manage Server or Administrator are shown.</p>
-      </div>
-      <div class="server-tools">
-        <label class="search-box">
-          <span>Search</span>
-          <input id="server-search" type="search" placeholder="Search for your server...">
-        </label>
-        <a class="button secondary" href="/applications">Refresh</a>
-      </div>
-    </section>
-    <section class="server-grid" id="server-grid">
-      {''.join(cards) if cards else '<div class="empty-state"><h2>No servers found</h2><p>Invite the bot to a server where you have Manage Server or Administrator, then log in again.</p></div>'}
-    </section>
-    <script>
-      const search = document.getElementById('server-search');
-      const cards = Array.from(document.querySelectorAll('.server-card'));
-      if (search) {{
-        search.addEventListener('input', () => {{
-          const needle = search.value.trim().toLowerCase();
-          for (const card of cards) {{
-            card.style.display = card.dataset.name.includes(needle) ? '' : 'none';
-          }}
-        }});
-      }}
-    </script>
-    """
-    return _dashboard_page("Select a server", body)
-
-
-def _render_application_dashboard(params: Dict[str, list[str]], headers: Any = None) -> bytes:
-    headers = headers or {}
-    if not bot.is_ready():
-        return _dashboard_page("Dashboard", '<section class="card"><h1>Bot is starting</h1><p>Try again in a moment.</p></section>')
-
-    guilds = _dashboard_visible_guilds(params, headers)
-    if not guilds:
-        return _dashboard_page(
-            "Dashboard",
-            '<section class="card"><h1>No manageable servers</h1><p>Log in with a Discord account that owns the server or has Manage Server/Administrator in a server where the bot is installed.</p></section>',
-        )
-
-    if not _form_value(params, "guild_id"):
-        return _render_application_server_selection(guilds, params, headers)
-
-    requested_guild_id = _parse_int_value(_form_value(params, "guild_id"), guilds[0].id)
-    guild = next((server for server in guilds if server.id == requested_guild_id), guilds[0])
-    guild_state = application_system.get_guild_state(guild.id)
-    panels = guild_state.setdefault("panels", {})
-    selected_log_channel = int(guild_state.get("log_channel_id") or 0)
-    selected_panel_channel = int(guild_state.get("application_channel_id") or 0)
-    notice = _form_value(params, "notice")
-    session_payload = _dashboard_session_payload(headers)
-    account_name = str(session_payload.get("name") or "Owner token")
-    access_label = "Owner fallback" if _dashboard_owner_token_authorized(params, headers) else "Discord admin"
-    question_total = sum(
-        len(panel.get("questions", [])) if isinstance(panel.get("questions"), list) else 0
-        for panel in panels.values()
-        if isinstance(panel, dict)
-    )
-
-    guild_options = "\n".join(
-        f'<option value="{server.id}"{" selected" if server.id == guild.id else ""}>{escape(server.name)}</option>'
-        for server in guilds
-    )
-    notice_html = f'<div class="notice">{escape(notice)}</div>' if notice else ""
-
-    panel_blocks = []
-    for panel_key, panel in sorted(panels.items()):
-        questions = panel.get("questions") if isinstance(panel.get("questions"), list) else []
-        enabled_checked = " checked" if panel.get("enabled", True) else ""
-        accepted_role_id = int(panel.get("accepted_role_id") or 0)
-        question_blocks = []
-        for index, raw_question in enumerate(questions, start=1):
-            question = application_system.normalize_question(raw_question)
-            choice_text = ", ".join(question.get("options", [])) if question.get("type") == "select" else ""
-            question_blocks.append(
-                f"""
-                <div class="question">
-                  <div class="question-head">
-                    <div>
-                      <span class="pill warn">Question {index}</span>
-                      <p class="muted">Leave dropdown choices empty for a normal text answer.</p>
-                    </div>
-                    <form method="post" action="/applications">
-                      <input type="hidden" name="action" value="delete_question">
-                      <input type="hidden" name="guild_id" value="{guild.id}">
-                      <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                      <input type="hidden" name="question_number" value="{index}">
-                      <button class="danger" type="submit">Delete</button>
-                    </form>
-                  </div>
-                  <form method="post" action="/applications">
-                    <input type="hidden" name="action" value="edit_question">
-                    <input type="hidden" name="guild_id" value="{guild.id}">
-                    <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                    <input type="hidden" name="question_number" value="{index}">
-                    <label>Question text</label>
-                    <textarea name="text" required>{escape(question.get("text", ""))}</textarea>
-                    <label>Dropdown choices <span class="muted">(blank = text answer, comma separated = selection)</span></label>
-                    <input name="choices" value="{escape(choice_text)}" placeholder="yes, no">
-                    <div class="row" style="margin-top:10px;">
-                      <button type="submit">Save question</button>
-                    </div>
-                  </form>
-                </div>
-                """
-            )
-
-        panel_blocks.append(
-            f"""
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <div class="panel-title">
-                    <h2>{escape(panel.get("name", panel_key))}</h2>
-                    <span class="pill {'good' if panel.get("enabled", True) else 'warn'}">{'Open' if panel.get("enabled", True) else 'Hidden'}</span>
-                    <span class="pill">{len(questions)} question{'s' if len(questions) != 1 else ''}</span>
-                  </div>
-                  <p class="muted">{escape(panel.get("description", "Start this application."))}</p>
-                </div>
-              </div>
-              <form method="post" action="/applications">
-                <input type="hidden" name="action" value="update_panel">
-                <input type="hidden" name="guild_id" value="{guild.id}">
-                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                <div class="two">
-                  <div>
-                    <label>Panel name</label>
-                    <input name="name" value="{escape(panel.get("name", panel_key))}" required>
-                  </div>
-                  <div>
-                    <label>Dropdown description</label>
-                    <input name="description" value="{escape(panel.get("description", "Start this application."))}">
-                  </div>
-                </div>
-                <div class="two" style="margin-top:10px;">
-                  <div>
-                    <label>Role given when accepted</label>
-                    <select name="accepted_role_id">{_dashboard_role_options(guild, accepted_role_id)}</select>
-                  </div>
-                  <div>
-                    <label>Open in dropdown</label>
-                    <div class="row" style="min-height:40px;">
-                      <input style="width:auto;" type="checkbox" name="enabled" value="1"{enabled_checked}>
-                      <span class="muted">Users can start this application</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="row" style="margin-top:12px;">
-                  <button type="submit">Save panel</button>
-                </div>
-              </form>
-              <h3 style="margin-top:18px;">Questions</h3>
-              {''.join(question_blocks) if question_blocks else '<div class="empty-state"><h3>No questions yet</h3><p>Add the first question below. Applicants will answer it in DMs.</p></div>'}
-              <form class="panel" style="box-shadow:none;" method="post" action="/applications">
-                <input type="hidden" name="action" value="add_question">
-                <input type="hidden" name="guild_id" value="{guild.id}">
-                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                <div class="three">
-                  <div>
-                    <label>New question</label>
-                    <input name="text" placeholder="Question text" required>
-                  </div>
-                  <div>
-                    <label>Dropdown choices</label>
-                    <input name="choices" placeholder="Leave blank, or: yes, no">
-                  </div>
-                  <div>
-                    <label>Number</label>
-                    <input name="question_number" type="number" min="1" value="{len(questions) + 1}">
-                  </div>
-                </div>
-                <div class="row" style="margin-top:10px;">
-                  <button type="submit">Add question</button>
-                </div>
-              </form>
-              <form class="danger-zone" method="post" action="/applications">
-                <input type="hidden" name="action" value="delete_panel">
-                <input type="hidden" name="guild_id" value="{guild.id}">
-                <input type="hidden" name="panel_key" value="{escape(panel_key)}">
-                <div class="row spread">
-                  <p class="muted">Deleting a panel removes its dropdown entry and questions.</p>
-                  <button class="danger" type="submit">Delete panel</button>
-                </div>
-              </form>
-            </section>
-            """
-        )
-
-    body = f"""
-    {notice_html}
-    <section class="card dashboard-hero">
-      <div>
-        <span class="pill admin-lock">{escape(access_label)}</span>
-        <h1 style="font-size:clamp(34px,5vw,64px);margin-top:12px;">Applications</h1>
-        <p>Configure Appy-style application panels for <strong>{escape(guild.name)}</strong>. Users apply in DMs, staff reviews go to your log channel, and accepted applicants can receive a role automatically.</p>
-        <div class="setup-steps">
-          <div class="setup-step"><span>1</span><strong>Set channels</strong><p>Choose where the panel and staff logs go.</p></div>
-          <div class="setup-step"><span>2</span><strong>Create panels</strong><p>Add one dropdown option per application.</p></div>
-          <div class="setup-step"><span>3</span><strong>Add questions</strong><p>Text answers or dropdown choices.</p></div>
-          <div class="setup-step"><span>4</span><strong>Post panel</strong><p>Update the Discord message anytime.</p></div>
-        </div>
-        <div class="stat-row">
-          <div class="stat"><span class="muted">Panels</span><strong>{len(panels)}</strong></div>
-          <div class="stat"><span class="muted">Questions</span><strong>{question_total}</strong></div>
-          <div class="stat"><span class="muted">Admin</span><strong style="font-size:18px;">{escape(account_name)}</strong></div>
-        </div>
-      </div>
-      <div class="nav-list" style="min-width:230px;">
-        <a class="button secondary" href="/applications">Change server</a>
-        <div class="nav-item admin-lock"><strong>Admin locked</strong><span class="muted">Only users with Discord permissions can edit this server.</span></div>
-        <div class="nav-item"><strong>DM application flow</strong><span class="muted">Applicants answer privately, then staff reviews in the log channel.</span></div>
-      </div>
-    </section>
-    <div class="grid">
-      <aside class="stack">
-        <section class="card">
-          <h2>Server</h2>
-          <form method="get" action="/applications">
-            <label>Choose server</label>
-            <select name="guild_id" onchange="this.form.submit()">{guild_options}</select>
-          </form>
-        </section>
-        <section class="card">
-          <h2>Application panel</h2>
-          <p class="muted">This controls the public dropdown message and staff review channel.</p>
-          <form method="post" action="/applications">
-            <input type="hidden" name="action" value="settings">
-            <input type="hidden" name="guild_id" value="{guild.id}">
-            <label>Intro text</label>
-            <textarea name="panel_text">{escape(guild_state.get("panel_text") or application_system.DEFAULT_PANEL_TEXT)}</textarea>
-            <label>Review log channel</label>
-            <select name="log_channel_id">{_dashboard_channel_options(guild, selected_log_channel)}</select>
-            <label>Public panel channel</label>
-            <select name="application_channel_id">{_dashboard_channel_options(guild, selected_panel_channel)}</select>
-            <div class="row" style="margin-top:12px;">
-              <button type="submit">Save settings</button>
-            </div>
-          </form>
-          <form method="post" action="/applications">
-            <input type="hidden" name="action" value="post_panel">
-            <input type="hidden" name="guild_id" value="{guild.id}">
-            <div class="row" style="margin-top:8px;">
-              <button class="green" type="submit">Post / update panel</button>
-            </div>
-          </form>
-          <p class="muted">The bot needs Send Messages, Embed Links, and Read Message History in those channels.</p>
-        </section>
-        <section class="card">
-          <h2>Create application</h2>
-          <p class="muted">Each application becomes one option in the Discord dropdown.</p>
-          <form method="post" action="/applications">
-            <input type="hidden" name="action" value="create_panel">
-            <input type="hidden" name="guild_id" value="{guild.id}">
-            <label>Name</label>
-            <input name="name" placeholder="Moderation team" required>
-            <label>Dropdown description</label>
-            <input name="description" placeholder="Apply for the moderation team">
-            <div class="row" style="margin-top:12px;">
-              <button type="submit">Create</button>
-            </div>
-          </form>
-        </section>
-      </aside>
-      <section class="card">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <h2>Applications for {escape(guild.name)}</h2>
-            <p class="muted">Edit the dropdown entries, questions, and accept-role behavior.</p>
-          </div>
-        </div>
-        {''.join(panel_blocks) if panel_blocks else '<div class="empty-state"><h2>No applications yet</h2><p>Create your first application on the left. Good starter names are Moderation team, Partnerships, Trading advisor, or Content creator.</p></div>'}
-      </section>
-    </div>
-    """
-    return _dashboard_page("Application dashboard", body)
-
-
-def _handle_application_dashboard_post(form: Dict[str, list[str]], headers: Any = None) -> tuple[int, str, Optional[str]]:
-    headers = headers or {}
-    action = _form_value(form, "action")
-    if action == "login":
-        token = _form_value(form, "token")
-        if APPLICATION_DASHBOARD_TOKEN and hmac.compare_digest(token, APPLICATION_DASHBOARD_TOKEN):
-            return 302, _dashboard_url(), token
-        return 401, "Wrong dashboard token.", None
-
-    guild_id = _parse_int_value(_form_value(form, "guild_id"))
-    guild = bot.get_guild(guild_id) if guild_id else None
-    if guild is None:
-        return 400, "Unknown server.", None
-    if not _dashboard_can_manage_guild(guild.id, form, headers):
-        return 403, "You are not an admin for that server.", None
-    guild_state = application_system.get_guild_state(guild.id)
-    panels = guild_state.setdefault("panels", {})
-    notice = "Saved."
-
-    if action == "settings":
-        guild_state["panel_text"] = _form_value(form, "panel_text", application_system.DEFAULT_PANEL_TEXT)[:1000]
-        guild_state["log_channel_id"] = _parse_int_value(_form_value(form, "log_channel_id"))
-        guild_state["application_channel_id"] = _parse_int_value(_form_value(form, "application_channel_id"))
-    elif action == "post_panel":
-        channel_id = _parse_int_value(_form_value(form, "application_channel_id")) or int(guild_state.get("application_channel_id") or 0)
-        if not channel_id:
-            notice = "Choose an application panel channel first."
-        else:
-            notice = _run_dashboard_coro(_dashboard_post_application_panel(guild.id, channel_id))
-    elif action == "create_panel":
-        name = _form_value(form, "name")[:100]
-        panel_key = application_system.normalize_panel_key(name)
-        if not panel_key:
-            notice = "Panel name cannot be empty."
-        elif panel_key in panels:
-            notice = "That panel already exists."
-        else:
-            panels[panel_key] = {
-                "name": name,
-                "description": _form_value(form, "description", "Start this application.")[:100],
-                "questions": [],
-                "enabled": True,
-                "accepted_role_id": None,
-                "created_at": int(time.time()),
-                "created_by": "dashboard",
-            }
-            notice = f"Created panel {panel_key}."
-    elif action == "update_panel":
-        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
-        panel = panels.get(panel_key)
-        if not panel:
-            notice = "Unknown panel."
-        else:
-            panel["name"] = _form_value(form, "name", panel_key)[:100]
-            panel["description"] = _form_value(form, "description", "Start this application.")[:100]
-            panel["enabled"] = "enabled" in form
-            panel["accepted_role_id"] = _parse_int_value(_form_value(form, "accepted_role_id")) or None
-            notice = f"Updated panel {panel_key}."
-    elif action == "delete_panel":
-        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
-        if panel_key in panels:
-            del panels[panel_key]
-            notice = f"Deleted panel {panel_key}."
-        else:
-            notice = "Unknown panel."
-    elif action in {"add_question", "edit_question", "delete_question"}:
-        panel_key = application_system.normalize_panel_key(_form_value(form, "panel_key"))
-        panel = panels.get(panel_key)
-        if not panel:
-            notice = "Unknown panel."
-        else:
-            questions = panel.setdefault("questions", [])
-            question_number = max(1, _parse_int_value(_form_value(form, "question_number"), len(questions) + 1))
-            if action == "delete_question":
-                if 1 <= question_number <= len(questions):
-                    questions.pop(question_number - 1)
-                    notice = "Question deleted and questions were renumbered."
-                else:
-                    notice = "That question number does not exist."
-            else:
-                text = _form_value(form, "text")[:300]
-                if not text:
-                    notice = "Question cannot be empty."
-                else:
-                    choices = _form_value(form, "choices")
-                    parsed_choices = application_system.parse_question_choices(choices)
-                    if parsed_choices is not None and len(parsed_choices) == 1:
-                        notice = "Selection questions need at least 2 choices."
-                    elif action == "add_question":
-                        insert_index = min(max(0, question_number - 1), len(questions))
-                        questions.insert(insert_index, application_system.make_question_value(text, choices))
-                        notice = "Question added and questions were renumbered."
-                    elif 1 <= question_number <= len(questions):
-                        questions[question_number - 1] = application_system.make_question_value(text, choices, questions[question_number - 1])
-                        notice = "Question updated."
-                    else:
-                        notice = "That question number does not exist."
-    else:
-        notice = "Unknown dashboard action."
-
-    application_system.save_state()
-    return 302, _dashboard_url(guild.id, notice), None
-
-
-def _render_public_markdown_page(title: str, file_name: str) -> bytes:
-    file_path = os.path.join(os.path.dirname(__file__), file_name)
-    try:
-        with open(file_path, "r", encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
-    except OSError:
-        lines = [f"# {title}", "", "This page is not available right now."]
-
-    html_parts = []
-    list_open = False
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            if list_open:
-                html_parts.append("</ul>")
-                list_open = False
-            continue
-        if line.startswith("# "):
-            if list_open:
-                html_parts.append("</ul>")
-                list_open = False
-            html_parts.append(f"<h1>{escape(line[2:].strip())}</h1>")
-        elif line.startswith("## "):
-            if list_open:
-                html_parts.append("</ul>")
-                list_open = False
-            html_parts.append(f"<h2>{escape(line[3:].strip())}</h2>")
-        elif line.startswith("- "):
-            if not list_open:
-                html_parts.append("<ul>")
-                list_open = True
-            html_parts.append(f"<li>{escape(line[2:].strip())}</li>")
-        else:
-            if list_open:
-                html_parts.append("</ul>")
-                list_open = False
-            html_parts.append(f"<p>{escape(line)}</p>")
-    if list_open:
-        html_parts.append("</ul>")
-
-    content = "\n".join(html_parts)
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(title)} - Military Tycoon Dex</title>
-  <style>
-    :root {{ color-scheme: dark; --bg:#0b100d; --panel:#111812; --line:rgba(245,238,216,.16); --text:#f5eed8; --muted:#c7c0aa; --teal:#21ffd0; }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; min-height:100vh; background:radial-gradient(circle at 80% 0, rgba(33,255,208,.11), transparent 28%), linear-gradient(135deg, #07100c, #15160f 55%, #23190c); color:var(--text); font-family:Arial, Helvetica, sans-serif; }}
-    main {{ width:min(900px, calc(100% - 32px)); margin:0 auto; padding:46px 0 64px; }}
-    article {{ background:rgba(17,24,18,.84); border:1px solid var(--line); border-radius:10px; padding:clamp(20px, 4vw, 38px); box-shadow:0 24px 70px rgba(0,0,0,.34); }}
-    a {{ color:var(--teal); }}
-    h1 {{ font-size:clamp(34px, 6vw, 58px); margin:0 0 18px; }}
-    h2 {{ margin:28px 0 10px; }}
-    p, li {{ color:var(--muted); line-height:1.58; }}
-    .back {{ display:inline-flex; margin-bottom:18px; color:var(--teal); font-weight:900; text-decoration:none; }}
-  </style>
-</head>
-<body>
-  <main>
-    <a class="back" href="/">Back to website</a>
-    <article>{content}</article>
-  </main>
-</body>
-</html>"""
-    return html.encode("utf-8")
-
-
-class _WebsiteHandler(BaseHTTPRequestHandler):
-    def _send_body(self, status_code: int, body: bytes, content_type: str) -> None:
-        self.send_response(status_code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _redirect(
-        self,
-        location: str,
-        *,
-        set_token_cookie: Optional[str] = None,
-        set_session_cookie: Optional[str] = None,
-        clear_cookie: bool = False,
-    ) -> None:
-        self.send_response(302)
-        self.send_header("Location", location)
-        if set_token_cookie:
-            self.send_header(
-                "Set-Cookie",
-                f"{APPLICATION_DASHBOARD_COOKIE}={set_token_cookie}; Path=/applications; "
-                "HttpOnly; SameSite=Lax; Max-Age=2592000",
-            )
-        if set_session_cookie:
-            self.send_header(
-                "Set-Cookie",
-                f"{APPLICATION_DASHBOARD_SESSION_COOKIE}={set_session_cookie}; Path=/applications; "
-                "HttpOnly; SameSite=Lax; Max-Age=604800",
-            )
-        if clear_cookie:
-            self.send_header(
-                "Set-Cookie",
-                f"{APPLICATION_DASHBOARD_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
-            )
-            self.send_header(
-                "Set-Cookie",
-                f"{APPLICATION_DASHBOARD_SESSION_COOKIE}=; Path=/applications; HttpOnly; SameSite=Lax; Max-Age=0",
-            )
-        self.end_headers()
-
-    def do_GET(self):
-        parsed_path = urlparse(self.path)
-        params = parse_qs(parsed_path.query, keep_blank_values=True)
-
-        if parsed_path.path.startswith("/applications/logout"):
-            self._redirect("/applications", clear_cookie=True)
-            return
-
-        if parsed_path.path.startswith("/applications/login"):
-            login_url = _dashboard_discord_login_url()
-            if not login_url:
-                self._send_body(
-                    400,
-                    _render_dashboard_login("Discord login is not configured yet."),
-                    "text/html; charset=utf-8",
-                )
-                return
-            self._redirect(login_url)
-            return
-
-        if parsed_path.path.startswith("/applications/callback"):
-            status_code, result, session_cookie = _handle_dashboard_oauth_callback(params)
-            if status_code == 302:
-                self._redirect(result, set_session_cookie=session_cookie)
-                return
-            self._send_body(status_code, _render_dashboard_login(result), "text/html; charset=utf-8")
-            return
-
-        if parsed_path.path.startswith("/applications"):
-            if not _dashboard_authorized(params, self.headers):
-                body = _render_dashboard_login()
-                self._send_body(200, body, "text/html; charset=utf-8")
-                return
-
-            body = _render_application_dashboard(params, self.headers)
-            self._send_body(200, body, "text/html; charset=utf-8")
-            return
-
-        if self.path.startswith("/status"):
-            payload = _website_status_payload()
-            body = json.dumps(payload).encode("utf-8")
-            self._send_body(200, body, "application/json; charset=utf-8")
-            return
-
-        if self.path.startswith("/terms"):
-            self._send_body(200, _render_public_markdown_page("Terms of Service", "TERMS.md"), "text/html; charset=utf-8")
-            return
-
-        if self.path.startswith("/privacy"):
-            self._send_body(200, _render_public_markdown_page("Privacy Policy", "PRIVACY.md"), "text/html; charset=utf-8")
-            return
-
-        if self.path.startswith("/invite"):
-            invite_url = _bot_invite_url()
-            if not invite_url:
-                self.send_response(404)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"Invite URL is not configured yet.")
-                return
-            self.send_response(302)
-            self.send_header("Location", invite_url)
-            self.end_headers()
-            return
-
-        if self.path.startswith("/discord") or self.path.startswith("/server"):
-            if not SERVER_INVITE_URL:
-                self.send_response(404)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"Discord server URL is not configured yet.")
-                return
-            self.send_response(302)
-            self.send_header("Location", SERVER_INVITE_URL)
-            self.end_headers()
-            return
-
-        body = _render_website(self.headers)
-        self._send_body(200, body, "text/html; charset=utf-8")
-
-    def do_POST(self):
-        parsed_path = urlparse(self.path)
-        if not parsed_path.path.startswith("/applications"):
-            self._send_body(404, b"Not Found", "text/plain; charset=utf-8")
-            return
-
-        try:
-            content_length = min(int(self.headers.get("Content-Length", "0")), 262_144)
-        except ValueError:
-            content_length = 0
-        form = parse_qs(
-            self.rfile.read(content_length).decode("utf-8", errors="replace"),
-            keep_blank_values=True,
-        )
-        action = _form_value(form, "action")
-        if action != "login" and not _dashboard_authorized(form, self.headers):
-            body = _render_dashboard_login("Please log in again.")
-            self._send_body(401, body, "text/html; charset=utf-8")
-            return
-
-        status_code, result, token_cookie = _handle_application_dashboard_post(form, self.headers)
-        if status_code == 302:
-            self._redirect(result, set_token_cookie=token_cookie)
-            return
-
-        body = _render_dashboard_login(result)
-        self._send_body(status_code, body, "text/html; charset=utf-8")
-
-    def log_message(self, format, *args):
-        return
-
-
-def start_website_server():
-    port_value = os.getenv("PORT")
-    if not port_value:
-        return
-
-    try:
-        port = int(port_value)
-    except ValueError:
-        print(f"Invalid PORT value: {port_value}")
-        return
-
-    def _serve():
-        try:
-            server = HTTPServer(("0.0.0.0", port), _WebsiteHandler)
-            print(f"Website server listening on port {port}")
-            server.serve_forever()
-        except Exception as error:
-            print(f"Website server error: {error}")
-
-    Thread(target=_serve, daemon=True).start()
-
-
 async def set_ready_presence():
     try:
         await bot.change_presence(
@@ -7712,992 +2573,19 @@ async def sync_all_commands():
 register_trade_commands(bot)
 
 
-giveaway_group = app_commands.Group(name="giveaway", description="Create and manage giveaways")
-
-
-def giveaway_color_is_valid(value: Optional[str]) -> bool:
-    if not value:
-        return True
-    return parse_hex_color_value(value, None) is not None or value.strip().lower() in {"default", "none", "clear"}
-
-
-def giveaway_attachment_url(attachment: Optional[discord.Attachment]) -> str:
-    if attachment is None:
-        return ""
-    filename = str(attachment.filename or "").lower()
-    content_type = str(attachment.content_type or "").lower()
-    looks_like_image = content_type.startswith("image/") or filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
-    return attachment.url if looks_like_image and is_http_url(attachment.url) else ""
-
-
-async def ensure_giveaway_channel_permissions(
-    interaction: discord.Interaction,
-    target_channel: discord.abc.Messageable,
-) -> bool:
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return False
-    if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
-        await safe_send(interaction, "Choose a text channel for the giveaway.", ephemeral=True)
-        return False
-
-    guild_me = interaction.guild.me or interaction.guild.get_member(bot.user.id if bot.user else 0)
-    if guild_me and isinstance(target_channel, discord.TextChannel):
-        perms = target_channel.permissions_for(guild_me)
-        missing = []
-        if not perms.send_messages:
-            missing.append("Send Messages")
-        if not perms.embed_links:
-            missing.append("Embed Links")
-        if not perms.read_message_history:
-            missing.append("Read Message History")
-        if missing:
-            await safe_send(
-                interaction,
-                f"I need {', '.join(missing)} permission in {target_channel.mention}.",
-                ephemeral=True,
-            )
-            return False
-    return True
-
-
-async def get_giveaway_for_command(
-    interaction: discord.Interaction,
-    giveaway_id: str,
-) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return None, None
-    resolved_giveaway_id = find_giveaway_id(giveaway_id)
-    giveaway = load_giveaways().get(resolved_giveaway_id or "")
-    if not resolved_giveaway_id or not giveaway or int(giveaway.get("guild_id") or 0) != interaction.guild.id:
-        await safe_send(interaction, "Giveaway not found in this server.", ephemeral=True)
-        return None, None
-    return resolved_giveaway_id, giveaway
-
-
-async def require_giveaway_manager(interaction: discord.Interaction) -> bool:
-    if has_giveaway_manager_access(interaction):
-        return True
-    await safe_send(interaction, "You need Manage Server or a giveaway manager role to use this.", ephemeral=True)
-    return False
-
-
-async def require_giveaway_creator(interaction: discord.Interaction) -> bool:
-    if has_giveaway_creator_access(interaction):
-        return True
-    await safe_send(interaction, "You need Manage Server or a giveaway creator role to create giveaways.", ephemeral=True)
-    return False
-
-
-def apply_giveaway_optional_fields(
-    giveaway: Dict[str, Any],
-    *,
-    guild: Optional[discord.Guild] = None,
-    host: Optional[discord.Member] = None,
-    giveaway_create_message: Optional[str] = None,
-    giveaway_winners_role: Optional[discord.Role] = None,
-    giveaway_winners_dm_message: Optional[str] = None,
-    image: Optional[discord.Attachment] = None,
-    thumbnail: Optional[discord.Attachment] = None,
-    clear_image: Optional[bool] = None,
-    clear_thumbnail: Optional[bool] = None,
-    required_role: Optional[discord.Role] = None,
-    requirement_bypass_role: Optional[discord.Role] = None,
-    clear_requirements: Optional[bool] = None,
-    required_daily_messages: Optional[int] = None,
-    required_weekly_messages: Optional[int] = None,
-    required_monthly_messages: Optional[int] = None,
-    required_total_messages: Optional[int] = None,
-    color: Optional[str] = None,
-    end_color: Optional[str] = None,
-    extra_entries: Optional[str] = None,
-    clear_extra_entries: Optional[bool] = None,
-) -> Optional[str]:
-    if host is not None:
-        giveaway["host_id"] = host.id
-    if giveaway_create_message is not None:
-        giveaway["create_message"] = truncate(giveaway_create_message, 1500)
-    if giveaway_winners_role is not None:
-        giveaway["winner_role_id"] = giveaway_winners_role.id
-    if giveaway_winners_dm_message is not None:
-        giveaway["winner_dm_message"] = truncate(giveaway_winners_dm_message, 1500)
-    if clear_image:
-        giveaway["image_url"] = ""
-    if image is not None:
-        image_url = giveaway_attachment_url(image)
-        if not image_url:
-            return "Image must be a valid image upload (`png`, `jpg`, `gif`, or `webp`)."
-        giveaway["image_url"] = image_url
-    if clear_thumbnail:
-        giveaway["thumbnail_url"] = ""
-    if thumbnail is not None:
-        thumbnail_url = giveaway_attachment_url(thumbnail)
-        if not thumbnail_url:
-            return "Thumbnail must be a valid image upload (`png`, `jpg`, `gif`, or `webp`)."
-        giveaway["thumbnail_url"] = thumbnail_url
-    if clear_requirements:
-        giveaway["required_role_id"] = None
-        giveaway["requirement_bypass_role_id"] = None
-        giveaway["required_daily_messages"] = 0
-        giveaway["required_weekly_messages"] = 0
-        giveaway["required_monthly_messages"] = 0
-        giveaway["required_total_messages"] = 0
-    if required_role is not None:
-        giveaway["required_role_id"] = required_role.id
-    if requirement_bypass_role is not None:
-        giveaway["requirement_bypass_role_id"] = requirement_bypass_role.id
-    requirement_updates = {
-        "required_daily_messages": required_daily_messages,
-        "required_weekly_messages": required_weekly_messages,
-        "required_monthly_messages": required_monthly_messages,
-        "required_total_messages": required_total_messages,
-    }
-    for field_name, raw_value in requirement_updates.items():
-        if raw_value is None:
-            continue
-        if raw_value < 0:
-            return "Message requirements cannot be negative."
-        maximum = 10_000_000 if field_name == "required_total_messages" else 1_000_000
-        giveaway[field_name] = min(maximum, int(raw_value))
-    if color is not None:
-        if not giveaway_color_is_valid(color):
-            return "Color must be a hex color like `#3498db`, or `clear`."
-        giveaway["color"] = parse_hex_color_value(color, None)
-    if end_color is not None:
-        if not giveaway_color_is_valid(end_color):
-            return "End color must be a hex color like `#ff5555`, or `clear`."
-        giveaway["end_color"] = parse_hex_color_value(end_color, None)
-    if clear_extra_entries:
-        giveaway["extra_entries"] = {}
-    if extra_entries is not None:
-        parsed_entries = parse_role_entry_mapping(extra_entries, guild=guild)
-        if extra_entries.strip() and not parsed_entries:
-            return "Extra entries must use `@Role:2` or `Role Name:2`."
-        giveaway["extra_entries"] = parsed_entries
-    return None
-
-
-@giveaway_group.command(name="create", description="Create a giveaway")
-@app_commands.guild_only()
-@app_commands.describe(
-    duration="How long it runs, like 10m, 2h, 3d, or 1w",
-    winners="The number of winners for this giveaway",
-    prize="The prize for this giveaway",
-    channel="The channel this giveaway will be created in",
-    host="The visible host of this giveaway",
-    giveaway_create_message="Optional message to send after creating the giveaway",
-    giveaway_winners_role="The role the bot should give to winners",
-    giveaway_winners_dm_message="The message the bot should DM to winners. Supports {prize}, {user}, {guild}, {giveaway_id}",
-    image="Image upload shown at the bottom of the embed",
-    thumbnail="Thumbnail upload shown in the top right of the embed",
-    required_role="Role required to participate",
-    requirement_bypass_role="Role that bypasses requirements",
-    required_daily_messages="Messages required today",
-    required_weekly_messages="Messages required this week",
-    required_monthly_messages="Messages required this month",
-    required_total_messages="Messages required in total",
-    color="Active embed hex color, like #3498db",
-    end_color="Ended embed hex color, like #ff5555",
-    extra_entries="Role entry boosts like @Booster:2, Donator:4",
-)
-async def giveaway_create_slash(
-    interaction: discord.Interaction,
-    duration: str,
-    winners: app_commands.Range[int, 1, 20],
-    prize: str,
-    channel: Optional[discord.TextChannel] = None,
-    host: Optional[discord.Member] = None,
-    giveaway_create_message: Optional[str] = None,
-    giveaway_winners_role: Optional[discord.Role] = None,
-    giveaway_winners_dm_message: Optional[str] = None,
-    image: Optional[discord.Attachment] = None,
-    thumbnail: Optional[discord.Attachment] = None,
-    required_role: Optional[discord.Role] = None,
-    requirement_bypass_role: Optional[discord.Role] = None,
-    required_daily_messages: Optional[int] = None,
-    required_weekly_messages: Optional[int] = None,
-    required_monthly_messages: Optional[int] = None,
-    required_total_messages: Optional[int] = None,
-    color: Optional[str] = None,
-    end_color: Optional[str] = None,
-    extra_entries: Optional[str] = None,
-):
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-
-    if not await require_giveaway_creator(interaction):
-        return
-
-    duration_seconds = parse_giveaway_duration(duration)
-    if duration_seconds is None:
-        await safe_send(
-            interaction,
-            "Invalid duration. Use `10m`, `2h`, `3d`, or `1w` (minimum 1 minute, maximum 30 days).",
-            ephemeral=True,
-        )
-        return
-
-    target_channel = channel or interaction.channel
-    if not await ensure_giveaway_channel_permissions(interaction, target_channel):
-        return
-
-    giveaway_id = generate_giveaway_id()
-    now = int(time.time())
-    giveaway = {
-        "id": giveaway_id,
-        "guild_id": interaction.guild.id,
-        "channel_id": target_channel.id,
-        "message_id": 0,
-        "host_id": host.id if host else interaction.user.id,
-        "prize": truncate(prize.strip() or "Giveaway prize", 180),
-        "winners": int(winners),
-        "end_at": now + duration_seconds,
-        "created_at": now,
-        "participant_ids": [],
-        "participant_entries": {},
-        "forced_winner_id": None,
-        "ended": False,
-        "ended_at": 0,
-        "winner_ids": [],
-    }
-    field_error = apply_giveaway_optional_fields(
-        giveaway,
-        guild=interaction.guild,
-        host=host,
-        giveaway_create_message=giveaway_create_message,
-        giveaway_winners_role=giveaway_winners_role,
-        giveaway_winners_dm_message=giveaway_winners_dm_message,
-        image=image,
-        thumbnail=thumbnail,
-        required_role=required_role,
-        requirement_bypass_role=requirement_bypass_role,
-        required_daily_messages=required_daily_messages,
-        required_weekly_messages=required_weekly_messages,
-        required_monthly_messages=required_monthly_messages,
-        required_total_messages=required_total_messages,
-        color=color,
-        end_color=end_color,
-        extra_entries=extra_entries,
-    )
-    if field_error:
-        await safe_send(interaction, field_error, ephemeral=True)
-        return
-
-    giveaway_message = await target_channel.send(embed=build_giveaway_embed(giveaway), view=GiveawayView(giveaway_id))
-    giveaway["message_id"] = giveaway_message.id
-    giveaways = load_giveaways()
-    giveaways[giveaway_id] = giveaway
-    save_giveaways(giveaways)
-    register_giveaway_view(giveaway_id)
-    if giveaway.get("create_message"):
-        try:
-            await target_channel.send(giveaway_message_from_template(str(giveaway["create_message"]), giveaway, interaction.user.id))
-        except discord.HTTPException as error:
-            print(f"Could not send giveaway create message {giveaway_id}: {error}")
-
-    await safe_send(
-        interaction,
-        f"Giveaway created in {target_channel.mention}. ID: `{giveaway_id}`",
-        ephemeral=True,
-    )
-
-
-@giveaway_group.command(name="delete", description="Delete a giveaway")
-@app_commands.guild_only()
-@app_commands.describe(giveaway_id="The giveaway ID or message ID")
-async def giveaway_delete_slash(interaction: discord.Interaction, giveaway_id: str):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-
-    message = await fetch_giveaway_message(giveaway)
-    if message is not None:
-        try:
-            await message.delete()
-        except discord.HTTPException:
-            pass
-
-    giveaways = load_giveaways()
-    giveaways.pop(resolved_giveaway_id, None)
-    save_giveaways(giveaways)
-    REGISTERED_GIVEAWAY_VIEW_IDS.discard(resolved_giveaway_id)
-    await safe_send(interaction, f"Deleted giveaway `{resolved_giveaway_id}`.", ephemeral=True)
-
-
-@giveaway_group.command(name="edit", description="Edit a giveaway")
-@app_commands.guild_only()
-@app_commands.describe(
-    giveaway_id="The giveaway ID or message ID",
-    prize="New prize",
-    duration="New duration from now, like 1h or 3d",
-    winners="New number of winners",
-    channel="Move the giveaway to a different text channel",
-    image="New image upload",
-    thumbnail="New thumbnail upload",
-    clear_image="Remove the giveaway image",
-    clear_thumbnail="Remove the giveaway thumbnail",
-    color="New active hex color, or clear",
-    end_color="New ended hex color, or clear",
-    required_role="New required role",
-    requirement_bypass_role="New bypass role",
-    clear_requirements="Clear role and message requirements",
-    required_daily_messages="Messages required today. Use 0 to clear",
-    required_weekly_messages="Messages required this week. Use 0 to clear",
-    required_monthly_messages="Messages required this month. Use 0 to clear",
-    required_total_messages="Messages required total. Use 0 to clear",
-    giveaway_winners_role="New winner role",
-    giveaway_winners_dm_message="New winner DM message",
-    extra_entries="New role entry boosts like @Booster:2, Donator:4",
-    clear_extra_entries="Remove all role extra entries",
-)
-async def giveaway_edit_slash(
-    interaction: discord.Interaction,
-    giveaway_id: str,
-    prize: Optional[str] = None,
-    duration: Optional[str] = None,
-    winners: Optional[int] = None,
-    channel: Optional[discord.TextChannel] = None,
-    image: Optional[discord.Attachment] = None,
-    thumbnail: Optional[discord.Attachment] = None,
-    clear_image: Optional[bool] = None,
-    clear_thumbnail: Optional[bool] = None,
-    color: Optional[str] = None,
-    end_color: Optional[str] = None,
-    required_role: Optional[discord.Role] = None,
-    requirement_bypass_role: Optional[discord.Role] = None,
-    clear_requirements: Optional[bool] = None,
-    required_daily_messages: Optional[int] = None,
-    required_weekly_messages: Optional[int] = None,
-    required_monthly_messages: Optional[int] = None,
-    required_total_messages: Optional[int] = None,
-    giveaway_winners_role: Optional[discord.Role] = None,
-    giveaway_winners_dm_message: Optional[str] = None,
-    extra_entries: Optional[str] = None,
-    clear_extra_entries: Optional[bool] = None,
-):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-    if giveaway.get("ended"):
-        await safe_send(interaction, "This giveaway already ended. Use `/giveaway reroll` for ended giveaways.", ephemeral=True)
-        return
-
-    if prize is not None:
-        giveaway["prize"] = truncate(prize.strip() or "Giveaway prize", 180)
-    if duration is not None:
-        duration_seconds = parse_giveaway_duration(duration)
-        if duration_seconds is None:
-            await safe_send(interaction, "Invalid duration. Use `10m`, `2h`, `3d`, or `1w`.", ephemeral=True)
-            return
-        giveaway["end_at"] = int(time.time()) + duration_seconds
-    if winners is not None:
-        if winners < 1 or winners > 20:
-            await safe_send(interaction, "Winner count must be between 1 and 20.", ephemeral=True)
-            return
-        giveaway["winners"] = int(winners)
-
-    field_error = apply_giveaway_optional_fields(
-        giveaway,
-        guild=interaction.guild,
-        giveaway_winners_role=giveaway_winners_role,
-        giveaway_winners_dm_message=giveaway_winners_dm_message,
-        image=image,
-        thumbnail=thumbnail,
-        clear_image=clear_image,
-        clear_thumbnail=clear_thumbnail,
-        required_role=required_role,
-        requirement_bypass_role=requirement_bypass_role,
-        clear_requirements=clear_requirements,
-        required_daily_messages=required_daily_messages,
-        required_weekly_messages=required_weekly_messages,
-        required_monthly_messages=required_monthly_messages,
-        required_total_messages=required_total_messages,
-        color=color,
-        end_color=end_color,
-        extra_entries=extra_entries,
-        clear_extra_entries=clear_extra_entries,
-    )
-    if field_error:
-        await safe_send(interaction, field_error, ephemeral=True)
-        return
-
-    old_message = await fetch_giveaway_message(giveaway)
-    target_channel = channel
-    if target_channel is not None and target_channel.id != int(giveaway.get("channel_id") or 0):
-        if not await ensure_giveaway_channel_permissions(interaction, target_channel):
-            return
-        new_message = await target_channel.send(embed=build_giveaway_embed(giveaway), view=GiveawayView(resolved_giveaway_id))
-        giveaway["channel_id"] = target_channel.id
-        giveaway["message_id"] = new_message.id
-        if old_message is not None:
-            try:
-                await old_message.delete()
-            except discord.HTTPException:
-                pass
-        REGISTERED_GIVEAWAY_VIEW_IDS.discard(resolved_giveaway_id)
-
-    giveaways = load_giveaways()
-    giveaways[resolved_giveaway_id] = giveaway
-    save_giveaways(giveaways)
-    register_giveaway_view(resolved_giveaway_id)
-    await update_giveaway_message(resolved_giveaway_id)
-    await safe_send(interaction, f"Edited giveaway `{resolved_giveaway_id}`.", ephemeral=True)
-
-
-@giveaway_group.command(name="end", description="End a giveaway early")
-@app_commands.guild_only()
-@app_commands.describe(giveaway_id="The giveaway ID or message ID")
-async def giveaway_end_slash(interaction: discord.Interaction, giveaway_id: str):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-
-    success, message = await end_giveaway(resolved_giveaway_id, manual=False)
-    await safe_send(interaction, message if success else f"Could not end giveaway: {message}", ephemeral=True)
-
-
-@giveaway_group.command(name="fix", description="Fix a giveaway if it fails to update")
-@app_commands.guild_only()
-@app_commands.describe(giveaway_id="The giveaway ID or message ID")
-async def giveaway_fix_slash(interaction: discord.Interaction, giveaway_id: str):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-
-    if not giveaway.get("ended"):
-        register_giveaway_view(resolved_giveaway_id)
-    updated = await update_giveaway_message(resolved_giveaway_id)
-    await safe_send(
-        interaction,
-        f"Giveaway `{resolved_giveaway_id}` fixed." if updated else "I could not fetch the giveaway message.",
-        ephemeral=True,
-    )
-
-
-@giveaway_group.command(name="reroll", description="Reroll winners for an ended giveaway")
-@app_commands.guild_only()
-@app_commands.describe(giveaway_id="The giveaway ID or message ID")
-async def giveaway_reroll_slash(interaction: discord.Interaction, giveaway_id: str):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-    if not giveaway.get("ended"):
-        await safe_send(interaction, "This giveaway has not ended yet.", ephemeral=True)
-        return
-
-    old_winners = set(_coerce_user_id_list(giveaway.get("winner_ids")))
-    new_winners = choose_giveaway_winners(giveaway, exclude_user_ids=old_winners, respect_forced_winner=False)
-    if not new_winners:
-        new_winners = choose_giveaway_winners(giveaway, respect_forced_winner=False)
-    giveaway["winner_ids"] = new_winners
-    giveaway["ended_at"] = int(time.time())
-    giveaways = load_giveaways()
-    giveaways[resolved_giveaway_id] = giveaway
-    save_giveaways(giveaways)
-    await update_giveaway_message(resolved_giveaway_id)
-    await deliver_giveaway_winner_rewards(giveaway, new_winners)
-
-    message = await fetch_giveaway_message(giveaway)
-    winner_text = ", ".join(f"<@{user_id}>" for user_id in new_winners) if new_winners else "No valid entries"
-    if message is not None:
-        try:
-            await message.channel.send(f"\U0001F389 Giveaway **{giveaway['prize']}** rerolled. New winner(s): {winner_text}")
-        except discord.HTTPException:
-            pass
-    await safe_send(interaction, f"Rerolled giveaway `{resolved_giveaway_id}`.", ephemeral=True)
-
-
-@giveaway_group.command(name="remove-participant", description="Remove a participant from a giveaway")
-@app_commands.guild_only()
-@app_commands.describe(giveaway_id="The giveaway ID or message ID", user="The participant to remove")
-async def giveaway_remove_participant_slash(
-    interaction: discord.Interaction,
-    giveaway_id: str,
-    user: discord.Member,
-):
-    if not await require_giveaway_manager(interaction):
-        return
-
-    resolved_giveaway_id, giveaway = await get_giveaway_for_command(interaction, giveaway_id)
-    if not resolved_giveaway_id or not giveaway:
-        return
-
-    removed, _ = remove_giveaway_participant(resolved_giveaway_id, user.id)
-    if not removed:
-        await safe_send(interaction, f"{user.mention} is not participating in that giveaway.", ephemeral=True)
-        return
-
-    await update_giveaway_message(resolved_giveaway_id)
-    await safe_send(interaction, f"Removed {user.mention} from giveaway `{resolved_giveaway_id}`.", ephemeral=True)
-
-
-async def update_giveaway_role_setting(
-    interaction: discord.Interaction,
-    setting_key: str,
-    action: str,
-    role: Optional[discord.Role],
-) -> None:
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-    if not interaction.permissions.manage_guild and not interaction.permissions.administrator:
-        await safe_send(interaction, "Only server admins can edit giveaway role settings.", ephemeral=True)
-        return
-    if action != "clear" and role is None:
-        await safe_send(interaction, "Choose a role, or use `clear`.", ephemeral=True)
-        return
-
-    settings = load_giveaway_settings()
-    guild_settings = get_giveaway_guild_settings(interaction.guild.id)
-    role_ids = _coerce_role_id_list(guild_settings.get(setting_key))
-    if action == "clear":
-        role_ids = []
-    elif role is not None and action == "add":
-        if role.id not in role_ids:
-            role_ids.append(role.id)
-    elif role is not None and action == "remove":
-        role_ids = [role_id for role_id in role_ids if role_id != role.id]
-    else:
-        await safe_send(interaction, "Unknown action.", ephemeral=True)
-        return
-
-    guild_settings[setting_key] = role_ids
-    settings.setdefault("guilds", {})[str(interaction.guild.id)] = guild_settings
-    save_giveaway_settings(settings)
-    role_mentions = ", ".join(f"<@&{role_id}>" for role_id in role_ids) or "none"
-    await safe_send(interaction, f"Updated {setting_key.replace('_', ' ')}: {role_mentions}", ephemeral=True)
-
-
-@giveaway_group.command(name="creator-roles", description="Set roles that can create giveaways")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(action="Add, remove, or clear creator roles", role="The role to add or remove")
-@app_commands.choices(
-    action=[
-        app_commands.Choice(name="add", value="add"),
-        app_commands.Choice(name="remove", value="remove"),
-        app_commands.Choice(name="clear", value="clear"),
-    ]
-)
-async def giveaway_creator_roles_slash(
-    interaction: discord.Interaction,
-    action: app_commands.Choice[str],
-    role: Optional[discord.Role] = None,
-):
-    await update_giveaway_role_setting(interaction, "creator_role_ids", action.value, role)
-
-
-@giveaway_group.command(name="manager-roles", description="Set roles that can use every giveaway command")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(action="Add, remove, or clear manager roles", role="The role to add or remove")
-@app_commands.choices(
-    action=[
-        app_commands.Choice(name="add", value="add"),
-        app_commands.Choice(name="remove", value="remove"),
-        app_commands.Choice(name="clear", value="clear"),
-    ]
-)
-async def giveaway_manager_roles_slash(
-    interaction: discord.Interaction,
-    action: app_commands.Choice[str],
-    role: Optional[discord.Role] = None,
-):
-    await update_giveaway_role_setting(interaction, "manager_role_ids", action.value, role)
-
-
-bot.tree.add_command(giveaway_group)
-
-
-application_group = app_commands.Group(name="application", description="Manage application panels")
-
-
-async def require_application_slash_admin(interaction: discord.Interaction) -> bool:
-    if interaction.guild and isinstance(interaction.user, discord.Member) and (
-        interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator
-    ):
-        return True
-    await safe_send(interaction, "You need Manage Server permission to manage applications.", ephemeral=True)
-    return False
-
-
-async def refresh_application_panel_after_slash(interaction: discord.Interaction) -> None:
-    if interaction.guild:
-        try:
-            await application_system.refresh_application_message(interaction.guild)
-        except Exception as error:
-            print(f"Could not refresh application panel after slash edit: {error}")
-
-
-async def application_panel_autocomplete(interaction: discord.Interaction, current: str):
-    if not interaction.guild_id:
-        return []
-    current_lower = current.lower()
-    panels = application_system.get_guild_state(interaction.guild_id).get("panels", {})
-    choices = []
-    for panel_key, panel in sorted(panels.items()):
-        label = str(panel.get("name") or panel_key)
-        if current_lower and current_lower not in panel_key.lower() and current_lower not in label.lower():
-            continue
-        choices.append(app_commands.Choice(name=label[:100], value=panel_key))
-        if len(choices) >= 25:
-            break
-    return choices
-
-
-@application_group.command(name="panel", description="Post or refresh the application dropdown panel")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel="The channel where the application panel should be posted")
-async def application_panel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not await require_application_slash_admin(interaction):
-        return
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-    result = await _dashboard_post_application_panel(interaction.guild.id, channel.id)
-    await safe_send(interaction, result, ephemeral=True)
-
-
-@application_group.command(name="log", description="Set the application review/log channel")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel="The channel where submitted applications should be logged")
-async def application_log_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not await require_application_slash_admin(interaction):
-        return
-    missing_permissions = application_system.bot_channel_permission_errors(channel)
-    if missing_permissions:
-        await safe_send(
-            interaction,
-            f"I cannot post logs in {channel.mention}. Missing: {', '.join(missing_permissions)}.",
-            ephemeral=True,
-        )
-        return
-    guild_state = application_system.get_guild_state(interaction.guild.id)
-    guild_state["log_channel_id"] = channel.id
-    application_system.save_state()
-    await safe_send(interaction, f"Application log channel set to {channel.mention}.", ephemeral=True)
-
-
-@application_group.command(name="text", description="Set the text shown above the application dropdown")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(text="Panel text, like 'Select an option to begin!'")
-async def application_text_slash(interaction: discord.Interaction, text: str):
-    if not await require_application_slash_admin(interaction):
-        return
-    guild_state = application_system.get_guild_state(interaction.guild.id)
-    guild_state["panel_text"] = truncate(text.strip() or application_system.DEFAULT_PANEL_TEXT, 1000)
-    application_system.save_state()
-    await refresh_application_panel_after_slash(interaction)
-    await safe_send(interaction, "Application panel text updated.", ephemeral=True)
-
-
-@application_group.command(name="create-panel", description="Create an application dropdown option")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(name="Panel name, like Moderation team", description="Short dropdown description")
-async def application_create_panel_slash(
-    interaction: discord.Interaction,
-    name: str,
-    description: Optional[str] = None,
-):
-    if not await require_application_slash_admin(interaction):
-        return
-    guild_state = application_system.get_guild_state(interaction.guild.id)
-    panels = guild_state.setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(name)
-    if not panel_key:
-        await safe_send(interaction, "Panel name cannot be empty.", ephemeral=True)
-        return
-    if panel_key in panels:
-        await safe_send(interaction, "That panel already exists.", ephemeral=True)
-        return
-    panels[panel_key] = {
-        "name": truncate(name.strip(), 100),
-        "description": truncate(description or "Start this application.", 100),
-        "questions": [],
-        "enabled": True,
-        "accepted_role_id": None,
-        "created_at": int(time.time()),
-        "created_by": str(interaction.user.id),
-    }
-    application_system.save_state()
-    await refresh_application_panel_after_slash(interaction)
-    await safe_send(interaction, f"Created application panel `{panel_key}`.", ephemeral=True)
-
-
-@application_group.command(name="edit-panel", description="Edit an application dropdown option")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(
-    panel="Panel to edit",
-    name="New display name",
-    description="New dropdown description",
-    enabled="Whether users can choose this panel",
-    accepted_role="Role given when this application is accepted",
-)
-async def application_edit_panel_slash(
-    interaction: discord.Interaction,
-    panel: str,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    enabled: Optional[bool] = None,
-    accepted_role: Optional[discord.Role] = None,
-):
-    if not await require_application_slash_admin(interaction):
-        return
-    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(panel)
-    panel_data = panels.get(panel_key)
-    if not panel_data:
-        await safe_send(interaction, "Unknown panel.", ephemeral=True)
-        return
-    if accepted_role is not None:
-        allowed, reason = application_system.bot_can_manage_role(interaction.guild, accepted_role)
-        if not allowed:
-            await safe_send(interaction, f"I cannot give that role: {reason}.", ephemeral=True)
-            return
-        panel_data["accepted_role_id"] = accepted_role.id
-    if name is not None:
-        panel_data["name"] = truncate(name.strip() or panel_key, 100)
-    if description is not None:
-        panel_data["description"] = truncate(description.strip() or "Start this application.", 100)
-    if enabled is not None:
-        panel_data["enabled"] = bool(enabled)
-    application_system.save_state()
-    await refresh_application_panel_after_slash(interaction)
-    await safe_send(interaction, f"Updated application panel `{panel_key}`.", ephemeral=True)
-
-
-@application_edit_panel_slash.autocomplete("panel")
-async def application_edit_panel_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-@application_group.command(name="delete-panel", description="Delete an application dropdown option")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(panel="Panel to delete")
-async def application_delete_panel_slash(interaction: discord.Interaction, panel: str):
-    if not await require_application_slash_admin(interaction):
-        return
-    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(panel)
-    if panel_key not in panels:
-        await safe_send(interaction, "Unknown panel.", ephemeral=True)
-        return
-    panels.pop(panel_key, None)
-    application_system.save_state()
-    await refresh_application_panel_after_slash(interaction)
-    await safe_send(interaction, f"Deleted application panel `{panel_key}`.", ephemeral=True)
-
-
-@application_delete_panel_slash.autocomplete("panel")
-async def application_delete_panel_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-async def upsert_application_question(
-    interaction: discord.Interaction,
-    panel: str,
-    question_number: int,
-    text: str,
-    choices: Optional[str],
-    *,
-    edit: bool,
-) -> None:
-    if not await require_application_slash_admin(interaction):
-        return
-    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(panel)
-    panel_data = panels.get(panel_key)
-    if not panel_data:
-        await safe_send(interaction, "Unknown panel.", ephemeral=True)
-        return
-    questions = panel_data.setdefault("questions", [])
-    question_number = max(1, int(question_number))
-    parsed_choices = application_system.parse_question_choices(choices)
-    if parsed_choices is not None and len(parsed_choices) == 1:
-        await safe_send(interaction, "Selection questions need at least 2 choices. Use `yes|no` or leave choices empty.", ephemeral=True)
-        return
-    clean_text = text.strip()
-    if not clean_text:
-        await safe_send(interaction, "Question text cannot be empty.", ephemeral=True)
-        return
-    if edit:
-        if question_number > len(questions):
-            await safe_send(interaction, "That question number does not exist.", ephemeral=True)
-            return
-        questions[question_number - 1] = application_system.make_question_value(
-            clean_text,
-            choices,
-            questions[question_number - 1],
-        )
-        result = "Question updated."
-    else:
-        insert_index = min(max(0, question_number - 1), len(questions))
-        questions.insert(insert_index, application_system.make_question_value(clean_text, choices))
-        result = "Question added and questions were renumbered."
-    application_system.save_state()
-    await safe_send(interaction, result, ephemeral=True)
-
-
-@application_group.command(name="add-question", description="Add a text or dropdown question to a panel")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(
-    panel="Panel to edit",
-    question_number="Where the question should be inserted",
-    text="Question text",
-    choices="Optional dropdown choices separated by |, like yes|no",
-)
-async def application_add_question_slash(
-    interaction: discord.Interaction,
-    panel: str,
-    question_number: int,
-    text: str,
-    choices: Optional[str] = None,
-):
-    await upsert_application_question(interaction, panel, question_number, text, choices, edit=False)
-
-
-@application_add_question_slash.autocomplete("panel")
-async def application_add_question_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-@application_group.command(name="edit-question", description="Edit a text or dropdown question")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(
-    panel="Panel to edit",
-    question_number="Question number to edit",
-    text="New question text",
-    choices="Optional dropdown choices separated by |, or text/clear for text answer",
-)
-async def application_edit_question_slash(
-    interaction: discord.Interaction,
-    panel: str,
-    question_number: int,
-    text: str,
-    choices: Optional[str] = None,
-):
-    await upsert_application_question(interaction, panel, question_number, text, choices, edit=True)
-
-
-@application_edit_question_slash.autocomplete("panel")
-async def application_edit_question_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-@application_group.command(name="delete-question", description="Delete a question and renumber the rest")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(panel="Panel to edit", question_number="Question number to delete")
-async def application_delete_question_slash(interaction: discord.Interaction, panel: str, question_number: int):
-    if not await require_application_slash_admin(interaction):
-        return
-    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(panel)
-    panel_data = panels.get(panel_key)
-    if not panel_data:
-        await safe_send(interaction, "Unknown panel.", ephemeral=True)
-        return
-    questions = panel_data.setdefault("questions", [])
-    if question_number < 1 or question_number > len(questions):
-        await safe_send(interaction, "That question number does not exist.", ephemeral=True)
-        return
-    questions.pop(question_number - 1)
-    application_system.save_state()
-    await safe_send(interaction, "Question deleted and questions were renumbered.", ephemeral=True)
-
-
-@application_delete_question_slash.autocomplete("panel")
-async def application_delete_question_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-@application_group.command(name="accepted-role", description="Set or clear the role given when a panel is accepted")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(panel="Panel to edit", role="Accepted role. Leave empty to clear it")
-async def application_accepted_role_slash(
-    interaction: discord.Interaction,
-    panel: str,
-    role: Optional[discord.Role] = None,
-):
-    if not await require_application_slash_admin(interaction):
-        return
-    panels = application_system.get_guild_state(interaction.guild.id).setdefault("panels", {})
-    panel_key = application_system.normalize_panel_key(panel)
-    panel_data = panels.get(panel_key)
-    if not panel_data:
-        await safe_send(interaction, "Unknown panel.", ephemeral=True)
-        return
-    if role is None:
-        panel_data["accepted_role_id"] = None
-        result = "Accepted role cleared."
-    else:
-        allowed, reason = application_system.bot_can_manage_role(interaction.guild, role)
-        if not allowed:
-            await safe_send(interaction, f"I cannot give that role: {reason}.", ephemeral=True)
-            return
-        panel_data["accepted_role_id"] = role.id
-        result = f"Accepted role set to {role.mention}."
-    application_system.save_state()
-    await safe_send(interaction, result, ephemeral=True)
-
-
-@application_accepted_role_slash.autocomplete("panel")
-async def application_accepted_role_autocomplete(interaction: discord.Interaction, current: str):
-    return await application_panel_autocomplete(interaction, current)
-
-
-bot.tree.add_command(application_group)
-
-
 @bot.tree.command(name="help", description="Show MT vehicle bot commands")
 async def help_slash(interaction: discord.Interaction):
-    await safe_send(
-        interaction,
-        embed=build_help_embed(include_bot_admin=interaction.user.id in load_admin_user_ids()),
-        ephemeral=True,
-    )
+    await safe_send(interaction, build_help_message(), ephemeral=True)
 
 
-@bot.tree.command(name="about", description="Show bot info, stats, and links")
-async def about_slash(interaction: discord.Interaction):
-    await safe_send(interaction, embed=build_about_embed())
-
-
-@bot.tree.command(name="leaderboard", description="Show vehicle and coin leaderboards")
+@bot.tree.command(name="leaderboard", description="Show who owns the most vehicles")
 @app_commands.guild_only()
 async def leaderboard_slash(interaction: discord.Interaction):
     if not await safe_defer(interaction):
         return
 
-    view = LeaderboardView(interaction.user, "vehicles")
-    embed = await create_leaderboard_embed(interaction.guild, interaction.user.id, "vehicles")
-    await safe_send(interaction, embed=embed, view=view)
+    embed = await create_leaderboard_embed(interaction.guild, interaction.user.id)
+    await safe_send(interaction, embed=embed)
 
 @bot.tree.command(name="show", description="Show a vehicle's picture and rarity")
 @app_commands.describe(vehicle_name="The name of the vehicle to show")
@@ -8713,13 +2601,6 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
         return
 
     vehicle_data = vehicles[matched_vehicle]
-    if not _vehicle_is_showable(vehicle_data):
-        await interaction.response.send_message(
-            "This vehicle has not been released yet.",
-            ephemeral=True,
-        )
-        return
-
     rarity = str(vehicle_data.get("rarity", "common")).lower()
     local_path = vehicle_data.get("local_path")
     image_url = vehicle_data.get("url")
@@ -8753,7 +2634,7 @@ async def show_vehicle(interaction: discord.Interaction, vehicle_name: str):
 async def show_vehicle_autocomplete(interaction: discord.Interaction, current: str):
     vehicles = get_vehicle_map()
     current_lower = current.lower()
-    vehicle_names = sorted(name for name, data in vehicles.items() if _vehicle_is_showable(data))
+    vehicle_names = sorted(vehicles.keys())
 
     return [
         app_commands.Choice(name=name.replace("-", "_"), value=name)
@@ -8798,28 +2679,6 @@ async def dexchannel_slash(interaction: discord.Interaction, channel: discord.Te
     await safe_send(interaction, f"Dex channel set to {channel.mention}.", ephemeral=True)
 
 
-@bot.tree.command(name="botcomment", description="Set whether wrong vehicle-name comments are public")
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(public="True shows wrong-name comments to everyone. False shows them only to the guesser")
-async def botcomment_slash(interaction: discord.Interaction, public: bool):
-    if not interaction.guild:
-        await safe_send(interaction, "This command can only be used in a server.", ephemeral=True)
-        return
-
-    if not interaction.permissions.manage_guild:
-        await safe_send(interaction, "Only server admins can use this command.", ephemeral=True)
-        return
-
-    set_guild_bool_setting(interaction.guild.id, "bot_comment_public", public)
-    visibility_text = "everyone" if public else "only the user who guessed"
-    await safe_send(
-        interaction,
-        f"Wrong-name comments will now be shown to **{visibility_text}**.",
-        ephemeral=True,
-    )
-
-
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     command_name = interaction.command.name if interaction.command else "unknown"
@@ -8833,13 +2692,11 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
-    record_guild_message_stat(message)
 
     parts = message.content.split()
     command = parts[0].lower() if parts else ""
 
     if command == "!help":
-        await message.channel.send("Use `/help` for the command list.")
         return
 
     if command in {"!permadd", "!permremove"}:
@@ -8892,95 +2749,6 @@ async def on_message(message: discord.Message):
             await message.channel.send(page)
         return
 
-    if command == "!vehicles":
-        if not has_admin_access(message):
-            return
-
-        vehicles = get_vehicle_map()
-        total_vehicle_count, fresh_vehicle_count = get_global_inventory_totals(vehicles)
-        await message.channel.send(
-            "**Vehicle totals**\n"
-            f"Total vehicles: **{format_count(total_vehicle_count)}**\n"
-            f"Fresh vehicles: **{format_count(fresh_vehicle_count)}**"
-        )
-        return
-
-    if command == "!check":
-        if not has_admin_access(message):
-            return
-
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.channel.send("Usage: `!check <message_id>`")
-            return
-
-        checked_message_id = int(parts[1])
-        vehicle_name = await resolve_spawn_message_vehicle_name(message, checked_message_id)
-        if vehicle_name:
-            await message.channel.send(vehicle_name)
-        else:
-            await message.channel.send("I could not find a saved spawn for that message ID.")
-        return
-
-    if command == "!winner":
-        if not has_admin_access(message):
-            return
-
-        try:
-            await message.delete()
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            pass
-
-        async def send_winner_notice(text: str) -> None:
-            try:
-                await message.author.send(text)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
-        if len(parts) != 3:
-            await send_winner_notice("Usage: `!winner giveaway_id user_id`")
-            return
-
-        resolved_giveaway_id = find_giveaway_id(parts[1])
-        giveaways = load_giveaways()
-        giveaway = giveaways.get(resolved_giveaway_id or "")
-        if not resolved_giveaway_id or not giveaway:
-            await send_winner_notice("Giveaway not found.")
-            return
-
-        if message.guild and int(giveaway.get("guild_id") or 0) != message.guild.id:
-            await send_winner_notice("That giveaway belongs to another server.")
-            return
-
-        user_id_match = DIGIT_ID_RE.search(parts[2])
-        if not user_id_match:
-            await send_winner_notice("Could not find a user ID.")
-            return
-
-        forced_winner_id = int(user_id_match.group(1))
-        participant_ids = _coerce_user_id_list(giveaway.get("participant_ids"))
-        if forced_winner_id not in participant_ids:
-            participant_ids.append(forced_winner_id)
-
-        giveaway["participant_ids"] = participant_ids
-        giveaway["forced_winner_id"] = forced_winner_id
-        if giveaway.get("ended"):
-            existing_winners = [
-                user_id
-                for user_id in _coerce_user_id_list(giveaway.get("winner_ids"))
-                if user_id != forced_winner_id
-            ]
-            giveaway["winner_ids"] = [forced_winner_id, *existing_winners][
-                : min(20, max(1, _coerce_non_negative_int(giveaway.get("winners", 1))))
-            ]
-
-        giveaways[resolved_giveaway_id] = giveaway
-        save_giveaways(giveaways)
-        await update_giveaway_message(resolved_giveaway_id)
-        await send_winner_notice(
-            f"Winner override saved for giveaway `{resolved_giveaway_id}`: <@{forced_winner_id}>"
-        )
-        return
-
     if command in {"!catalogdebug", "!vehicledebug"}:
         if not has_admin_access(message):
             return
@@ -9011,38 +2779,37 @@ async def on_message(message: discord.Message):
             return
 
         forced_fresh = None
-        forced_rarity = None
+        force_special = False
         testspawn_usage = (
             "Usage: `!testspawn`, `!testspawn true|false`, "
-            "or `!testspawn rarity [true|false]`\n"
-            "Rarities: art, special, le, exotic, legendary, epic, rare, common"
+            "or `!testspawn special [true|false]`"
         )
         testspawn_args = [part.lower() for part in parts[1:]]
         if len(testspawn_args) > 2:
             await message.channel.send(testspawn_usage)
             return
 
-        for testspawn_arg in testspawn_args:
-            parsed_fresh = parse_bool_true_false(testspawn_arg)
-            if parsed_fresh is not None:
-                if forced_fresh is not None:
+        if testspawn_args:
+            if testspawn_args[0] == "special":
+                force_special = True
+                if len(testspawn_args) == 2:
+                    parsed_fresh = parse_bool_true_false(testspawn_args[1])
+                    if parsed_fresh is None:
+                        await message.channel.send(testspawn_usage)
+                        return
+                    forced_fresh = parsed_fresh
+            else:
+                if len(testspawn_args) != 1:
+                    await message.channel.send(testspawn_usage)
+                    return
+
+                parsed_fresh = parse_bool_true_false(testspawn_args[0])
+                if parsed_fresh is None:
                     await message.channel.send(testspawn_usage)
                     return
                 forced_fresh = parsed_fresh
-                continue
 
-            parsed_rarity = parse_testspawn_rarity(testspawn_arg)
-            if parsed_rarity:
-                if forced_rarity is not None:
-                    await message.channel.send(testspawn_usage)
-                    return
-                forced_rarity = parsed_rarity
-                continue
-
-            await message.channel.send(testspawn_usage)
-            return
-
-        rarity_weights = {forced_rarity: 1} if forced_rarity else None
+        rarity_weights = {"specials": 1} if force_special else None
         vehicles = get_vehicle_map()
         spawned = await spawn_vehicle(
             vehicles,
@@ -9052,23 +2819,22 @@ async def on_message(message: discord.Message):
             rarity_weights=rarity_weights,
         )
         if spawned:
-            details = []
-            if forced_rarity:
-                details.append(f"rarity: {display_rarity_name(forced_rarity)}")
-            if forced_fresh is not None:
-                details.append(f"fresh forced: {'true' if forced_fresh else 'false'}")
-            if details:
+            if force_special and forced_fresh is not None:
                 await message.channel.send(
-                    f"Test spawn sent successfully ({', '.join(details)})."
+                    "Special test spawn sent successfully "
+                    f"(fresh forced: {'true' if forced_fresh else 'false'})."
+                )
+            elif force_special:
+                await message.channel.send("Special test spawn sent successfully.")
+            elif forced_fresh is not None:
+                await message.channel.send(
+                    f"Test spawn sent successfully (fresh forced: {'true' if forced_fresh else 'false'})."
                 )
             else:
                 await message.channel.send("Test spawn sent successfully.")
         else:
-            if forced_rarity:
-                await message.channel.send(
-                    f"{display_rarity_name(forced_rarity)} test spawn failed. "
-                    "Check vehicle data, images, and spawnable settings for that rarity."
-                )
+            if force_special:
+                await message.channel.send("Special test spawn failed. Check special vehicle data and images.")
                 return
             await message.channel.send("Test spawn failed. Check channel permissions and vehicle data.")
         return
@@ -9108,35 +2874,6 @@ async def on_message(message: discord.Message):
         if spawned_count <= 0:
             await message.channel.send("Event spawn failed. Check channel permissions and vehicle data.")
             return
-        return
-
-    if command == "!addmoney":
-        if not has_admin_access(message):
-            return
-
-        if not message.guild:
-            await message.channel.send("This command can only be used in a server.")
-            return
-
-        if len(parts) < 3:
-            await message.channel.send("Usage: `!addmoney @user amount`")
-            return
-
-        target_user = await resolve_user_from_token(parts[1], message.guild)
-        if target_user is None:
-            await message.channel.send("Could not resolve the target user. Mention a user or provide a user ID.")
-            return
-
-        amount = parse_count(parts[2])
-        if amount is None or amount <= 0:
-            await message.channel.send("Invalid amount. Use a positive number (for example: `100`, `1k`, `50k`).")
-            return
-
-        new_balance = add_money(target_user.id, amount)
-        await message.channel.send(
-            f"Added **{format_money(amount)}** to {target_user.mention}. "
-            f"New balance: **{format_money(new_balance)}**."
-        )
         return
 
     if command in {"!addinventory", "!removeinventory"}:
@@ -9260,13 +2997,8 @@ async def on_ready():
     if not rainbow_task.is_running():
         rainbow_task.start()
 
-    restore_giveaway_views()
-    if not giveaway_end_task.is_running():
-        giveaway_end_task.start()
-
 
 async def setup_hook():
-    restore_giveaway_views()
     try:
         await sync_all_commands()
     except Exception as error:
@@ -9280,7 +3012,6 @@ bot.setup_hook = setup_hook
 async def on_disconnect():
     global BOT_ONLINE
     BOT_ONLINE = False
-    save_message_stats(force=True)
 
 
 if __name__ == "__main__":
@@ -9290,10 +3021,8 @@ if __name__ == "__main__":
     print(f"Loaded {len(vehicles)} vehicles from index.json")
     log_catalog_audit(vehicles)
 
-    start_website_server()
-
     if not TOKEN:
-        print("No DISCORD_TOKEN found. Set it in the service environment variables.")
+        print("No DISCORD_TOKEN found. Set it in environment variables or .env.")
         raise SystemExit(1)
 
     if ENABLE_INSTANCE_LOCK:
@@ -9327,8 +3056,6 @@ if __name__ == "__main__":
                 print(f"Discord HTTP error on startup: {error}. Retrying in {retry_delay}s...")
         except Exception as error:
             print(f"Unexpected bot startup error: {error}. Retrying in {retry_delay}s...")
-        finally:
-            save_message_stats(force=True)
 
         if not AUTO_RESTART_BOT:
             print("Auto-restart is disabled, so the bot process will now exit.")
