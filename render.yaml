@@ -1,10 +1,11 @@
 services:
-  - type: worker
+  - type: web
     name: dexbotfinal
     runtime: python
     plan: starter
     region: oregon
     autoDeploy: true
+    healthCheckPath: /health
     buildCommand: |
       pip install -r requirements.txt
       python3 -m py_compile bot.py bot_runner.py guess_game_patch.py
